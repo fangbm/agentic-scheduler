@@ -17,12 +17,24 @@ Canonical names are architectural vocabulary. Synonyms may appear in user-facing
 | `WorkLog` | Actual work/execution history | FocusBlock, WorkBlock |
 | `Course` | Academic course identity/context | repeating Event, ClassEvent |
 | `CourseScheduleRule` | Base academic scheduling rule for a Course | recurrence event |
-| `CourseSession` | A specific logical occurrence of a Course | ClassEvent, Event occurrence |
+| `CourseSession` | Deterministically resolved logical occurrence of a Course | ClassEvent, Event occurrence, independent stored event |
+| `CourseOccurrenceKey` | Stable identity of one logical Course occurrence: rule + academic week | CourseSessionId, start-time-derived ID |
+| `CourseOccurrenceException` | Explicit one-off cancellation/reinstatement/time/room change targeting a CourseOccurrenceKey | editing the base rule, recurrence exception blob |
+| `CourseOccurrenceDisposition` | Explicit ACTIVE/CANCELLED intent of a CourseOccurrenceException | CourseSession state inferred from nullable time |
+| `RoomOverride` | Tri-state Unchanged/Set/Clear one-off room override | nullable room override |
 | `AcademicYear` | Academic-year container | school year string |
-| `Semester` | Academic term/semester | calendar category |
-| `AcademicHoliday` | Academic-calendar exception/holiday | generic Event |
+| `Semester` | Academic term/semester with explicit timezone and AcademicWeek definitions | calendar category |
+| `AcademicWeekNumber` | Positive owner-scoped academic week number | week offset from Semester start |
+| `AcademicWeek` | Explicit seven-calendar-day numbered range inside a Semester | inferred `semesterStart + n weeks` |
+| `TeachingWeekSet` | Canonical explicit sorted set of AcademicWeekNumbers used by a CourseScheduleRule | ODD/EVEN storage enum, recurrence string |
+| `CourseTimeSpec` | Academic wall-clock source time: ClockTime or PeriodBased | ZonedTimeRange stored directly on base rule |
+| `AcademicPeriodNumber` | Positive period number within a PeriodTemplate | globally fixed clock time |
+| `AcademicPeriod` | Explicit local-time mapping for one academic period number | Event, duration formula |
+| `AcademicHoliday` | Semester-scoped academic-calendar date range with explicit teaching effect | generic Event, name-inferred cancellation |
+| `AcademicHolidayTeachingEffect` | Structured NO_EFFECT/SUSPEND_TEACHING behavior | inferred holiday behavior |
 | `PeriodTemplate` | Mapping from academic period numbers to clock time | period Event |
 | `Exam` | First-class academic assessment entity | `Event(type=EXAM)` |
+| `ExamSchedule` | Explicit Unscheduled/DateOnly/Exact exam schedule state | nullable start/end |
 | `Reminder` | Independent trigger attached to a target/anchor | reminderMinutes field |
 | `Project` | Long-running context/grouping entity | calendar, task list |
 | `InboxItem` | Captured/unprocessed information with provenance | draft Event |
@@ -36,6 +48,50 @@ Canonical names are architectural vocabulary. Synonyms may appear in user-facing
 | `FreezeHorizon` | Near-term region protected from automatic replan | PinState |
 | `DeadlinePolicy` | Semantics of a deadline | priority |
 | `OverflowPolicy` | Whether scheduling may exceed configured availability | deadline policy |
+
+---
+
+# Academic vocabulary rules
+
+The Academic Domain uses these distinctions exactly:
+
+```text
+AcademicYear
+    ↓
+Semester
+    ↓
+Course
+    ↓
+CourseScheduleRule
+    ↓
+CourseOccurrenceKey
+    ↓
+CourseSession
+```
+
+`CourseSession` is a derived projection. Do not introduce `CourseSessionId` in D3.
+
+Teaching-week input forms such as:
+
+```text
+odd weeks
+even weeks
+1-16
+1,3,5,7
+```
+
+may exist at import/UI boundaries later, but the canonical Domain noun is always `TeachingWeekSet`.
+
+Period-based scheduling uses:
+
+```text
+PeriodTemplate
+└─ AcademicPeriod
+```
+
+not a generic recurrence/time formula.
+
+A one-off class change uses `CourseOccurrenceException`; never describe a one-off reschedule in technical contracts as "editing the recurring event".
 
 ---
 
@@ -182,7 +238,12 @@ The following equations are permanently false unless a future ADR explicitly cha
 Task == Event                         FALSE
 Task == FocusBlock                    FALSE
 Course == repeating Event             FALSE
+CourseSession == Event occurrence     FALSE
+CourseSession == authoritative rule   FALSE
 Exam == Event(type=EXAM)              FALSE
+AcademicHoliday == Event              FALSE
+AcademicWeek == fixed week offset     FALSE
+Period number == global clock time    FALSE
 PlanBranch == Active State            FALSE
 Agent == Planner                      FALSE
 AgentThread == Provider conversation  FALSE
