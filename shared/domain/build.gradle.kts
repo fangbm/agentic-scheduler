@@ -23,6 +23,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
+            implementation(libs.kotlinx.datetime)
             // The domain module deliberately has no database, HTTP, UI, or AI dependencies.
         }
         commonTest.dependencies {
@@ -30,4 +31,3 @@ kotlin {
         }
     }
 }
-
