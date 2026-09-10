@@ -127,8 +127,9 @@ kotlinx.datetime.LocalDateTime
 kotlinx.datetime.LocalTime
 kotlinx.datetime.TimeZone
 kotlinx.datetime.DayOfWeek
-kotlinx.datetime.TransitionHandler
 ```
+
+The pinned `kotlinx-datetime 0.8.0` baseline does not expose `TransitionHandler` as a usable public API for this resolver. D3 therefore freezes **strict transition-rejection semantics**, not a particular library call. If a later dependency upgrade exposes a suitable transition handler, adopting it requires preserving the same reject-on-ambiguity/nonexistence behavior.
 
 Do not use `java.time.*` in `commonMain`.
 
@@ -886,14 +887,18 @@ local start = occurrenceDate + ClockTime.start
 local end   = occurrenceDate + ClockTime.endExclusive
 ```
 
-Resolve both LocalDateTimes to Instant using:
+Resolve both LocalDateTimes to Instant using `semester.timeZone` with **strict transition rejection**.
+
+For the pinned `kotlinx-datetime 0.8.0` baseline, do not rely on a nonexistent `TransitionHandler` API. The resolver must deterministically reject both categories:
 
 ```text
-semester.timeZone
-TransitionHandler.REJECT_TRANSITIONS
+nonexistent wall time → no valid Instant maps back to the requested LocalDateTime
+ambiguous wall time   → more than one valid Instant maps back to the requested LocalDateTime
 ```
 
-If either local datetime is ambiguous/nonexistent because of a timezone transition, do not choose an offset and do not shift the time. Record `DstTransitionRejected(occurrenceKey)`.
+A local/reversible implementation may use round-trip validation plus explicit alternative-offset detection. The exact internal mechanism is not frozen, but the semantic result is: **exactly one valid Instant is required**. Never silently choose an earlier/later offset and never shift a nonexistent local time.
+
+If either local datetime is ambiguous/nonexistent because of a timezone transition, record `DstTransitionRejected(occurrenceKey)`.
 
 On success create:
 
@@ -912,7 +917,7 @@ local start = occurrenceDate + startPeriod.start
 local end   = occurrenceDate + endPeriodInclusive.endExclusive
 ```
 
-Use the same explicit Semester timezone + `REJECT_TRANSITIONS` behavior.
+Use the same explicit Semester timezone + strict transition-rejection behavior defined in §29.
 
 The resolved base time spans continuously from the first period start through the final period end, including any breaks between periods.
 
@@ -1352,17 +1357,22 @@ The resolver must return no partial successful session list when invalid.
 
 ---
 
-# 48. Required DST test
+# 48. Required DST tests
 
-Use a real IANA timezone with a known DST transition, such as `America/New_York`, and a wall-clock CourseTimeSpec that lands inside a known nonexistent or ambiguous transition period.
-
-The test must demonstrate:
+Use a real IANA timezone with known transitions, such as `America/New_York`, and prove all three strict-resolution cases:
 
 ```text
-resolution => Invalid(DstTransitionRejected(...))
+spring-forward nonexistent wall time
+    → Invalid(DstTransitionRejected(...))
+
+fall-back ambiguous wall time
+    → Invalid(DstTransitionRejected(...))
+
+normal wall time with exactly one valid Instant
+    → resolves successfully
 ```
 
-not a silently shifted/selected Instant.
+The tests must demonstrate that resolution does not silently shift a nonexistent time and does not silently select either offset for an ambiguous time.
 
 Do not mock the timezone rule into a different semantic behavior.
 
@@ -1449,7 +1459,7 @@ D3 Gate passes only if all are true:
 [ ] CourseSession resolver returns Success or non-empty Invalid issues
 [ ] every resolver issue case implemented/tested
 [ ] explicit exception > holiday > base rule precedence implemented
-[ ] REJECT_TRANSITIONS DST behavior implemented/tested
+[ ] strict DST transition rejection (nonexistent + ambiguous) implemented/tested
 [ ] resolver output deterministic and input-order independent
 [ ] CourseSession has no independent generated ID
 [ ] CourseSession is not made an authoritative mutable source
