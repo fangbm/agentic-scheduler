@@ -1,0 +1,4 @@
+<resources>
+    <style name="Theme.AgenticSchedulerWear" parent="android:style/Theme.DeviceDefault" />
+</resources>
+
