@@ -137,6 +137,68 @@ class CourseSessionResolverTest {
     }
 
     @Test
+    fun `explicit cancellation wins over a covering teaching suspension holiday`() {
+        val baseRule = rule(
+            152,
+            DayOfWeek.TUESDAY,
+            listOf(1),
+            CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(9, 0)),
+            "Base",
+        )
+        val holiday = AcademicHoliday(
+            AcademicHolidayId(id(153)),
+            semester.id,
+            "Suspended",
+            AllDayRange(LocalDate(2026, 9, 1), LocalDate(2026, 9, 8)),
+            AcademicHolidayTeachingEffect.SUSPEND_TEACHING,
+        )
+        val exception = CourseOccurrenceException(
+            CourseOccurrenceExceptionId(id(154)),
+            CourseOccurrenceKey(baseRule.id, AcademicWeekNumber(1)),
+            CourseOccurrenceDisposition.CANCELLED,
+            null,
+            RoomOverride.Unchanged,
+        )
+
+        val session = assertIs<CourseSessionResolutionResult.Success>(
+            resolveCourseSessions(semester, course, listOf(baseRule), emptyList(), listOf(holiday), listOf(exception)),
+        ).sessions.single()
+
+        assertEquals(
+            CourseCancellationReason.EXPLICIT_EXCEPTION,
+            assertIs<CourseSessionState.Cancelled>(session.state).reason,
+        )
+    }
+
+    @Test
+    fun `resolver permits overlapping sessions from different rules`() {
+        val firstRule = rule(
+            155,
+            DayOfWeek.TUESDAY,
+            listOf(1),
+            CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(10, 0)),
+            "First",
+        )
+        val secondRule = rule(
+            156,
+            DayOfWeek.TUESDAY,
+            listOf(1),
+            CourseTimeSpec.ClockTime(LocalTime(9, 0), LocalTime(11, 0)),
+            "Second",
+        )
+
+        val sessions = assertIs<CourseSessionResolutionResult.Success>(
+            resolveCourseSessions(semester, course, listOf(firstRule, secondRule), emptyList(), emptyList(), emptyList()),
+        ).sessions
+
+        assertEquals(2, sessions.size)
+        val first = sessions.single { it.occurrenceKey.scheduleRuleId == firstRule.id }
+        val second = sessions.single { it.occurrenceKey.scheduleRuleId == secondRule.id }
+        assertTrue(first.baseTime.start < second.baseTime.endExclusive)
+        assertTrue(second.baseTime.start < first.baseTime.endExclusive)
+    }
+
+    @Test
     fun `resolver reports all non DST public invalid input cases in deterministic order`() {
         val duplicateRuleId = CourseScheduleRuleId(id(120))
         val knownRule = rule(120, DayOfWeek.TUESDAY, listOf(1), CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(9, 0)), null)
