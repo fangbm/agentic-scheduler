@@ -1078,8 +1078,8 @@ enum class ExamValidationResult {
     LINKED_COURSE_REQUIRED,
     LINKED_COURSE_ID_MISMATCH,
     LINKED_COURSE_SEMESTER_MISMATCH,
-    SCHEDULE_OUTSIDE_SEMESTER,
     TIME_ZONE_MISMATCH,
+    SCHEDULE_OUTSIDE_SEMESTER,
 }
 
 fun validateExamAgainstSemester(
@@ -1090,6 +1090,8 @@ fun validateExamAgainstSemester(
 ```
 
 Precedence is exactly the enum order above after `VALID` is excluded; return the first applicable failure in that listed order.
+
+For an `Exact` schedule that simultaneously has the wrong timezone and lies outside the Semester, `TIME_ZONE_MISMATCH` wins. The containment check is considered only after the Exact schedule's timezone matches `semester.timeZone`.
 
 Rules:
 
@@ -1397,6 +1399,7 @@ validator: DateOnly before/after Semester invalid
 validator: Exact same Semester timezone valid
 validator: Exact timezone mismatch invalid
 validator: Exact outside Semester invalid
+validator: Exact timezone mismatch wins when the same schedule is also outside Semester
 Unscheduled does not fail date/timezone validation
 ```
 
