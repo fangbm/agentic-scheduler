@@ -65,6 +65,16 @@ class ExamTest {
             ),
         )
         assertEquals(
+            ExamValidationResult.TIME_ZONE_MISMATCH,
+            validateExamAgainstSemester(
+                exam(ExamSchedule.Exact(ZonedTimeRange(
+                    Instant.parse("2026-10-01T00:00:00Z"), Instant.parse("2026-10-01T01:00:00Z"), TimeZone.of("Asia/Shanghai"),
+                ))),
+                semester,
+                null,
+            ),
+        )
+        assertEquals(
             ExamValidationResult.SCHEDULE_OUTSIDE_SEMESTER,
             validateExamAgainstSemester(exam(ExamSchedule.Exact(exact("2026-10-01T00:00:00Z"))), semester, null),
         )
