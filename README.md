@@ -4,7 +4,8 @@ The D1 bootstrap for a local-first, end-to-end encrypted scheduler.
 
 ## Modules
 
-- `shared:domain`: pure Kotlin Multiplatform domain boundary, shared by Android and Desktop.
+- `shared:domain`: pure Kotlin Multiplatform domain boundary, shared by Android, Desktop, and Wear OS.
+- `shared:database`: KMP module boundary reserved for the later persistence implementation; intentionally contains no schema, Room, or repository code in D1.
 - `apps:android`: Android Compose shell.
 - `apps:desktop`: Compose Desktop shell.
 - `apps:wear`: Compose for Wear OS shell.

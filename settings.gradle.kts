@@ -17,7 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "agentic-scheduler"
 
 include(":shared:domain")
+include(":shared:database")
 include(":apps:android")
 include(":apps:desktop")
 include(":apps:wear")
-
