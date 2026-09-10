@@ -20,10 +20,10 @@ The following are **not** open decisions and must not be revisited inside unrela
 ```text
 Client stack              Kotlin Multiplatform
 Android/Desktop UI        Compose / Compose Multiplatform
-Wear UI                    Compose for Wear OS
+Wear UI                   Compose for Wear OS
 JVM target                 17
 Local persistence family  SQLite with Room/KMP direction
-Server framework           Kotlin + Ktor
+Server framework          Kotlin + Ktor
 Server database            PostgreSQL
 Blob storage               S3-compatible / MinIO
 Production sync            custom Git-like semantic sync; NOT Git runtime
@@ -61,20 +61,18 @@ SUPERSEDED  — replaced by another recorded decision
 ## OD-001 — Exact multiplatform date/time dependency version
 
 ```text
-Status: PENDING
-Must resolve by: first D2 task that requires concrete date/time classes
-Frozen direction: use kotlinx-datetime-compatible multiplatform date/time APIs;
-                  Kotlin Duration for durations; no java.time in commonMain
+Status: RESOLVED
+Decision: org.jetbrains.kotlinx:kotlinx-datetime:0.8.0
+Compatibility baseline: Kotlin 2.3.21
+Usage: kotlinx-datetime for LocalDate/LocalDateTime/TimeZone semantics;
+       Kotlin stdlib kotlin.time.Instant / kotlin.time.Clock where instant/clock
+       semantics are required; Kotlin Duration for durations.
+No java.time in commonMain.
+Source: D2 Core Domain Task Spec + repository Version Catalog
 Impact: CONTRACT_AFFECTING
 ```
 
-Required resolution:
-
-- exact `kotlinx-datetime` version;
-- add through version catalog;
-- verify Kotlin 2.3.21 + Android/Desktop compatibility.
-
-Until resolved, an Agent may design pure contracts conceptually but may not silently add an arbitrary version.
+The dependency is centralized in `gradle/libs.versions.toml` and exposed to `shared:domain` through the version catalog. Coding agents must not substitute the `0.6.x-compat` artifact or downgrade/upgrade it inside unrelated work.
 
 ## OD-002 — Domain invalid-construction error convention
 
