@@ -48,8 +48,8 @@ class CourseSessionResolverTest {
         val result = resolveCourseSessions(semester, course, listOf(lateRule, earlyRule), listOf(template), emptyList(), emptyList())
         val sessions = assertIs<CourseSessionResolutionResult.Success>(result).sessions
         assertEquals(4, sessions.size)
-        assertEquals(listOf(1, 1, 3, 3), sessions.map { it.key.academicWeekNumber.value })
-        assertEquals(listOf(earlyRule.id, lateRule.id, earlyRule.id, lateRule.id), sessions.map { it.key.scheduleRuleId })
+        assertEquals(listOf(1, 1, 3, 3), sessions.map { it.occurrenceKey.academicWeekNumber.value })
+        assertEquals(listOf(earlyRule.id, lateRule.id, earlyRule.id, lateRule.id), sessions.map { it.occurrenceKey.scheduleRuleId })
         assertEquals(Instant.parse("2026-09-22T08:00:00Z"), sessions[2].baseTime.start)
         assertEquals(Instant.parse("2026-09-22T09:45:00Z"), sessions[2].baseTime.endExclusive)
         assertEquals("R1", assertIs<CourseSessionState.Scheduled>(sessions[0].state).room)
@@ -81,9 +81,59 @@ class CourseSessionResolverTest {
         val second = assertIs<CourseSessionState.Scheduled>(result.sessions[1].state)
         val third = assertIs<CourseSessionState.Cancelled>(result.sessions[2].state)
         assertEquals("Base", first.room)
+        assertEquals(activeKey, result.sessions[1].occurrenceKey)
+        assertEquals(Instant.parse("2026-09-08T08:00:00Z"), result.sessions[1].baseTime.start)
         assertEquals(Instant.parse("2026-09-08T12:00:00Z"), second.time.start)
         assertEquals("Moved", second.room)
         assertEquals(CourseCancellationReason.EXPLICIT_EXCEPTION, third.reason)
+    }
+
+    @Test
+    fun `resolver applies room overrides and holiday states without duplicate sessions`() {
+        val baseRule = rule(114, DayOfWeek.TUESDAY, listOf(1, 2, 3), CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(9, 0)), "Base")
+        val clearRule = rule(115, DayOfWeek.TUESDAY, listOf(2), CourseTimeSpec.ClockTime(LocalTime(10, 0), LocalTime(11, 0)), "Clear me")
+        val holidays = listOf(
+            AcademicHoliday(
+                AcademicHolidayId(id(116)), semester.id, "Suspended", AllDayRange(LocalDate(2026, 9, 1), LocalDate(2026, 9, 8)),
+                AcademicHolidayTeachingEffect.SUSPEND_TEACHING,
+            ),
+            AcademicHoliday(
+                AcademicHolidayId(id(117)), semester.id, "No effect", AllDayRange(LocalDate(2026, 9, 8), LocalDate(2026, 9, 15)),
+                AcademicHolidayTeachingEffect.NO_EFFECT,
+            ),
+            AcademicHoliday(
+                AcademicHolidayId(id(118)), semester.id, "Second suspension", AllDayRange(LocalDate(2026, 9, 22), LocalDate(2026, 9, 29)),
+                AcademicHolidayTeachingEffect.SUSPEND_TEACHING,
+            ),
+            AcademicHoliday(
+                AcademicHolidayId(id(121)), semester.id, "Also observed", AllDayRange(LocalDate(2026, 9, 1), LocalDate(2026, 9, 8)),
+                AcademicHolidayTeachingEffect.NO_EFFECT,
+            ),
+        )
+        val exceptions = listOf(
+            CourseOccurrenceException(
+                CourseOccurrenceExceptionId(id(119)), CourseOccurrenceKey(baseRule.id, AcademicWeekNumber(3)),
+                CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Unchanged,
+            ),
+            CourseOccurrenceException(
+                CourseOccurrenceExceptionId(id(120)), CourseOccurrenceKey(clearRule.id, AcademicWeekNumber(2)),
+                CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Clear,
+            ),
+        )
+
+        val sessions = assertIs<CourseSessionResolutionResult.Success>(
+            resolveCourseSessions(semester, course, listOf(baseRule, clearRule), emptyList(), holidays, exceptions),
+        ).sessions
+
+        assertEquals(4, sessions.size)
+        val baseWeekOne = sessions.single { it.occurrenceKey == CourseOccurrenceKey(baseRule.id, AcademicWeekNumber(1)) }
+        val baseWeekTwo = sessions.single { it.occurrenceKey == CourseOccurrenceKey(baseRule.id, AcademicWeekNumber(2)) }
+        val baseWeekThree = sessions.single { it.occurrenceKey == CourseOccurrenceKey(baseRule.id, AcademicWeekNumber(3)) }
+        val cleared = sessions.single { it.occurrenceKey == CourseOccurrenceKey(clearRule.id, AcademicWeekNumber(2)) }
+        assertEquals(CourseCancellationReason.ACADEMIC_HOLIDAY, assertIs<CourseSessionState.Cancelled>(baseWeekOne.state).reason)
+        assertEquals("Base", assertIs<CourseSessionState.Scheduled>(baseWeekTwo.state).room)
+        assertEquals("Base", assertIs<CourseSessionState.Scheduled>(baseWeekThree.state).room)
+        assertEquals(null, assertIs<CourseSessionState.Scheduled>(cleared.state).room)
     }
 
     @Test
@@ -179,6 +229,43 @@ class CourseSessionResolverTest {
             resolveCourseSessions(dstSemester, dstCourse, listOf(dstRule), emptyList(), emptyList(), emptyList()),
         )
         assertEquals(listOf(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1)))), result.issues)
+    }
+
+    @Test
+    fun `resolver rejects an ambiguous fall back local time`() {
+        val newYork = TimeZone.of("America/New_York")
+        val dstSemester = Semester(
+            SemesterId(id(144)), AcademicYearId(id(145)), "Fall", LocalDate(2026, 10, 1), LocalDate(2026, 12, 1), newYork,
+            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 10, 26), LocalDate(2026, 11, 2))),
+        )
+        val dstCourse = Course(CourseId(id(146)), dstSemester.id, "DST", null)
+        val dstRule = CourseScheduleRule(
+            CourseScheduleRuleId(id(147)), dstCourse.id, DayOfWeek.SUNDAY,
+            TeachingWeekSet.of(listOf(AcademicWeekNumber(1))), CourseTimeSpec.ClockTime(LocalTime(1, 30), LocalTime(2, 30)), null,
+        )
+        val result = assertIs<CourseSessionResolutionResult.Invalid>(
+            resolveCourseSessions(dstSemester, dstCourse, listOf(dstRule), emptyList(), emptyList(), emptyList()),
+        )
+        assertEquals(listOf(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1)))), result.issues)
+    }
+
+    @Test
+    fun `resolver accepts a normal local time in a DST observing timezone`() {
+        val newYork = TimeZone.of("America/New_York")
+        val dstSemester = Semester(
+            SemesterId(id(148)), AcademicYearId(id(149)), "Fall", LocalDate(2026, 10, 1), LocalDate(2026, 12, 1), newYork,
+            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 10, 26), LocalDate(2026, 11, 2))),
+        )
+        val dstCourse = Course(CourseId(id(150)), dstSemester.id, "DST", null)
+        val dstRule = CourseScheduleRule(
+            CourseScheduleRuleId(id(151)), dstCourse.id, DayOfWeek.SATURDAY,
+            TeachingWeekSet.of(listOf(AcademicWeekNumber(1))), CourseTimeSpec.ClockTime(LocalTime(1, 30), LocalTime(2, 30)), null,
+        )
+        val result = assertIs<CourseSessionResolutionResult.Success>(
+            resolveCourseSessions(dstSemester, dstCourse, listOf(dstRule), emptyList(), emptyList(), emptyList()),
+        )
+        assertEquals(1, result.sessions.size)
+        assertEquals(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1)), result.sessions.single().occurrenceKey)
     }
 
     private fun rule(

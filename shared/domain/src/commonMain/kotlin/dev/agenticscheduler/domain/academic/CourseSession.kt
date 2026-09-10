@@ -6,7 +6,7 @@ import dev.agenticscheduler.domain.time.ZonedTimeRange
 
 data class CourseOccurrenceException(
     val id: CourseOccurrenceExceptionId,
-    val key: CourseOccurrenceKey,
+    val occurrenceKey: CourseOccurrenceKey,
     val disposition: CourseOccurrenceDisposition,
     val timeOverride: ZonedTimeRange?,
     val roomOverride: RoomOverride,
@@ -42,7 +42,7 @@ sealed interface CourseSessionState {
 }
 
 data class CourseSession(
-    val key: CourseOccurrenceKey,
+    val occurrenceKey: CourseOccurrenceKey,
     val courseId: CourseId,
     val baseTime: ZonedTimeRange,
     val state: CourseSessionState,

@@ -45,19 +45,24 @@ class AcademicCalendarTest {
         assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 8), week(2, 1))) }
         assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 1), week(3, 8))) }
         assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 1), week(2, 5))) }
-        assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 29))) }
+        assertFailsWith<IllegalArgumentException> {
+            semester(listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 29), LocalDate(2026, 10, 6))))
+        }
     }
 
     @Test
     fun `semester membership validator follows frozen precedence`() {
         val valid = semester(listOf(week(1, 1)))
-        assertEquals(SemesterAcademicYearValidationResult.VALID, validateSemesterAgainstAcademicYear(valid, year))
+        assertEquals(SemesterAcademicYearValidationResult.VALID, validateSemesterAgainstAcademicYear(year, valid))
         assertEquals(
             SemesterAcademicYearValidationResult.ACADEMIC_YEAR_ID_MISMATCH,
-            validateSemesterAgainstAcademicYear(valid.copy(academicYearId = AcademicYearId(id(2))), year),
+            validateSemesterAgainstAcademicYear(
+                year,
+                valid.copy(academicYearId = AcademicYearId(id(2))),
+            ),
         )
         val shortYear = AcademicYear(year.id, year.name, LocalDate(2026, 9, 2), year.endDateExclusive)
-        assertEquals(SemesterAcademicYearValidationResult.OUTSIDE_ACADEMIC_YEAR, validateSemesterAgainstAcademicYear(valid, shortYear))
+        assertEquals(SemesterAcademicYearValidationResult.OUTSIDE_ACADEMIC_YEAR, validateSemesterAgainstAcademicYear(shortYear, valid))
     }
 
     private fun semester(weeks: List<AcademicWeek>): Semester = Semester(

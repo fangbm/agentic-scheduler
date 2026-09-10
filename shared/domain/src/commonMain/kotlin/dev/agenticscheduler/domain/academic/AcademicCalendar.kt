@@ -80,8 +80,8 @@ enum class SemesterAcademicYearValidationResult {
 }
 
 fun validateSemesterAgainstAcademicYear(
-    semester: Semester,
     academicYear: AcademicYear,
+    semester: Semester,
 ): SemesterAcademicYearValidationResult = when {
     semester.academicYearId != academicYear.id -> SemesterAcademicYearValidationResult.ACADEMIC_YEAR_ID_MISMATCH
     semester.startDate < academicYear.startDate || semester.endDateExclusive > academicYear.endDateExclusive ->

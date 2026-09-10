@@ -186,7 +186,7 @@ fun resolveCourseSessions(
     duplicateValues(exceptions, CourseOccurrenceException::id).forEach { exceptionId ->
         issues += CourseSessionResolutionIssue.DuplicateExceptionId(exceptionId)
     }
-    duplicateValues(exceptions, CourseOccurrenceException::key).forEach { occurrenceKey ->
+    duplicateValues(exceptions, CourseOccurrenceException::occurrenceKey).forEach { occurrenceKey ->
         issues += CourseSessionResolutionIssue.DuplicateExceptionTarget(occurrenceKey)
     }
 
@@ -196,8 +196,8 @@ fun resolveCourseSessions(
         }
     }.toSet()
     exceptions.forEach { exception ->
-        if (exception.key !in baseOccurrenceKeys) {
-            issues += CourseSessionResolutionIssue.OrphanException(exception.id, exception.key)
+        if (exception.occurrenceKey !in baseOccurrenceKeys) {
+            issues += CourseSessionResolutionIssue.OrphanException(exception.id, exception.occurrenceKey)
         }
         exception.timeOverride?.let { override ->
             if (override.timeZone != semester.timeZone) {
@@ -231,7 +231,7 @@ fun resolveCourseSessions(
     }
     if (dstIssues.isNotEmpty()) return CourseSessionResolutionResult.Invalid(dstIssues.sortedForResolution())
 
-    val exceptionsByKey = exceptions.associateBy(CourseOccurrenceException::key)
+    val exceptionsByKey = exceptions.associateBy(CourseOccurrenceException::occurrenceKey)
     val sessions = baseOccurrences.map { occurrence ->
         val baseTime = checkNotNull(baseTimes[occurrence.key])
         val exception = exceptionsByKey[occurrence.key]
@@ -252,8 +252,8 @@ fun resolveCourseSessions(
         }
         CourseSession(occurrence.key, course.id, baseTime, state)
     }.sortedWith(
-        compareBy<CourseSession> { it.key.academicWeekNumber.value }
-            .thenBy { it.key.scheduleRuleId.value },
+        compareBy<CourseSession> { it.occurrenceKey.academicWeekNumber.value }
+            .thenBy { it.occurrenceKey.scheduleRuleId.value },
     )
 
     return CourseSessionResolutionResult.Success(sessions)
