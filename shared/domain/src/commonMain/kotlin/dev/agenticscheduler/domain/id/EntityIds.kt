@@ -37,3 +37,43 @@ value class TaskDependencyId(val value: String) {
 value class PlanningProfileId(val value: String) {
     init { requireValidUuidV7(value) }
 }
+
+@JvmInline
+value class AcademicYearId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class SemesterId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class CourseId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class CourseScheduleRuleId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class CourseOccurrenceExceptionId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class ExamId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class AcademicHolidayId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
+value class PeriodTemplateId(val value: String) {
+    init { requireValidUuidV7(value) }
+}

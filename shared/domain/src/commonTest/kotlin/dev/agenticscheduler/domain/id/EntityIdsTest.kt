@@ -13,6 +13,14 @@ class EntityIdsTest {
         assertEquals("018f6e68-7d0c-7000-8000-000000000004", WorkLogId("018f6e68-7d0c-7000-8000-000000000004").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000005", TaskDependencyId("018f6e68-7d0c-7000-8000-000000000005").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000006", PlanningProfileId("018f6e68-7d0c-7000-8000-000000000006").value)
+        assertEquals("018f6e68-7d0c-7000-8000-000000000007", AcademicYearId("018f6e68-7d0c-7000-8000-000000000007").value)
+        assertEquals("018f6e68-7d0c-7000-8000-000000000008", SemesterId("018f6e68-7d0c-7000-8000-000000000008").value)
+        assertEquals("018f6e68-7d0c-7000-8000-000000000009", CourseId("018f6e68-7d0c-7000-8000-000000000009").value)
+        assertEquals("018f6e68-7d0c-7000-8000-00000000000a", CourseScheduleRuleId("018f6e68-7d0c-7000-8000-00000000000a").value)
+        assertEquals("018f6e68-7d0c-7000-8000-00000000000b", CourseOccurrenceExceptionId("018f6e68-7d0c-7000-8000-00000000000b").value)
+        assertEquals("018f6e68-7d0c-7000-8000-00000000000c", ExamId("018f6e68-7d0c-7000-8000-00000000000c").value)
+        assertEquals("018f6e68-7d0c-7000-8000-00000000000d", AcademicHolidayId("018f6e68-7d0c-7000-8000-00000000000d").value)
+        assertEquals("018f6e68-7d0c-7000-8000-00000000000e", PeriodTemplateId("018f6e68-7d0c-7000-8000-00000000000e").value)
     }
 
     @Test
@@ -21,6 +29,14 @@ class EntityIdsTest {
         assertFailsWith<IllegalArgumentException> { TaskId("018f6e68-7d0c-4000-8000-000000000002") }
         assertFailsWith<IllegalArgumentException> { TaskId("018F6E68-7D0C-7000-8000-000000000002") }
         assertFailsWith<IllegalArgumentException> { TaskId("018f6e68-7d0c-7000-c000-000000000002") }
+        assertFailsWith<IllegalArgumentException> { AcademicYearId("018f6e68-7d0c-4000-8000-000000000007") }
+        assertFailsWith<IllegalArgumentException> { SemesterId("018F6E68-7D0C-7000-8000-000000000008") }
+        assertFailsWith<IllegalArgumentException> { CourseId("018f6e68-7d0c-7000-c000-000000000009") }
+        assertFailsWith<IllegalArgumentException> { CourseScheduleRuleId("invalid") }
+        assertFailsWith<IllegalArgumentException> { CourseOccurrenceExceptionId("invalid") }
+        assertFailsWith<IllegalArgumentException> { ExamId("invalid") }
+        assertFailsWith<IllegalArgumentException> { AcademicHolidayId("invalid") }
+        assertFailsWith<IllegalArgumentException> { PeriodTemplateId("invalid") }
     }
 
     @Test

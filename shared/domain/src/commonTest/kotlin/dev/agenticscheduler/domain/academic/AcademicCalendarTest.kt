@@ -1,0 +1,77 @@
+package dev.agenticscheduler.domain.academic
+
+import dev.agenticscheduler.domain.id.AcademicYearId
+import dev.agenticscheduler.domain.id.SemesterId
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
+
+class AcademicCalendarTest {
+    private val year = AcademicYear(
+        AcademicYearId(id(1)),
+        "2026-2027",
+        LocalDate(2026, 9, 1),
+        LocalDate(2027, 9, 1),
+    )
+
+    @Test
+    fun `academic year and week construction enforce their local invariants`() {
+        AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 8))
+        assertFailsWith<IllegalArgumentException> { AcademicYear(year.id, "", year.startDate, year.endDateExclusive) }
+        assertFailsWith<IllegalArgumentException> { AcademicYear(year.id, "x", year.startDate, year.startDate) }
+        assertFailsWith<IllegalArgumentException> { AcademicWeekNumber(0) }
+        assertFailsWith<IllegalArgumentException> {
+            AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 7))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 9))
+        }
+    }
+
+    @Test
+    fun `semester preserves explicit consecutive numbered weeks while allowing date gaps`() {
+        val semester = semester(
+            listOf(
+                week(1, 1),
+                week(2, 8),
+                week(3, 22),
+            ),
+        )
+        assertEquals(listOf(1, 2, 3), semester.academicWeeks.map { it.number.value })
+        assertFailsWith<IllegalArgumentException> { semester(emptyList()) }
+        assertFailsWith<IllegalArgumentException> { semester(listOf(week(2, 8))) }
+        assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 8), week(2, 1))) }
+        assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 1), week(3, 8))) }
+        assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 1), week(2, 5))) }
+        assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 29))) }
+    }
+
+    @Test
+    fun `semester membership validator follows frozen precedence`() {
+        val valid = semester(listOf(week(1, 1)))
+        assertEquals(SemesterAcademicYearValidationResult.VALID, validateSemesterAgainstAcademicYear(valid, year))
+        assertEquals(
+            SemesterAcademicYearValidationResult.ACADEMIC_YEAR_ID_MISMATCH,
+            validateSemesterAgainstAcademicYear(valid.copy(academicYearId = AcademicYearId(id(2))), year),
+        )
+        val shortYear = AcademicYear(year.id, year.name, LocalDate(2026, 9, 2), year.endDateExclusive)
+        assertEquals(SemesterAcademicYearValidationResult.OUTSIDE_ACADEMIC_YEAR, validateSemesterAgainstAcademicYear(valid, shortYear))
+    }
+
+    private fun semester(weeks: List<AcademicWeek>): Semester = Semester(
+        id = SemesterId(id(10)),
+        academicYearId = year.id,
+        name = "Fall",
+        startDate = LocalDate(2026, 9, 1),
+        endDateExclusive = LocalDate(2026, 10, 1),
+        timeZone = TimeZone.UTC,
+        academicWeeks = weeks,
+    )
+
+    private fun week(number: Int, day: Int): AcademicWeek =
+        AcademicWeek(AcademicWeekNumber(number), LocalDate(2026, 9, day), LocalDate(2026, 9, day + 7))
+}
+
+internal fun id(number: Int): String = "018f6e68-7d0c-7000-8000-${number.toString(16).padStart(12, '0')}"
