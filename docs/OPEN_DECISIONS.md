@@ -39,6 +39,8 @@ PlanBranch                  isolated proposal state; stale cannot blind-apply
 Wear                        real local-first node
 Wear LLM default            Watch-originated request; Phone config inheritance
 Server plaintext            schedule/task/attachment plaintext not required
+Academic occurrence identity CourseOccurrenceKey(ruleId, academicWeekNumber)
+Academic CourseSession       deterministic derived projection, not source of truth
 ```
 
 Exact implementation details beneath these decisions may still appear below as pending.
@@ -108,6 +110,79 @@ Impact: CONTRACT_AFFECTING
 ```
 
 A future implementation/library choice must not alter the canonical ID semantics.
+
+---
+
+# D3 / Academic decisions
+
+## OD-005 — Academic week and teaching-week representation
+
+```text
+Status: RESOLVED
+Decision:
+- Semester owns explicit seven-day AcademicWeek ranges.
+- week numbers are consecutive from 1; gaps between week date ranges are allowed.
+- TeachingWeekSet is the canonical explicit sorted/deduplicated week selection.
+- ODD/EVEN/range strings are input syntax only, not Domain storage variants.
+Source: docs/ACADEMIC_DECISIONS.md AD-001 / AD-002
+Impact: CONTRACT_AFFECTING
+```
+
+## OD-006 — Course rule and occurrence identity
+
+```text
+Status: RESOLVED
+Decision:
+- one CourseScheduleRule has one weekday and one CourseTimeSpec;
+- multiple weekly meetings use multiple rules;
+- CourseOccurrenceKey(scheduleRuleId, academicWeekNumber) is stable session identity;
+- D3 has no generated CourseSessionId.
+Source: docs/ACADEMIC_DECISIONS.md AD-003
+Impact: ARCHITECTURE_AFFECTING
+```
+
+## OD-007 — Academic time, period, timezone, and DST semantics
+
+```text
+Status: RESOLVED
+Decision:
+- CourseTimeSpec = ClockTime | PeriodBased;
+- PeriodTemplate explicitly maps AcademicPeriodNumber to local clock ranges;
+- Semester owns explicit TimeZone;
+- base course times use wall-clock semantics;
+- ambiguous/nonexistent timezone transitions are rejected, not guessed.
+Source: docs/ACADEMIC_DECISIONS.md AD-004 / AD-005
+Impact: CONTRACT_AFFECTING / DETERMINISM
+```
+
+## OD-008 — CourseSession source of truth and exception precedence
+
+```text
+Status: RESOLVED
+Decision:
+- CourseSession is a deterministic derived projection;
+- authoritative state is rules/templates/holidays/occurrence exceptions;
+- one-off changes use CourseOccurrenceException;
+- precedence is explicit occurrence exception > holiday suspension > base rule;
+- room override distinguishes Unchanged / Set / Clear.
+Source: docs/ACADEMIC_DECISIONS.md AD-006 / AD-007 / AD-008 / AD-010 / AD-011 / AD-012
+Impact: ARCHITECTURE_AFFECTING / CORRECTNESS
+```
+
+## OD-009 — D3 Academic entity surfaces
+
+```text
+Status: RESOLVED
+Decision:
+- exact D3 AcademicYear, Semester, Course, AcademicHoliday, and Exam surfaces are
+  frozen by docs/tasks/D3_ACADEMIC_DOMAIN.md;
+- ExamSchedule = Unscheduled | DateOnly | Exact;
+- Academic entities do not receive implicit Planner movement/occupancy defaults.
+Source: docs/ACADEMIC_DECISIONS.md AD-009 / AD-013 / AD-014 / AD-015 / AD-016 / AD-017
+Impact: CONTRACT_AFFECTING / BOUNDARY_AFFECTING
+```
+
+No D3-required Academic decision remains `PENDING`. Deferred Academic features are listed in `docs/ACADEMIC_DECISIONS.md` and must not be guessed into D3.
 
 ---
 
