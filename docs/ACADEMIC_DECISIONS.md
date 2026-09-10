@@ -87,12 +87,12 @@ Decision:
 - Semester owns an explicit TimeZone.
 - Base CourseScheduleRule time is wall-clock time resolved in Semester.timeZone.
 - No system-default timezone may be consulted implicitly.
-- Ambiguous/nonexistent DST local times use REJECT_TRANSITIONS semantics.
+- Ambiguous/nonexistent DST local times use strict transition-rejection semantics.
 - Resolver reports an explicit issue instead of choosing an offset or shifting time.
 Impact: CONTRACT_AFFECTING / DETERMINISM
 ```
 
-The chosen `kotlinx-datetime` version already provides explicit transition handlers. D3 must use rejection semantics rather than provider/platform guesswork.
+The D3 baseline is `kotlinx-datetime 0.8.0`, which does not expose `TransitionHandler` as a usable public API for this resolver. Therefore the contract is semantic rather than API-specific: exactly one valid Instant must exist for a requested local wall time. Nonexistent and ambiguous local times are both rejected deterministically. A future library primitive may replace the internal mechanism only if it preserves these semantics.
 
 ---
 
