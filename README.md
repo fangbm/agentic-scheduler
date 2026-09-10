@@ -10,8 +10,24 @@ The D1 bootstrap for a local-first, end-to-end encrypted scheduler.
 - `apps:desktop`: Compose Desktop shell.
 - `apps:wear`: Compose for Wear OS shell.
 
-The current scope is intentionally limited to D1. No persistence, account,
-sync, E2EE, AI, or planner implementation belongs in this baseline.
+The current code scope is intentionally limited to D1. No persistence, account,
+sync, E2EE, AI, or planner implementation belongs in this bootstrap baseline.
+
+## Development guardrails
+
+Before implementing D2 or any non-trivial feature, start with:
+
+- [`docs/READ_FIRST.md`](docs/READ_FIRST.md) — authoritative development decision order and no-guess rules.
+- [`docs/DOMAIN_INVARIANTS.md`](docs/DOMAIN_INVARIANTS.md) — frozen Domain and Agent invariants.
+- [`docs/IMPLEMENTATION_CONTRACT.md`](docs/IMPLEMENTATION_CONTRACT.md) — implementation choices and prohibited autonomous decisions.
+- [`docs/OPEN_DECISIONS.md`](docs/OPEN_DECISIONS.md) — high-impact choices that are explicitly unresolved; `PENDING` means do not guess.
+- [`docs/MODULE_OWNERSHIP.md`](docs/MODULE_OWNERSHIP.md) — ownership of semantics, validation, state, transactions, and side effects.
+- [`docs/UBIQUITOUS_LANGUAGE.md`](docs/UBIQUITOUS_LANGUAGE.md) — canonical project vocabulary.
+- [`docs/CODING_AGENT_POLICY.md`](docs/CODING_AGENT_POLICY.md) — mandatory policy for delegated coding work.
+- [`docs/TASK_SPEC_TEMPLATE.md`](docs/TASK_SPEC_TEMPLATE.md) — template for deterministic milestone/task delegation.
+- [`docs/ARCHITECTURE_DIAGRAMS.md`](docs/ARCHITECTURE_DIAGRAMS.md) — detailed deterministic runtime/data-flow architecture.
+
+A missing high-impact decision is a visible project state, not permission for a coding agent to invent a default.
 
 ## Build
 
