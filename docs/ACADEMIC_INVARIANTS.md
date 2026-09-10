@@ -168,7 +168,9 @@ It must not obtain later occurrences by adding fixed 7×24-hour Instant duration
 
 Converting academic wall-clock time to exact Instants must reject ambiguous or nonexistent local date-time transitions rather than silently choosing an offset.
 
-D3 uses the explicit transition-rejection behavior provided by the selected `kotlinx-datetime` API (`TransitionHandler.REJECT_TRANSITIONS` semantics).
+The D3 dependency baseline is `kotlinx-datetime 0.8.0`, which does not expose `TransitionHandler` as a usable public API for this resolver. Therefore D3 requires **strict transition-rejection semantics**, not a particular library call: the implementation must explicitly detect both nonexistent wall times and ambiguous wall times and reject either case deterministically.
+
+A valid implementation may use round-trip validation plus explicit alternative-offset detection, or a future library primitive with equivalent reject semantics after a deliberate dependency/API update. It must never silently choose an earlier/later offset or shift a nonexistent local time.
 
 If a base occurrence lands in an unresolved DST transition, course resolution returns an explicit resolution issue. A coding agent must not choose "earlier offset", "later offset", or shift the local time automatically.
 
