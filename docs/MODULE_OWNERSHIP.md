@@ -11,31 +11,34 @@ This document is about **ownership**, not just directory names. If a coding agen
 
 ```text
 :shared:domain
+:shared:application
 :shared:database
 :apps:android
 :apps:desktop
 :apps:wear
 ```
 
-No other Gradle module exists by default. Future modules from the architecture/roadmap are conceptual until a task explicitly creates them.
+D4 explicitly introduced `:shared:application`. No other Gradle module exists by default. Future modules from the architecture/roadmap are conceptual until a Task Spec explicitly creates them.
 
 ---
 
 # 2. Dependency direction
 
-Allowed high-level direction:
+Current concrete dependency direction:
 
 ```text
 Platform Apps
-   │
-   ├───────────────┐
-   ↓               ↓
-Application/Agent/Planner   Database/Infrastructure
-   │               │
-   └───────┬───────┘
-           ↓
-      shared:domain
+    │
+    ├───────────────┐
+    ↓               ↓
+:shared:application   :shared:database
+    │               │
+    ↓               ├──────────────→ :shared:application
+:shared:domain       │
+                    └──────────────→ :shared:domain
 ```
+
+Future Agent/Planner/Sync modules, when explicitly created, remain higher-level consumers of Domain/Application contracts rather than dependencies of `shared:domain`.
 
 `shared:domain` is at the bottom of dependency direction.
 
@@ -66,15 +69,17 @@ Crypto implementation
 | Time value semantics | `shared:domain` | DB maps | platform-local ad hoc types |
 | Current clock source | application/infrastructure | Planner receives value | arbitrary business methods |
 | Task dependency cycle validation | Domain service | UI may pre-check | DB cascade |
+| Application-facing repository contracts | `shared:application` | apps/future services consume | `shared:domain` / platform UI |
+| Application transaction contract | `shared:application` | database implements | UI/provider |
 | Planner feasibility | Planner | Agent/UI consume | LLM/provider |
 | Planner scoring | Planner | explanation layer reads | LLM hidden preference |
 | DecisionReason | Planner | Agent verbalizes | LLM invents |
 | PlanBranch lifecycle rules | Planner/application domain logic | UI renders | UI state machine alone |
 | Atomic PlanBranch Apply | application transaction boundary | DB implements transaction | UI/provider |
-| Persistence schema | `shared:database` (D4+) | Domain mapping | `shared:domain` |
+| Persistence schema | `shared:database` | Domain mapping | `shared:domain` |
 | Domain↔persistence mapping | `shared:database` | tests | UI |
 | DB migrations | `shared:database` | app startup orchestrates | Domain |
-| Repository implementation | data/database layer | application consumes | Domain entity |
+| Repository implementation | `shared:database` / data infrastructure | application consumes | Domain entity |
 | SyncOperation creation | Sync/application layer | transaction can coordinate | UI/provider |
 | DVV/HLC | Sync layer | audit/debug reads | Domain business meaning |
 | Semantic merge | Sync + domain merge policy | UI resolves conflicts | generic JSON merge |
@@ -216,14 +221,14 @@ Application command
     ↓
 Domain/Planner validation
     ↓
-Transaction Coordinator
+ApplicationTransactionRunner
     ├─ persist domain changes
-    ├─ append ChangeLog
+    ├─ append ChangeLog when that milestone exists
     ├─ append AgentAction if applicable
-    └─ emit SyncOperation(s)
+    └─ emit SyncOperation(s) when Sync exists
 ```
 
-The concrete database layer guarantees persistence atomicity once D4 defines the storage engine.
+D4 established the concrete Room transaction implementation in `shared:database`; higher layers express atomic intent through `shared:application` and do not import Room APIs.
 
 The LLM, UI, and Provider Adapter cannot split or reorder a declared atomic operation.
 
@@ -271,9 +276,9 @@ Do not create a single untyped `memory` blob that hides these distinctions.
 
 # 10. Database mapping rule
 
-Once D4 begins, persistence types should be considered storage representations, not the domain model itself.
+D4 established persistence types as storage representations, not the domain model itself.
 
-Preferred direction:
+Canonical direction:
 
 ```text
 DatabaseRecord
@@ -347,6 +352,9 @@ When adding behavior, choose its owner in this order:
 ```text
 Does it define what a domain concept means?
 → Domain
+
+Does it orchestrate repositories/transactions/application queries?
+→ Application
 
 Does it decide schedule feasibility/optimization?
 → Planner
