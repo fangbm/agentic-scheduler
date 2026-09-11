@@ -25,6 +25,7 @@ Before implementing any non-trivial feature, start with:
 - [`docs/MODULE_OWNERSHIP.md`](docs/MODULE_OWNERSHIP.md) — ownership of semantics, validation, state, transactions, and side effects.
 - [`docs/UBIQUITOUS_LANGUAGE.md`](docs/UBIQUITOUS_LANGUAGE.md) — canonical project vocabulary.
 - [`docs/CODING_AGENT_POLICY.md`](docs/CODING_AGENT_POLICY.md) — mandatory policy for delegated coding work.
+- [`docs/DEPENDENCY_POLICY.md`](docs/DEPENDENCY_POLICY.md) — mandatory dependency-selection policy; every Agent-selected third-party dependency must propose and pin an exact version.
 - [`docs/TASK_SPEC_TEMPLATE.md`](docs/TASK_SPEC_TEMPLATE.md) — template for deterministic milestone/task delegation.
 - [`docs/ARCHITECTURE_DIAGRAMS.md`](docs/ARCHITECTURE_DIAGRAMS.md) — detailed deterministic runtime/data-flow architecture.
 - [`docs/IMMUTABLE_COLLECTIONS_DECISION.md`](docs/IMMUTABLE_COLLECTIONS_DECISION.md) — frozen immutable/persistent collection policy and dependency decision.
