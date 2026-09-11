@@ -137,7 +137,8 @@ private fun CalendarRow(item: CalendarItem, events: EventRepository, onEdit: (Ev
     val scope = rememberCoroutineScope()
     Row {
         Text(item.title + if (item is CalendarItem.Floating) " (floating)" else "")
-        if (item.source is CalendarSourceRef.Event) Button(onClick = { scope.launch { events.get(item.source.id)?.let(onEdit) } }) { Text("Edit") }
+        val source = item.source as? CalendarSourceRef.Event
+        if (source != null) Button(onClick = { scope.launch { events.get(source.id)?.let(onEdit) } }) { Text("Edit") }
     }
 }
 
@@ -246,18 +247,18 @@ private fun Event?.eventKind(): EventKind = when (this?.time) { is ZonedTimeRang
 private fun Event?.startText(selectedDate: LocalDate): String = when (val time = this?.time) { is ZonedTimeRange -> time.start.toLocalDateTime(time.timeZone).toString(); is AllDayRange -> time.startDate.toString(); is FloatingTimeRange -> time.start.toString(); null -> if (eventKind() == EventKind.ALL_DAY) selectedDate.toString() else "" }
 private fun Event?.endText(selectedDate: LocalDate): String = when (val time = this?.time) { is ZonedTimeRange -> time.endExclusive.toLocalDateTime(time.timeZone).toString(); is AllDayRange -> time.endDateExclusive.toString(); is FloatingTimeRange -> time.endExclusive.toString(); null -> if (eventKind() == EventKind.ALL_DAY) selectedDate.plus(1, DateTimeUnit.DAY).toString() else "" }
 private fun Event?.timeZoneText(default: TimeZone): String = (this?.time as? ZonedTimeRange)?.timeZone?.id ?: default.id
-private fun EventKind.next(): EventKind = entries[(ordinal + 1) % entries.size]
-private fun Flexibility.next(): Flexibility = entries[(ordinal + 1) % entries.size]
-private fun PinState.next(): PinState = entries[(ordinal + 1) % entries.size]
-private fun TaskStatus.next(): TaskStatus = entries[(ordinal + 1) % entries.size]
-private fun TaskPriority.next(): TaskPriority = entries[(ordinal + 1) % entries.size]
-private fun DeadlinePolicy.next(): DeadlinePolicy = entries[(ordinal + 1) % entries.size]
-private fun OverflowPolicy.next(): OverflowPolicy = entries[(ordinal + 1) % entries.size]
-private fun DeadlineKind.next(): DeadlineKind = entries[(ordinal + 1) % entries.size]
+private fun EventKind.next(): EventKind = EventKind.entries[(ordinal + 1) % EventKind.entries.size]
+private fun Flexibility.next(): Flexibility = Flexibility.entries[(ordinal + 1) % Flexibility.entries.size]
+private fun PinState.next(): PinState = PinState.entries[(ordinal + 1) % PinState.entries.size]
+private fun TaskStatus.next(): TaskStatus = TaskStatus.entries[(ordinal + 1) % TaskStatus.entries.size]
+private fun TaskPriority.next(): TaskPriority = TaskPriority.entries[(ordinal + 1) % TaskPriority.entries.size]
+private fun DeadlinePolicy.next(): DeadlinePolicy = DeadlinePolicy.entries[(ordinal + 1) % DeadlinePolicy.entries.size]
+private fun OverflowPolicy.next(): OverflowPolicy = OverflowPolicy.entries[(ordinal + 1) % OverflowPolicy.entries.size]
+private fun DeadlineKind.next(): DeadlineKind = DeadlineKind.entries[(ordinal + 1) % DeadlineKind.entries.size]
 private fun parseEventTime(kind: EventKind, start: String, end: String, zone: String): EventTimeInput? = when (kind) { EventKind.ZONED -> runCatching { EventTimeInput.Zoned(LocalDateTime.parse(start), LocalDateTime.parse(end), TimeZone.of(zone)) }.getOrNull(); EventKind.ALL_DAY -> runCatching { EventTimeInput.AllDay(LocalDate.parse(start), LocalDate.parse(end)) }.getOrNull(); EventKind.FLOATING -> runCatching { EventTimeInput.Floating(LocalDateTime.parse(start), LocalDateTime.parse(end)) }.getOrNull() }
-private fun Task?.deadlineKind(): DeadlineKind? = when (deadline?.deadline) { is Deadline.DateOnly -> DeadlineKind.DATE_ONLY; is Deadline.Exact -> DeadlineKind.EXACT; null -> null }
+private fun Task?.deadlineKind(): DeadlineKind? = when (this?.deadline?.deadline) { is Deadline.DateOnly -> DeadlineKind.DATE_ONLY; is Deadline.Exact -> DeadlineKind.EXACT; null -> null }
 private fun Task?.deadlineValue(): String = when (val deadline = this?.deadline?.deadline) { is Deadline.DateOnly -> deadline.date.toString(); is Deadline.Exact -> deadline.at.toLocalDateTime(deadline.timeZone).toString(); null -> "" }
-private fun Task?.deadlineZone(): String = (deadline?.deadline as? Deadline.Exact)?.timeZone?.id ?: ""
+private fun Task?.deadlineZone(): String = (this?.deadline?.deadline as? Deadline.Exact)?.timeZone?.id ?: ""
 private fun parseOptionalDuration(text: String): Duration? = if (text.isBlank()) null else runCatching { Duration.parse(text) }.getOrNull()
 private fun parseRequiredDuration(text: String): Duration? = runCatching { Duration.parse(text) }.getOrNull()
 private fun parseDeadline(enabled: Boolean, kind: DeadlineKind?, value: String, zone: String, policy: DeadlinePolicy, overflow: OverflowPolicy): TaskDeadlineInput? { if (!enabled) return null; return when (kind) { DeadlineKind.DATE_ONLY -> runCatching { TaskDeadlineInput.DateOnly(LocalDate.parse(value), policy, overflow) }.getOrNull(); DeadlineKind.EXACT -> runCatching { TaskDeadlineInput.Exact(LocalDateTime.parse(value), TimeZone.of(zone), policy, overflow) }.getOrNull(); null -> null } }
