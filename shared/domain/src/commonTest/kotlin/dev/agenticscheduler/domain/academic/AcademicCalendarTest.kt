@@ -21,12 +21,17 @@ class AcademicCalendarTest {
         AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 8))
         assertFailsWith<IllegalArgumentException> { AcademicYear(year.id, "", year.startDate, year.endDateExclusive) }
         assertFailsWith<IllegalArgumentException> { AcademicYear(year.id, "x", year.startDate, year.startDate) }
+        assertFailsWith<IllegalArgumentException> { AcademicYear(year.id, "x", year.endDateExclusive, year.startDate) }
         assertFailsWith<IllegalArgumentException> { AcademicWeekNumber(0) }
+        assertFailsWith<IllegalArgumentException> { AcademicWeekNumber(-1) }
         assertFailsWith<IllegalArgumentException> {
             AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 7))
         }
         assertFailsWith<IllegalArgumentException> {
             AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 9))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 1))
         }
     }
 
@@ -48,6 +53,15 @@ class AcademicCalendarTest {
         assertFailsWith<IllegalArgumentException> {
             semester(listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 29), LocalDate(2026, 10, 6))))
         }
+        assertFailsWith<IllegalArgumentException> { semester(listOf(week(1, 1))).copy(name = " ") }
+    }
+
+    @Test
+    fun `semester owns an immutable snapshot of academic weeks`() {
+        val suppliedWeeks = mutableListOf(week(1, 1))
+        val semester = semester(suppliedWeeks)
+        suppliedWeeks.clear()
+        assertEquals(listOf(1), semester.academicWeeks.map { it.number.value })
     }
 
     @Test
@@ -63,6 +77,7 @@ class AcademicCalendarTest {
         )
         val shortYear = AcademicYear(year.id, year.name, LocalDate(2026, 9, 2), year.endDateExclusive)
         assertEquals(SemesterAcademicYearValidationResult.OUTSIDE_ACADEMIC_YEAR, validateSemesterAgainstAcademicYear(shortYear, valid))
+        Semester(SemesterId(id(11)), year.id, "Also Fall", LocalDate(2026, 9, 1), LocalDate(2026, 10, 1), TimeZone.UTC, listOf(week(1, 1)))
     }
 
     private fun semester(weeks: List<AcademicWeek>): Semester = Semester(

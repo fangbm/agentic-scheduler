@@ -55,6 +55,10 @@ class ExamTest {
             validateExamAgainstSemester(exam(ExamSchedule.DateOnly(LocalDate(2026, 10, 1))), semester, null),
         )
         assertEquals(
+            ExamValidationResult.SCHEDULE_OUTSIDE_SEMESTER,
+            validateExamAgainstSemester(exam(ExamSchedule.DateOnly(LocalDate(2026, 8, 31))), semester, null),
+        )
+        assertEquals(
             ExamValidationResult.TIME_ZONE_MISMATCH,
             validateExamAgainstSemester(
                 exam(ExamSchedule.Exact(ZonedTimeRange(

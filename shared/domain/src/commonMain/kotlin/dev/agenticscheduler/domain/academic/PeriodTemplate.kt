@@ -20,11 +20,13 @@ data class AcademicPeriod(
     }
 }
 
-data class PeriodTemplate(
+class PeriodTemplate(
     val id: PeriodTemplateId,
     val name: String,
-    val periods: List<AcademicPeriod>,
+    periods: List<AcademicPeriod>,
 ) {
+    val periods: List<AcademicPeriod> = periods.toList()
+
     init {
         require(name.isNotBlank()) { "A period template name must not be blank." }
         require(periods.isNotEmpty()) { "A period template must define periods." }
@@ -41,4 +43,17 @@ data class PeriodTemplate(
             }
         }
     }
+
+    fun copy(
+        id: PeriodTemplateId = this.id,
+        name: String = this.name,
+        periods: List<AcademicPeriod> = this.periods,
+    ): PeriodTemplate = PeriodTemplate(id, name, periods)
+
+    override fun equals(other: Any?): Boolean = other is PeriodTemplate &&
+        id == other.id && name == other.name && periods == other.periods
+
+    override fun hashCode(): Int = listOf(id, name, periods).hashCode()
+
+    override fun toString(): String = "PeriodTemplate(id=$id, name=$name, periods=$periods)"
 }

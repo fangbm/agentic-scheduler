@@ -21,6 +21,8 @@ class CourseScheduleTest {
         val canonical = TeachingWeekSet.of(listOf(AcademicWeekNumber(3), AcademicWeekNumber(1), AcademicWeekNumber(3)))
         assertEquals(listOf(1, 3), canonical.weeks.map { it.value })
         assertEquals(canonical, TeachingWeekSet.of(listOf(AcademicWeekNumber(1), AcademicWeekNumber(3))))
+        assertEquals(listOf(1), TeachingWeekSet.of(listOf(AcademicWeekNumber(1))).weeks.map { it.value })
+        assertEquals(listOf(1, 3, 5), TeachingWeekSet.of(listOf(AcademicWeekNumber(5), AcademicWeekNumber(1), AcademicWeekNumber(3))).weeks.map { it.value })
         assertFailsWith<IllegalArgumentException> { TeachingWeekSet.of(emptyList()) }
     }
 
@@ -29,6 +31,7 @@ class CourseScheduleTest {
         val first = AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(8, 45))
         val second = AcademicPeriod(AcademicPeriodNumber(3), LocalTime(9, 0), LocalTime(9, 45))
         PeriodTemplate(PeriodTemplateId(id(20)), "Regular", listOf(first, second))
+        PeriodTemplate(PeriodTemplateId(id(20)), "Adjacent", listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(8, 45), LocalTime(9, 30))))
         assertFailsWith<IllegalArgumentException> { AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(8, 0)) }
         assertFailsWith<IllegalArgumentException> {
             PeriodTemplate(PeriodTemplateId(id(21)), "x", listOf(second, first))
@@ -40,9 +43,16 @@ class CourseScheduleTest {
                 listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(8, 30), LocalTime(9, 0))),
             )
         }
+        assertFailsWith<IllegalArgumentException> {
+            PeriodTemplate(PeriodTemplateId(id(23)), "x", listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(7, 0), LocalTime(7, 45))))
+        }
         CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(9, 0))
+        CourseTimeSpec.PeriodBased(PeriodTemplateId(id(20)), AcademicPeriodNumber(1), AcademicPeriodNumber(1))
         CourseTimeSpec.PeriodBased(PeriodTemplateId(id(20)), AcademicPeriodNumber(1), AcademicPeriodNumber(3))
         assertFailsWith<IllegalArgumentException> { CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(8, 0)) }
+        assertFailsWith<IllegalArgumentException> { CourseTimeSpec.ClockTime(LocalTime(9, 0), LocalTime(8, 0)) }
+        assertFailsWith<IllegalArgumentException> { AcademicPeriodNumber(0) }
+        assertFailsWith<IllegalArgumentException> { AcademicPeriod(AcademicPeriodNumber(1), LocalTime(9, 0), LocalTime(8, 0)) }
         assertFailsWith<IllegalArgumentException> {
             CourseTimeSpec.PeriodBased(PeriodTemplateId(id(20)), AcademicPeriodNumber(3), AcademicPeriodNumber(1))
         }
@@ -72,10 +82,21 @@ class CourseScheduleTest {
                 RoomOverride.Unchanged,
             )
         }
+        assertFailsWith<IllegalArgumentException> {
+            CourseOccurrenceException(CourseOccurrenceExceptionId(id(35)), key, CourseOccurrenceDisposition.CANCELLED, null, RoomOverride.Clear)
+        }
         val active = CourseOccurrenceException(
             CourseOccurrenceExceptionId(id(34)), key, CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Clear,
         )
         assertEquals(RoomOverride.Clear, active.roomOverride)
         assertIs<RoomOverride.Set>(RoomOverride.Set("A101"))
+    }
+
+    @Test
+    fun `period template owns an immutable snapshot of periods`() {
+        val suppliedPeriods = mutableListOf(AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(9, 0)))
+        val template = PeriodTemplate(PeriodTemplateId(id(36)), "Regular", suppliedPeriods)
+        suppliedPeriods.clear()
+        assertEquals(listOf(1), template.periods.map { it.number.value })
     }
 }

@@ -40,6 +40,23 @@ class EntityIdsTest {
     }
 
     @Test
+    fun `every D3 ID family rejects every noncanonical UUID category`() {
+        val d3Factories: List<(String) -> Any> = listOf(
+            ::AcademicYearId, ::SemesterId, ::CourseId, ::CourseScheduleRuleId,
+            ::CourseOccurrenceExceptionId, ::ExamId, ::AcademicHolidayId, ::PeriodTemplateId,
+        )
+        val invalidValues = listOf(
+            "not-a-uuid",
+            "018f6e68-7d0c-4000-8000-000000000001",
+            "018F6E68-7D0C-7000-8000-000000000001",
+            "018f6e68-7d0c-7000-c000-000000000001",
+        )
+        d3Factories.forEach { factory ->
+            invalidValues.forEach { invalid -> assertFailsWith<IllegalArgumentException> { factory(invalid) } }
+        }
+    }
+
+    @Test
     fun `typed IDs remain distinct API types`() {
         val eventId = EventId("018f6e68-7d0c-7000-8000-000000000001")
         assertEquals(eventId, acceptsEventId(eventId))
