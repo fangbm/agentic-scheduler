@@ -165,6 +165,25 @@ private fun CalendarItem.intersects(viewport: CalendarViewport): Boolean = when 
     is CalendarItem.DateOnly -> date >= viewport.startDate && date < viewport.endDateExclusive
 }
 
+/** Whether this presentation item intersects one local calendar date in the explicit display timezone. */
+fun CalendarItem.intersectsLocalDate(date: LocalDate, displayTimeZone: TimeZone): Boolean {
+    val nextDate = date.plus(1, DateTimeUnit.DAY)
+    return when (this) {
+        is CalendarItem.Zoned -> {
+            val dayStart = date.atStartOfDayIn(displayTimeZone)
+            val dayEnd = nextDate.atStartOfDayIn(displayTimeZone)
+            originalRange.start < dayEnd && dayStart < originalRange.endExclusive
+        }
+        is CalendarItem.AllDay -> range.startDate < nextDate && date < range.endDateExclusive
+        is CalendarItem.Floating -> {
+            val dayStart = LocalDateTime(date, LocalTime(0, 0))
+            val dayEnd = LocalDateTime(nextDate, LocalTime(0, 0))
+            range.start < dayEnd && dayStart < range.endExclusive
+        }
+        is CalendarItem.DateOnly -> this.date == date
+    }
+}
+
 private val calendarItemComparator = Comparator<CalendarItem> { first, second ->
     val group = first.groupRank().compareTo(second.groupRank())
     if (group != 0) group else when {

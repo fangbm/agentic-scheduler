@@ -114,6 +114,34 @@ class CalendarProjectionTest {
         )
     }
 
+    @Test fun `local date intersection includes cross midnight zoned and floating items`() {
+        val date = LocalDate(2026, 3, 3)
+        val zoned = CalendarItem.Zoned(
+            CalendarSourceRef.Event(EventId(id(50))),
+            "Overnight zoned",
+            ZonedTimeRange(
+                Instant.parse("2026-03-03T04:30:00Z"),
+                Instant.parse("2026-03-03T06:00:00Z"),
+                zone,
+            ),
+        )
+        val floating = CalendarItem.Floating(
+            CalendarSourceRef.Event(EventId(id(51))),
+            "Overnight floating",
+            FloatingTimeRange(
+                LocalDateTime(2026, 3, 2, 23, 30),
+                LocalDateTime(2026, 3, 3, 1, 0),
+            ),
+        )
+
+        assertTrue(zoned.intersectsLocalDate(date, zone))
+        assertTrue(floating.intersectsLocalDate(date, zone))
+        assertTrue(zoned.intersectsLocalDate(LocalDate(2026, 3, 2), zone))
+        assertTrue(floating.intersectsLocalDate(LocalDate(2026, 3, 2), zone))
+        assertFalse(zoned.intersectsLocalDate(LocalDate(2026, 3, 4), zone))
+        assertFalse(floating.intersectsLocalDate(LocalDate(2026, 3, 4), zone))
+    }
+
     @Test fun `repository flow updates produce a new projection`() = runBlocking {
         val eventRepository = FakeEventRepository()
         val service = RepositoryCalendarQueryService(eventRepository, FakeTaskRepository(), FakeAcademicRepository())
