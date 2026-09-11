@@ -36,7 +36,13 @@ class RoomTaskRepository(private val database: AgenticSchedulerDatabase) : TaskR
     override suspend fun upsertWorkLog(workLog: WorkLog) = database.workLogDao().upsert(workLog.toRecord())
     override fun observeDependencies() = database.taskDependencyDao().observeAll().map { it.map { row -> row.toDomain() }.toImmutableList() }
     override suspend fun getDependency(id: TaskDependencyId) = database.taskDependencyDao().get(id.value)?.toDomain()
-    override suspend fun upsertDependency(dependency: TaskDependency) = database.taskDependencyDao().upsert(dependency.toRecord())
+    override suspend fun upsertDependency(dependency: TaskDependency) {
+        val record = dependency.toRecord()
+        check(database.taskDependencyDao().idForPair(record.prerequisiteTaskId, record.dependentTaskId)?.let { it == record.id } != false) {
+            "A TaskDependency pair must be unique."
+        }
+        database.taskDependencyDao().upsert(record)
+    }
 }
 
 class RoomPlanningProfileRepository(private val database: AgenticSchedulerDatabase) : PlanningProfileRepository {
@@ -71,7 +77,13 @@ class RoomAcademicRepository(private val database: AgenticSchedulerDatabase) : A
     override suspend fun upsertAcademicHoliday(value: AcademicHoliday) = database.academicHolidayDao().upsert(value.toRecord())
     override fun observeCourseOccurrenceExceptions() = database.courseOccurrenceExceptionDao().observeAll().map { it.map { row -> row.toDomain() }.toImmutableList() }
     override suspend fun getCourseOccurrenceException(id: CourseOccurrenceExceptionId) = database.courseOccurrenceExceptionDao().get(id.value)?.toDomain()
-    override suspend fun upsertCourseOccurrenceException(value: CourseOccurrenceException) = database.courseOccurrenceExceptionDao().upsert(value.toRecord())
+    override suspend fun upsertCourseOccurrenceException(value: CourseOccurrenceException) {
+        val record = value.toRecord()
+        check(database.courseOccurrenceExceptionDao().idForOccurrence(record.scheduleRuleId, record.academicWeekNumber)?.let { it == record.id } != false) {
+            "A CourseOccurrenceException target must be unique."
+        }
+        database.courseOccurrenceExceptionDao().upsert(record)
+    }
     override fun observeExams() = database.examDao().observeAll().map { it.map { row -> row.toDomain() }.toImmutableList() }
     override suspend fun getExam(id: ExamId) = database.examDao().get(id.value)?.toDomain()
     override suspend fun upsertExam(value: Exam) = database.examDao().upsert(value.toRecord())

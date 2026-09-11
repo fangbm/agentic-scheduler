@@ -3,6 +3,7 @@ package dev.agenticscheduler.database
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
+import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.AcademicYearId
@@ -37,7 +38,13 @@ import dev.agenticscheduler.domain.id.AcademicHolidayId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFails
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -89,6 +96,20 @@ class PersistenceIntegrationTest {
         val tasks = RoomTaskRepository(database)
         tasks.upsertTask(task(3)); tasks.upsertTask(task(1)); tasks.upsertTask(task(2))
         assertEquals(listOf(id(1), id(2), id(3)), tasks.observeTasks().first().map { it.id.value })
+        database.close()
+    }
+
+    @Test fun `observers receive a new emission after an upsert`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val repository = RoomTaskRepository(database)
+        val initialEmission = CompletableDeferred<Unit>()
+        val next = async(start = CoroutineStart.UNDISPATCHED) {
+            repository.observeTasks().onEach { initialEmission.complete(Unit) }.drop(1).first()
+        }
+        initialEmission.await()
+        val value = task(4)
+        repository.upsertTask(value)
+        assertEquals(listOf(value), next.await())
         database.close()
     }
 
@@ -157,6 +178,64 @@ class PersistenceIntegrationTest {
         assertFailsWith<IllegalStateException> { runner.inWriteTransaction { repository.upsertSemester(semester); error("rollback aggregate") } }
         assertEquals(null, repository.getSemester(semester.id))
         database.close()
+    }
+
+    @Test fun `all authoritative D2 and D3 source facts round trip through SQLite`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val tasks = RoomTaskRepository(database)
+        val profiles = RoomPlanningProfileRepository(database)
+        val academic = RoomAcademicRepository(database)
+        val range = ZonedTimeRange(Instant.fromEpochSeconds(500, 123), Instant.fromEpochSeconds(800, 456), TimeZone.of("Asia/Shanghai"))
+        val firstTask = task(60).copy(deadline = TaskDeadline(Deadline.Exact(range.start, range.timeZone), DeadlinePolicy.HARD, OverflowPolicy.ASK))
+        val secondTask = task(61)
+        val focus = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(62)), firstTask.id, range, Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val log = dev.agenticscheduler.domain.task.WorkLog(WorkLogId(id(63)), firstTask.id, range)
+        val dependency = dev.agenticscheduler.domain.task.TaskDependency(TaskDependencyId(id(64)), firstTask.id, secondTask.id)
+        val profile = dev.agenticscheduler.domain.planning.PlanningProfile(PlanningProfileId(id(65)), "Default")
+        tasks.upsertTask(firstTask); tasks.upsertTask(secondTask); tasks.upsertFocusBlock(focus); tasks.upsertWorkLog(log); tasks.upsertDependency(dependency); profiles.upsert(profile)
+        assertEquals("PT0S", database.taskDao().get(firstTask.id.value)?.effortCompletedIso)
+        assertEquals(firstTask, tasks.getTask(firstTask.id)); assertEquals(focus, tasks.getFocusBlock(focus.id)); assertEquals(log, tasks.getWorkLog(log.id)); assertEquals(dependency, tasks.getDependency(dependency.id)); assertEquals(profile, profiles.get(profile.id))
+        val year = AcademicYear(AcademicYearId(id(66)), "2026-27", LocalDate(2026, 9, 1), LocalDate(2027, 1, 1))
+        val semester = Semester(SemesterId(id(67)), year.id, "Autumn", LocalDate(2026, 9, 1), LocalDate(2026, 12, 1), TimeZone.of("Asia/Shanghai"), listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 7), LocalDate(2026, 9, 14))).toImmutableList())
+        val course = Course(CourseId(id(68)), semester.id, "Math", "MATH")
+        val template = PeriodTemplate(PeriodTemplateId(id(69)), "Periods", listOf(AcademicPeriod(AcademicPeriodNumber(1), kotlinx.datetime.LocalTime(9, 0), kotlinx.datetime.LocalTime(10, 0))).toImmutableList())
+        val rule = CourseScheduleRule(CourseScheduleRuleId(id(70)), course.id, DayOfWeek.MONDAY, TeachingWeekSet.of(listOf(AcademicWeekNumber(1))), CourseTimeSpec.PeriodBased(template.id, AcademicPeriodNumber(1), AcademicPeriodNumber(1)), "A101")
+        val holiday = AcademicHoliday(AcademicHolidayId(id(71)), semester.id, "Break", AllDayRange(LocalDate(2026, 10, 1), LocalDate(2026, 10, 2)), AcademicHolidayTeachingEffect.SUSPEND_TEACHING)
+        val exception = CourseOccurrenceException(CourseOccurrenceExceptionId(id(72)), CourseOccurrenceKey(rule.id, AcademicWeekNumber(1)), CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Clear)
+        val exam = Exam(ExamId(id(73)), semester.id, course.id, "Final", ExamSchedule.Exact(range))
+        academic.upsertAcademicYear(year); academic.upsertSemester(semester); academic.upsertCourse(course); academic.upsertPeriodTemplate(template); academic.upsertCourseScheduleRule(rule); academic.upsertAcademicHoliday(holiday); academic.upsertCourseOccurrenceException(exception); academic.upsertExam(exam)
+        assertEquals(year, academic.getAcademicYear(year.id)); assertEquals(semester, academic.getSemester(semester.id)); assertEquals(course, academic.getCourse(course.id)); assertEquals(template, academic.getPeriodTemplate(template.id)); assertEquals(rule, academic.getCourseScheduleRule(rule.id)); assertEquals(holiday, academic.getAcademicHoliday(holiday.id)); assertEquals(exception, academic.getCourseOccurrenceException(exception.id)); assertEquals(exam, academic.getExam(exam.id))
+        database.close()
+    }
+
+    @Test fun `foreign keys and unique constraints reject invalid records`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val tasks = RoomTaskRepository(database)
+        val range = ZonedTimeRange(Instant.fromEpochSeconds(1), Instant.fromEpochSeconds(2), TimeZone.of("UTC"))
+        val orphan = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(80)), TaskId(id(81)), range, Flexibility.FLEXIBLE, PinState.UNPINNED)
+        assertFails { tasks.upsertFocusBlock(orphan) }
+        val prerequisite = task(82); val dependent = task(83)
+        tasks.upsertTask(prerequisite); tasks.upsertTask(dependent)
+        tasks.upsertDependency(dev.agenticscheduler.domain.task.TaskDependency(TaskDependencyId(id(84)), prerequisite.id, dependent.id))
+        assertFails { tasks.upsertDependency(dev.agenticscheduler.domain.task.TaskDependency(TaskDependencyId(id(85)), prerequisite.id, dependent.id)) }
+        val academic = RoomAcademicRepository(database)
+        val year = AcademicYear(AcademicYearId(id(86)), "2026-27", LocalDate(2026, 9, 1), LocalDate(2027, 1, 1))
+        val semester = Semester(SemesterId(id(87)), year.id, "Autumn", LocalDate(2026, 9, 1), LocalDate(2026, 12, 1), TimeZone.of("UTC"), listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 7), LocalDate(2026, 9, 14))).toImmutableList())
+        val course = Course(CourseId(id(88)), semester.id, "Math", null)
+        val rule = CourseScheduleRule(CourseScheduleRuleId(id(89)), course.id, DayOfWeek.MONDAY, TeachingWeekSet.of(listOf(AcademicWeekNumber(1))), CourseTimeSpec.ClockTime(kotlinx.datetime.LocalTime(9, 0), kotlinx.datetime.LocalTime(10, 0)), null)
+        academic.upsertAcademicYear(year); academic.upsertSemester(semester); academic.upsertCourse(course); academic.upsertCourseScheduleRule(rule)
+        val key = CourseOccurrenceKey(rule.id, AcademicWeekNumber(1))
+        academic.upsertCourseOccurrenceException(CourseOccurrenceException(CourseOccurrenceExceptionId(id(90)), key, CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Unchanged))
+        assertFails { academic.upsertCourseOccurrenceException(CourseOccurrenceException(CourseOccurrenceExceptionId(id(91)), key, CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Unchanged)) }
+        database.close()
+    }
+
+    @Test fun `corrupt records fail visibly including strict ISO duration decoding`() {
+        val event = Event(EventId(id(90)), "event", ZonedTimeRange(Instant.fromEpochSeconds(1), Instant.fromEpochSeconds(2), TimeZone.of("UTC")), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        assertFails { event.toRecord().copy(id = "invalid").toDomain() }
+        assertFails { event.toRecord().copy(flexibility = "UNKNOWN").toDomain() }
+        assertFails { event.toRecord().copy(timeKind = "ZONED", zonedStartNanos = null).toDomain() }
+        assertFails { task(91).toRecord().copy(effortCompletedIso = "1h").toDomain() }
     }
 
     @Test fun `exported v1 schema opens through Room migration harness`() = runBlocking {

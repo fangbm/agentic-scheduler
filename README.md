@@ -2,12 +2,13 @@
 
 A local-first, end-to-end encrypted scheduler built with Kotlin Multiplatform.
 
-The repository began with the D1 bootstrap. D2 Core Domain and D3 Academic Domain contracts/implementation now extend that baseline; later persistence, Planner, Sync, E2EE, Agent, and server milestones remain governed by their own scope fences and decisions.
+The repository includes the D1 bootstrap, D2 Core Domain, D3 Academic Domain, and D4 local-persistence baseline. Later Planner, Sync, E2EE, Agent, and server milestones remain governed by their own scope fences and decisions.
 
 ## Modules
 
 - `shared:domain`: pure Kotlin Multiplatform domain boundary, shared by Android, Desktop, and Wear OS.
-- `shared:database`: KMP module boundary reserved for the later persistence implementation; intentionally contains no schema, Room, or repository code before D4 authorizes them.
+- `shared:application`: application-facing repository and transaction contracts, dependent only on Domain and multiplatform collection/coroutine APIs.
+- `shared:database`: Room 3 / SQLite KMP persistence implementation, including the exported v1 schema, records, mappers, repositories, and platform database builders.
 - `apps:android`: Android Compose shell.
 - `apps:desktop`: Compose Desktop shell.
 - `apps:wear`: Compose for Wear OS shell.
