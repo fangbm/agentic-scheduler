@@ -66,13 +66,14 @@ Canonical root package:
 dev.agenticscheduler
 ```
 
-Current platform namespaces:
+Current module/package roots include:
 
 ```text
 dev.agenticscheduler.android
 dev.agenticscheduler.desktop
 dev.agenticscheduler.wear
 dev.agenticscheduler.domain
+dev.agenticscheduler.application
 dev.agenticscheduler.database
 ```
 
@@ -100,13 +101,14 @@ Current modules are authoritative until the roadmap/task explicitly introduces m
 
 ```text
 :shared:domain
+:shared:application
 :shared:database
 :apps:android
 :apps:desktop
 :apps:wear
 ```
 
-A coding agent may not create a new Gradle module merely because it seems cleaner.
+D4 explicitly authorized and introduced `:shared:application`. A coding agent may not create another Gradle module merely because it seems cleaner.
 
 A new module requires either:
 
@@ -140,6 +142,8 @@ Direct calls to random UUID generation from domain business logic are forbidden.
 
 ID generation belongs to an application/infrastructure boundary through an injectable abstraction such as `IdGenerator`.
 
+The exact production UUIDv7 generator implementation remains deferred until the first production creator task explicitly freezes it.
+
 ---
 
 # 6. Clock and current time
@@ -166,15 +170,13 @@ A recorded `createdAt` or planning reference time therefore has a deterministic 
 
 Common/domain code uses multiplatform time semantics. Do not introduce `java.time.*` into `commonMain`.
 
-When concrete date/time types are needed, use Kotlin multiplatform-compatible APIs, with `kotlinx-datetime` as the intended external date/time library unless an ADR changes that choice.
+When concrete date/time types are needed, use Kotlin multiplatform-compatible APIs, with `kotlinx-datetime` as the approved external date/time library unless an ADR changes that choice.
 
 Durations use Kotlin `Duration`, not raw millisecond/second `Long` values in domain APIs.
 
 Raw epoch values are permitted only at serialization/persistence boundaries where explicitly mapped.
 
 All interval semantics continue to follow `DOMAIN_INVARIANTS.md`, including half-open `[start, end)` ranges and Zoned / AllDay / Floating distinctions.
-
-If the required `kotlinx-datetime` version is not yet present in the catalog, adding it must be explicit in the task/PR; a coding agent must not hide an arbitrary version selection inside unrelated work.
 
 ---
 
@@ -352,29 +354,58 @@ SQL schema annotations
 persistence-specific IDs/foreign-key behavior
 ```
 
-`shared:database` owns persistence representations and mapping between persistence records and domain objects.
+D4 resolved the concrete local persistence baseline:
+
+```text
+Room 3.0.3
+SQLite KMP 2.7.0
+BundledSQLiteDriver
+AgenticSchedulerDatabase schema v1 baseline
+schema export under shared/database/schemas
+no destructive-migration fallback
+```
+
+`shared:database` owns persistence representations, migrations, DAOs, and mapping between persistence records and domain objects.
 
 Database schema choices must not redefine domain semantics.
 
-D4 will choose/implement the concrete persistence stack according to its task/ADR. Before D4, coding agents must not introduce Room/SQLDelight/schema/repositories into D2/D3 simply because persistence will eventually need them.
+Later schema changes must preserve D4 migration/compatibility rules and add explicit migration coverage.
 
 ---
 
 # 17. Repository ownership
 
-Repository contracts are application/data-access boundaries, not core entity semantics.
+D4 resolved repository placement.
 
-Until repository architecture is explicitly introduced by a task, do not add repository interfaces to `shared:domain` merely to prepare for future persistence.
+Application-facing persistence contracts live in:
 
-Once introduced, repository interfaces must be owned by the layer that consumes the abstraction, while concrete persistence implementations remain in the database/infrastructure layer. The exact repository package/module must be established by the task that introduces it.
+```text
+:shared:application
+dev.agenticscheduler.application.persistence
+```
 
-This item is intentionally **DECISION_REQUIRED before first repository implementation**; agents may not preemptively choose a repository architecture.
+Concrete Room/SQLite implementations live in:
+
+```text
+:shared:database
+```
+
+Rules:
+
+- repository contracts remain outside `shared:domain`;
+- platform UI consumes application contracts/services, not DAOs;
+- database records/DAOs do not leak into application/domain APIs;
+- moving repository contracts to another module requires an explicit superseding decision.
+
+This item is no longer `DECISION_REQUIRED`; OD-011 records the resolved boundary.
 
 ---
 
 # 18. Transactions
 
 Business operations that change multiple entities atomically must expose one application-level transaction boundary.
+
+D4 provides `ApplicationTransactionRunner` in `shared:application` with its Room implementation in `shared:database`.
 
 PlanBranch Apply is always atomic.
 
@@ -400,7 +431,7 @@ A local persistence optimization must not destroy information required for conve
 
 # 20. Serialization
 
-Serialization format is not part of D2 domain modeling unless the current task explicitly requires it.
+Serialization format is not part of Domain modeling unless the current task explicitly requires it.
 
 Do not add serialization annotations to domain classes merely for convenience.
 
@@ -434,7 +465,7 @@ No DI framework is currently frozen.
 Therefore:
 
 ```text
-Koin       NOT AUTHORIZED BY DEFAULT
+Koin        NOT AUTHORIZED BY DEFAULT
 Dagger/Hilt NOT AUTHORIZED BY DEFAULT
 Kodein      NOT AUTHORIZED BY DEFAULT
 ```
@@ -605,9 +636,9 @@ Platform UI may keep simple local state during early milestones.
 
 Domain rules do not live in composables/activities/windows.
 
-A platform UI may adapt domain state for display but must not redefine entity semantics.
+A platform UI may adapt application/domain state for display but must not redefine entity semantics.
 
-Large UI state/navigation architecture is **DECISION_REQUIRED** when the first feature requires it.
+Large UI state/navigation architecture remains `DECISION_REQUIRED` when the first feature exceeds simple screen-local state.
 
 ---
 
@@ -678,7 +709,7 @@ A milestone/task defines a positive and negative scope.
 
 Coding agents must not implement later roadmap layers early unless the current task explicitly requires them.
 
-Example for D2:
+Example for an early pure-Domain task:
 
 ```text
 MAY:
@@ -686,12 +717,12 @@ MAY:
 - add pure invariant validation
 - add common unit tests
 
-MUST NOT:
-- add Room / SQL schema / repository implementation
+MUST NOT unless the current task authorizes it:
+- add persistence/schema work
 - add Sync serialization
 - add network/API code
 - add Agent runtime
-- add Planner implementation beyond contracts explicitly requested
+- add Planner implementation
 - add UI feature work
 - add server code
 ```
