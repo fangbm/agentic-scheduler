@@ -2,6 +2,13 @@ package dev.agenticscheduler.database
 
 import dev.agenticscheduler.application.calendar.CalendarViewport
 import dev.agenticscheduler.application.calendar.RepositoryCalendarQueryService
+import dev.agenticscheduler.application.editing.CreateEventInput
+import dev.agenticscheduler.application.editing.CreateTaskInput
+import dev.agenticscheduler.application.editing.EditingResult
+import dev.agenticscheduler.application.editing.EventEditingService
+import dev.agenticscheduler.application.editing.EventTimeInput
+import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.UuidV7Generator
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
@@ -41,6 +48,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFails
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -53,6 +62,7 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.DayOfWeek
 import kotlin.time.Instant
+import kotlin.time.Clock
 import kotlinx.collections.immutable.toImmutableList
 import java.nio.file.Files
 import androidx.room3.testing.MigrationTestHelper
@@ -150,6 +160,42 @@ class PersistenceIntegrationTest {
         val secondDatabase = openDesktopDatabase(path.toString())
         val after = RepositoryCalendarQueryService(RoomEventRepository(secondDatabase), RoomTaskRepository(secondDatabase), RoomAcademicRepository(secondDatabase)).observe(viewport).first()
         assertEquals(before, after)
+        secondDatabase.close(); Files.deleteIfExists(path); Unit
+    }
+
+    @Test fun `D5 editors persist source facts and refresh the calendar without FocusBlocks`() = runBlocking {
+        val path = Files.createTempFile("agentic-scheduler-d5-edit-", ".db")
+        Files.delete(path)
+        var randomSeed = 0
+        val ids = UuidV7Generator(
+            object : Clock { override fun now(): Instant = Instant.parse("2026-09-10T00:00:00Z") },
+        ) { bytes -> bytes.indices.forEach { index -> bytes[index] = (randomSeed + index).toByte() }; randomSeed += 1 }
+        val firstDatabase = openDesktopDatabase(path.toString())
+        val events = RoomEventRepository(firstDatabase)
+        val tasks = RoomTaskRepository(firstDatabase)
+        val runner = RoomApplicationTransactionRunner(firstDatabase)
+        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, runner, ids).create(
+            CreateEventInput(
+                "Created event",
+                EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)),
+                Flexibility.HARD,
+                PinState.UNPINNED,
+            ),
+        )).value)
+        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, runner, ids).create(
+            CreateTaskInput("Created task", TaskPriority.NORMAL, null, null, null),
+        )).value)
+        val viewport = CalendarViewport(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11), TimeZone.UTC)
+        val projection = RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(firstDatabase)).observe(viewport).first()
+        assertTrue(projection.items.any { it.title == event.title })
+        assertTrue(tasks.observeFocusBlocks().first().isEmpty())
+        firstDatabase.close()
+
+        val secondDatabase = openDesktopDatabase(path.toString())
+        val reloadedEvents = RoomEventRepository(secondDatabase)
+        val reloadedTasks = RoomTaskRepository(secondDatabase)
+        assertEquals(event, reloadedEvents.get(event.id))
+        assertEquals(task, reloadedTasks.getTask(task.id))
         secondDatabase.close(); Files.deleteIfExists(path); Unit
     }
 

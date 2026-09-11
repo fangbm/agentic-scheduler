@@ -3,67 +3,120 @@ package dev.agenticscheduler.android
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarConflict
+import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
 import dev.agenticscheduler.application.calendar.CalendarQueryService
+import dev.agenticscheduler.application.calendar.CalendarSourceRef
 import dev.agenticscheduler.application.calendar.CalendarViewport
 import dev.agenticscheduler.application.calendar.RepositoryCalendarQueryService
+import dev.agenticscheduler.application.editing.CreateEventInput
+import dev.agenticscheduler.application.editing.CreateTaskInput
+import dev.agenticscheduler.application.editing.EditingResult
+import dev.agenticscheduler.application.editing.EventEditingService
+import dev.agenticscheduler.application.editing.EventTimeInput
+import dev.agenticscheduler.application.editing.TaskDeadlineInput
+import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.UpdateEventInput
+import dev.agenticscheduler.application.editing.UpdateTaskInput
+import dev.agenticscheduler.application.editing.UuidV7Generator
+import dev.agenticscheduler.application.persistence.EventRepository
+import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.database.openAndroidDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
+import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
+import dev.agenticscheduler.domain.event.Event
+import dev.agenticscheduler.domain.planning.Deadline
+import dev.agenticscheduler.domain.planning.DeadlinePolicy
+import dev.agenticscheduler.domain.planning.Flexibility
+import dev.agenticscheduler.domain.planning.OverflowPolicy
+import dev.agenticscheduler.domain.planning.PinState
+import dev.agenticscheduler.domain.task.Task
+import dev.agenticscheduler.domain.task.TaskPriority
+import dev.agenticscheduler.domain.task.TaskStatus
+import dev.agenticscheduler.domain.time.AllDayRange
+import dev.agenticscheduler.domain.time.FloatingTimeRange
+import dev.agenticscheduler.domain.time.ZonedTimeRange
+import java.security.SecureRandom
 import kotlinx.collections.immutable.toImmutableList
-import kotlin.time.Clock
+import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
+import kotlin.time.Clock
+import kotlin.time.Duration
 
 class MainActivity : ComponentActivity() {
-    private val calendarQueryService: CalendarQueryService by lazy {
-        val database = openAndroidDatabase(this)
-        RepositoryCalendarQueryService(RoomEventRepository(database), RoomTaskRepository(database), RoomAcademicRepository(database))
+    private val database by lazy { openAndroidDatabase(this) }
+    private val events by lazy { RoomEventRepository(database) }
+    private val tasks by lazy { RoomTaskRepository(database) }
+    private val transactionRunner by lazy { RoomApplicationTransactionRunner(database) }
+    private val ids by lazy {
+        val secureRandom = SecureRandom()
+        UuidV7Generator(Clock.System, secureRandom::nextBytes)
     }
+    private val calendarQueryService: CalendarQueryService by lazy {
+        RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(database))
+    }
+    private val eventEditor by lazy { EventEditingService(events, transactionRunner, ids) }
+    private val taskEditor by lazy { TaskEditingService(tasks, transactionRunner, ids) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface {
-                    AndroidAgenda(calendarQueryService)
+                    AndroidScheduler(calendarQueryService, events, tasks, eventEditor, taskEditor)
                 }
             }
         }
     }
 }
 
-@androidx.compose.runtime.Composable
-private fun AndroidAgenda(service: CalendarQueryService) {
+@Composable
+private fun AndroidScheduler(
+    calendar: CalendarQueryService,
+    events: EventRepository,
+    tasks: TaskRepository,
+    eventEditor: EventEditingService,
+    taskEditor: TaskEditingService,
+) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
-    var selectedDate by remember {
-        mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date)
-    }
+    var selectedDate by remember { mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date) }
+    var editingEvent by remember { mutableStateOf<Event?>(null) }
+    var editingTask by remember { mutableStateOf<Task?>(null) }
+    var creatingEvent by remember { mutableStateOf(false) }
+    var creatingTask by remember { mutableStateOf(false) }
     val viewport = remember(selectedDate, displayTimeZone) {
         CalendarViewport(selectedDate, selectedDate.plus(1, DateTimeUnit.DAY), displayTimeZone)
     }
-    val projection = remember(service, viewport) { service.observe(viewport) }
-    val result by projection.collectAsState(emptyProjection())
-    val dateItems = result.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
-    val timedItems = result.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
+    val projection by remember(calendar, viewport) { calendar.observe(viewport) }.collectAsState(emptyProjection())
+    val taskValues by tasks.observeTasks().collectAsState(emptyList<Task>().toImmutableList())
+    val dateItems = projection.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
+    val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
         item {
@@ -71,16 +124,236 @@ private fun AndroidAgenda(service: CalendarQueryService) {
             Row {
                 Button(onClick = { selectedDate = selectedDate.plus(-1, DateTimeUnit.DAY) }) { Text("Previous") }
                 Button(onClick = { selectedDate = selectedDate.plus(1, DateTimeUnit.DAY) }) { Text("Next") }
+                Button(onClick = { creatingEvent = true }) { Text("New Event") }
+                Button(onClick = { creatingTask = true }) { Text("New Task") }
             }
         }
         item { Text("All-day / date-only") }
-        items(dateItems, key = { it.source.toString() }) { item -> Text(item.title) }
+        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, events) { editingEvent = it } }
         item { Text("Timed / floating") }
-        items(timedItems, key = { it.source.toString() }) { item -> Text(item.title + if (item is CalendarItem.Floating) " (floating)" else "") }
-        item {
-            if (result.conflicts.isNotEmpty()) Text("${result.conflicts.size} conflict(s)")
-            if (result.issues.isNotEmpty()) Text("${result.issues.size} projection issue(s)")
+        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, events) { editingEvent = it } }
+        item { Text("Tasks") }
+        items(taskValues, key = { it.id.value }) { task ->
+            Row {
+                Text(task.title)
+                Button(onClick = { editingTask = task }) { Text("Edit") }
+            }
         }
+        item {
+            if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)")
+            if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
+        }
+    }
+
+    if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
+    editingEvent?.let { event -> EventEditorDialog(event, selectedDate, displayTimeZone, eventEditor, { editingEvent = null }, { editingEvent = null }) }
+    if (creatingTask) TaskEditorDialog(null, taskEditor, { creatingTask = false }, { creatingTask = false })
+    editingTask?.let { task -> TaskEditorDialog(task, taskEditor, { editingTask = null }, { editingTask = null }) }
+}
+
+@Composable
+private fun CalendarRow(item: CalendarItem, events: EventRepository, onEdit: (Event) -> Unit) {
+    val scope = rememberCoroutineScope()
+    Row {
+        Text(item.title + if (item is CalendarItem.Floating) " (floating)" else "")
+        if (item.source is CalendarSourceRef.Event) {
+            Button(onClick = { scope.launch { events.get(item.source.id)?.let(onEdit) } }) { Text("Edit") }
+        }
+    }
+}
+
+@Composable
+private fun EventEditorDialog(
+    existing: Event?,
+    selectedDate: LocalDate,
+    displayTimeZone: TimeZone,
+    editor: EventEditingService,
+    onSaved: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var kind by remember(existing) { mutableStateOf(existing.eventKind()) }
+    var title by remember(existing) { mutableStateOf(existing?.title ?: "") }
+    var start by remember(existing, selectedDate) { mutableStateOf(existing.startText(selectedDate)) }
+    var end by remember(existing, selectedDate) { mutableStateOf(existing.endText(selectedDate)) }
+    var timeZone by remember(existing, displayTimeZone) { mutableStateOf(existing.timeZoneText(displayTimeZone)) }
+    var flexibility by remember(existing) { mutableStateOf(existing?.flexibility ?: Flexibility.HARD) }
+    var pinState by remember(existing) { mutableStateOf(existing?.pinState ?: PinState.UNPINNED) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "New Event" else "Edit Event") },
+        text = {
+            Column {
+                OutlinedTextField(title, { title = it }, label = { Text("Title") })
+                Button(onClick = { kind = kind.next() }) { Text("Time kind: $kind") }
+                OutlinedTextField(start, { start = it }, label = { Text(if (kind == EventKind.ALL_DAY) "Start date (YYYY-MM-DD)" else "Start (YYYY-MM-DDTHH:MM)") })
+                OutlinedTextField(end, { end = it }, label = { Text(if (kind == EventKind.ALL_DAY) "End exclusive date" else "End exclusive") })
+                if (kind == EventKind.ZONED) OutlinedTextField(timeZone, { timeZone = it }, label = { Text("Time zone") })
+                Button(onClick = { flexibility = flexibility.next() }) { Text("Flexibility: $flexibility") }
+                Button(onClick = { pinState = pinState.next() }) { Text("Pin state: $pinState") }
+                error?.let { Text(it) }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val time = parseEventTime(kind, start, end, timeZone)
+                if (time == null) {
+                    error = "Enter a valid time range."
+                } else {
+                    scope.launch {
+                        val result = if (existing == null) {
+                            editor.create(CreateEventInput(title, time, flexibility, pinState))
+                        } else {
+                            editor.update(UpdateEventInput(existing.id, title, time, flexibility, pinState))
+                        }
+                        when (result) {
+                            is EditingResult.Success -> onSaved()
+                            is EditingResult.Invalid -> error = result.issues.joinToString()
+                            EditingResult.NotFound -> error = "Event no longer exists."
+                        }
+                    }
+                }
+            }) { Text("Save") }
+        },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun TaskEditorDialog(
+    existing: Task?,
+    editor: TaskEditingService,
+    onSaved: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var title by remember(existing) { mutableStateOf(existing?.title ?: "") }
+    var status by remember(existing) { mutableStateOf(existing?.status ?: TaskStatus.OPEN) }
+    var priority by remember(existing) { mutableStateOf(existing?.priority ?: TaskPriority.NORMAL) }
+    var estimated by remember(existing) { mutableStateOf(existing?.effort?.estimated?.toString() ?: "") }
+    var completed by remember(existing) { mutableStateOf(existing?.effort?.completed?.toString() ?: Duration.ZERO.toString()) }
+    var remaining by remember(existing) { mutableStateOf(existing?.effort?.remaining?.toString() ?: "") }
+    var deadlineEnabled by remember(existing) { mutableStateOf(existing?.deadline != null) }
+    var deadlineKind by remember(existing) { mutableStateOf(existing.deadlineKind()) }
+    var deadlineValue by remember(existing) { mutableStateOf(existing.deadlineValue()) }
+    var deadlineZone by remember(existing) { mutableStateOf(existing.deadlineZone()) }
+    var deadlinePolicy by remember(existing) { mutableStateOf(existing?.deadline?.policy ?: DeadlinePolicy.NORMAL) }
+    var overflowPolicy by remember(existing) { mutableStateOf(existing?.deadline?.overflowPolicy ?: OverflowPolicy.ASK) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "New Task" else "Edit Task") },
+        text = {
+            Column {
+                OutlinedTextField(title, { title = it }, label = { Text("Title") })
+                if (existing != null) Button(onClick = { status = status.next() }) { Text("Status: $status") } else Text("Status: OPEN")
+                Button(onClick = { priority = priority.next() }) { Text("Priority: $priority") }
+                OutlinedTextField(estimated, { estimated = it }, label = { Text("Estimated effort (optional, e.g. 1h)") })
+                if (existing != null) OutlinedTextField(completed, { completed = it }, label = { Text("Completed effort") }) else Text("Completed effort: 0s")
+                OutlinedTextField(remaining, { remaining = it }, label = { Text("Remaining effort (optional)") })
+                Button(onClick = { deadlineEnabled = !deadlineEnabled }) { Text(if (deadlineEnabled) "Deadline enabled" else "Add deadline") }
+                if (deadlineEnabled) {
+                    Button(onClick = { deadlineKind = deadlineKind?.next() ?: DeadlineKind.DATE_ONLY }) { Text("Deadline kind: ${deadlineKind ?: "Choose"}") }
+                    OutlinedTextField(deadlineValue, { deadlineValue = it }, label = { Text(if (deadlineKind == DeadlineKind.EXACT) "Deadline (YYYY-MM-DDTHH:MM)" else "Deadline date (YYYY-MM-DD)") })
+                    if (deadlineKind == DeadlineKind.EXACT) OutlinedTextField(deadlineZone, { deadlineZone = it }, label = { Text("Time zone") })
+                    Button(onClick = { deadlinePolicy = deadlinePolicy.next() }) { Text("Deadline policy: $deadlinePolicy") }
+                    Button(onClick = { overflowPolicy = overflowPolicy.next() }) { Text("Overflow policy: $overflowPolicy") }
+                }
+                error?.let { Text(it) }
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                val parsedEstimated = parseOptionalDuration(estimated)
+                val parsedRemaining = parseOptionalDuration(remaining)
+                val parsedCompleted = if (existing == null) Duration.ZERO else parseRequiredDuration(completed)
+                val deadline = parseDeadline(deadlineEnabled, deadlineKind, deadlineValue, deadlineZone, deadlinePolicy, overflowPolicy)
+                if (parsedEstimated == null && estimated.isNotBlank() || parsedRemaining == null && remaining.isNotBlank() || parsedCompleted == null || deadlineEnabled && deadline == null) {
+                    error = "Enter valid effort and deadline values."
+                } else {
+                    scope.launch {
+                        val result = if (existing == null) {
+                            editor.create(CreateTaskInput(title, priority, parsedEstimated, parsedRemaining, deadline))
+                        } else {
+                            editor.update(UpdateTaskInput(existing.id, title, status, priority, parsedEstimated, checkNotNull(parsedCompleted), parsedRemaining, deadline))
+                        }
+                        when (result) {
+                            is EditingResult.Success -> onSaved()
+                            is EditingResult.Invalid -> error = result.issues.joinToString()
+                            EditingResult.NotFound -> error = "Task no longer exists."
+                        }
+                    }
+                }
+            }) { Text("Save") }
+        },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private enum class EventKind { ZONED, ALL_DAY, FLOATING }
+private enum class DeadlineKind { DATE_ONLY, EXACT }
+
+private fun Event?.eventKind(): EventKind = when (this?.time) {
+    is ZonedTimeRange, null -> EventKind.ZONED
+    is AllDayRange -> EventKind.ALL_DAY
+    is FloatingTimeRange -> EventKind.FLOATING
+}
+
+private fun Event?.startText(selectedDate: LocalDate): String = when (val time = this?.time) {
+    is ZonedTimeRange -> time.start.toLocalDateTime(time.timeZone).toString()
+    is AllDayRange -> time.startDate.toString()
+    is FloatingTimeRange -> time.start.toString()
+    null -> if (eventKind() == EventKind.ALL_DAY) selectedDate.toString() else ""
+}
+
+private fun Event?.endText(selectedDate: LocalDate): String = when (val time = this?.time) {
+    is ZonedTimeRange -> time.endExclusive.toLocalDateTime(time.timeZone).toString()
+    is AllDayRange -> time.endDateExclusive.toString()
+    is FloatingTimeRange -> time.endExclusive.toString()
+    null -> if (eventKind() == EventKind.ALL_DAY) selectedDate.plus(1, DateTimeUnit.DAY).toString() else ""
+}
+
+private fun Event?.timeZoneText(default: TimeZone): String = (this?.time as? ZonedTimeRange)?.timeZone?.id ?: default.id
+private fun EventKind.next(): EventKind = entries[(ordinal + 1) % entries.size]
+private fun Flexibility.next(): Flexibility = entries[(ordinal + 1) % entries.size]
+private fun PinState.next(): PinState = entries[(ordinal + 1) % entries.size]
+private fun TaskStatus.next(): TaskStatus = entries[(ordinal + 1) % entries.size]
+private fun TaskPriority.next(): TaskPriority = entries[(ordinal + 1) % entries.size]
+private fun DeadlinePolicy.next(): DeadlinePolicy = entries[(ordinal + 1) % entries.size]
+private fun OverflowPolicy.next(): OverflowPolicy = entries[(ordinal + 1) % entries.size]
+private fun DeadlineKind.next(): DeadlineKind = entries[(ordinal + 1) % entries.size]
+
+private fun parseEventTime(kind: EventKind, start: String, end: String, zone: String): EventTimeInput? = when (kind) {
+    EventKind.ZONED -> runCatching { EventTimeInput.Zoned(LocalDateTime.parse(start), LocalDateTime.parse(end), TimeZone.of(zone)) }.getOrNull()
+    EventKind.ALL_DAY -> runCatching { EventTimeInput.AllDay(LocalDate.parse(start), LocalDate.parse(end)) }.getOrNull()
+    EventKind.FLOATING -> runCatching { EventTimeInput.Floating(LocalDateTime.parse(start), LocalDateTime.parse(end)) }.getOrNull()
+}
+
+private fun Task?.deadlineKind(): DeadlineKind? = when (deadline?.deadline) {
+    is Deadline.DateOnly -> DeadlineKind.DATE_ONLY
+    is Deadline.Exact -> DeadlineKind.EXACT
+    null -> null
+}
+
+private fun Task?.deadlineValue(): String = when (val deadline = this?.deadline?.deadline) {
+    is Deadline.DateOnly -> deadline.date.toString()
+    is Deadline.Exact -> deadline.at.toLocalDateTime(deadline.timeZone).toString()
+    null -> ""
+}
+
+private fun Task?.deadlineZone(): String = (deadline?.deadline as? Deadline.Exact)?.timeZone?.id ?: ""
+private fun parseOptionalDuration(text: String): Duration? = if (text.isBlank()) null else runCatching { Duration.parse(text) }.getOrNull()
+private fun parseRequiredDuration(text: String): Duration? = runCatching { Duration.parse(text) }.getOrNull()
+
+private fun parseDeadline(enabled: Boolean, kind: DeadlineKind?, value: String, zone: String, policy: DeadlinePolicy, overflow: OverflowPolicy): TaskDeadlineInput? {
+    if (!enabled) return null
+    return when (kind) {
+        DeadlineKind.DATE_ONLY -> runCatching { TaskDeadlineInput.DateOnly(LocalDate.parse(value), policy, overflow) }.getOrNull()
+        DeadlineKind.EXACT -> runCatching { TaskDeadlineInput.Exact(LocalDateTime.parse(value), TimeZone.of(zone), policy, overflow) }.getOrNull()
+        null -> null
     }
 }
 
