@@ -2,7 +2,7 @@
 
 > Task ID: **D6-01 / D6-02**  
 > Milestone: **D6 — Planner**  
-> Status: **IMPLEMENTED / VERIFIED**  
+> Status: **IMPLEMENTED / VERIFIED**
 > Date: 2026-09-11  
 > D6-00 decision source: `docs/PLANNER_DECISIONS.md`
 > Implementation: `a994981` + `0b6c499`; repository CI run `34626714567` passed.

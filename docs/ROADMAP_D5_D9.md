@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 ready; D6 complete  
+> Baseline: D5-01 complete; D5-02 ready; D6 complete
 > Date: 2026-09-11
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
