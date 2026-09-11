@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 ready; D6-00 decisions frozen  
+> Baseline: D5-01 complete; D5-02 ready; D6 complete  
 > Date: 2026-09-11
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
@@ -14,7 +14,7 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 D5-01 Calendar / Application read surface      COMPLETE
 D5-02 Event/Task creation + editing            READY (parallel follow-on)
  ↓
-D6  Deterministic Planner + PlanBranch         READY
+D6  Deterministic Planner + PlanBranch         COMPLETE
  ↓
 D7  Mutation Journal / ChangeLog / Undo / DVV-HLC
  ↓
@@ -77,8 +77,8 @@ Split:
 
 ```text
 D6-00  Planner semantic decisions             COMPLETE
-D6-01  deterministic Planner engine           READY
-D6-02  PlanBranch preview/rebase/apply        READY
+D6-01  deterministic Planner engine           COMPLETE
+D6-02  PlanBranch preview/rebase/apply        COMPLETE
 ```
 
 Authoritative sources:
