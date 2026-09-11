@@ -1,45 +1,138 @@
-# Agentic Scheduler — D6 Planner Domain, Deterministic Planner & PlanBranch
+# Agentic Scheduler — D6 Deterministic Planner & PlanBranch
 
-> Task ID: **D6-00/01/02 draft**  
+> Task ID: **D6-01 / D6-02**  
 > Milestone: **D6 — Planner**  
-> Status: **BLOCKED_BY_DECISION**  
-> Date: 2026-09-11
+> Status: **READY FOR IMPLEMENTATION**  
+> Date: 2026-09-11  
+> D6-00 decision source: `docs/PLANNER_DECISIONS.md`
 
 ---
 
 # 1. Goal
 
-D6 owns the Planner semantics intentionally deferred by D2/D3.
+Implement the first deterministic local Planner and isolated PlanBranch workflow on top of the completed D2–D5 foundations.
 
-It must not begin by choosing an optimizer. It first freezes what planning means, then implements deterministic scheduling, then adds isolated PlanBranch preview/rebase/apply.
-
-Recommended split:
+D6 establishes:
 
 ```text
-D6-00  Planner semantic decisions
-D6-01  deterministic Planner engine
-D6-02  PlanBranch preview/rebase/apply
+configured PlanningProfile rules
++ structured request-scoped Planner constraints
++ immutable explicit PlanningSnapshot
++ deterministic Full Replan
++ deterministic Local Reflow
++ structured explanations/infeasibility
++ isolated session-scoped PlanBranch
++ stale/rebase/apply semantics
++ atomic FocusBlock mutation apply
 ```
+
+The Planner remains deterministic core logic. No LLM, Provider, Sync, or server component participates in scheduling truth.
 
 ---
 
-# 2. Proposed module boundary
+# 2. Required reading
 
-When D6 is approved, it should create exactly:
+Implementation begins by reading:
+
+```text
+AGENTS.md
+docs/READ_FIRST.md
+docs/DOMAIN_INVARIANTS.md
+docs/ACADEMIC_INVARIANTS.md
+docs/ACADEMIC_DECISIONS.md
+docs/CALENDAR_DECISIONS.md
+docs/PLANNER_DECISIONS.md
+docs/OPEN_DECISIONS.md
+docs/IMPLEMENTATION_CONTRACT.md
+docs/ARCHITECTURE_DIAGRAMS.md
+docs/MODULE_OWNERSHIP.md
+docs/UBIQUITOUS_LANGUAGE.md
+docs/CODING_AGENT_POLICY.md
+docs/PERSISTENCE_DECISIONS.md
+docs/tasks/D2_CORE_DOMAIN.md
+docs/tasks/D3_ACADEMIC_DOMAIN.md
+docs/tasks/D4_PERSISTENCE.md
+docs/tasks/D5_CALENDAR_SURFACE.md
+```
+
+For Planner semantics, this Task Spec plus `docs/PLANNER_DECISIONS.md` are authoritative.
+
+---
+
+# 3. D6-00 decisions are frozen
+
+D6 implementation MUST use the frozen decisions in `docs/PLANNER_DECISIONS.md`.
+
+In particular:
+
+```text
+PlanningProfile configuration         PLN-002 / PLN-003
+Constraint model                      PLN-004
+PlanningSnapshot                      PLN-005
+Task eligibility/effort               PLN-006
+FocusBlock movement authority         PLN-007
+TaskPriority                          PLN-008
+TaskDependency scheduling             PLN-009
+Deadline / overflow                   PLN-010
+Event/Academic/Exam participation     PLN-011
+availability / DST                    PLN-012
+chunking                              PLN-013
+Full Replan                           PLN-014
+OD-020 lexicographic decision model   PLN-015
+OD-021 Local Reflow                   PLN-016
+PlanBranch                            PLN-017
+atomic Apply / delete                 PLN-018
+production UUIDv7 generation          PLN-019
+structured planner failures           PLN-020
+```
+
+Coding agents MUST NOT replace these with local defaults or alternative optimizer semantics.
+
+---
+
+# 4. Scope split
+
+```text
+D6-01
+- PlanningProfile configuration Domain changes
+- Room schema v1 -> v2 migration
+- :shared:planner module
+- PlanningSnapshot and validation
+- Full Replan
+- Local Reflow
+- structured Planner output/explanations
+
+D6-02
+- production UUIDv7 generator
+- PlanBranch lifecycle
+- application snapshot assembly/orchestration
+- stale detection/rebase
+- atomic Apply
+- FocusBlock delete persistence operation
+```
+
+Both are authorized by this spec and may be implemented in one coherent change set.
+
+---
+
+# 5. Module authorization
+
+D6 creates exactly one new Gradle module:
 
 ```text
 :shared:planner
 ```
 
-Proposed dependency:
+Required dependency direction:
 
 ```text
-:shared:planner → :shared:domain
+:shared:planner      -> :shared:domain
+:shared:application  -> :shared:planner + :shared:domain
+:shared:database     -> :shared:application + :shared:domain
+apps:*               -> existing application/database composition
 ```
 
-Application orchestration may consume `:shared:planner`.
-
-Planner must not depend on:
+`:shared:planner` MUST NOT depend on:
 
 ```text
 Room / SQLite
@@ -47,228 +140,412 @@ Compose
 Ktor
 Provider SDKs
 Android/Wear APIs
+repositories
+ApplicationTransactionRunner
 system clock reads
 ```
 
-This module creation is not authorized until D6-00 is approved.
+No other new module is authorized by D6.
 
 ---
 
-# 3. Required D6-00 semantic decisions
+# 6. PlanningProfile Domain change
 
-D2 deliberately created only a stable PlanningProfile identity shell. D6 must define the real planning rule set.
+Update `PlanningProfile` to the exact semantics frozen by PLN-002.
 
-At minimum freeze:
+Required concepts:
 
 ```text
-PlanningProfile rule fields
-structured Constraint model
-working/availability windows
-temporary no-schedule windows
-minimum FocusBlock size
-maximum FocusBlock size
-task splitting/chunking rule
-fragmentation policy
-context-switch policy
-schedule-stability/disruption policy
+PlanningProfileConfiguration.Unconfigured
+PlanningProfileConfiguration.Configured
+WeeklyAvailabilityWindow
+AllDayEventPolicy
 ```
 
-No implementation agent may invent defaults for those values.
+Retained collection fields use the existing immutable-collections policy.
+
+The configured state validates:
+
+```text
+finite positive focus durations
+minimum <= preferred <= maximum
+non-overlapping same-day availability windows
+start < endExclusive
+canonical availability ordering
+explicit TimeZone
+explicit AllDayEventPolicy
+```
+
+Do not add default profile values in constructors, migrations, repository mappers, or UI/application assembly.
 
 ---
 
-# 4. Task eligibility
+# 7. Persistence schema v2
 
-D6-00 must define Planner behavior for:
+Current schema is v1. D6 bumps Room to:
 
 ```text
-TaskStatus.OPEN
-TaskStatus.IN_PROGRESS
-TaskStatus.COMPLETED
-TaskStatus.CANCELLED
-remaining effort == null
-remaining effort == 0
+version = 2
 ```
 
-Task completion remains a business/user state and is not mathematically derived from effort.
+Implement the PlanningProfile storage contract from PLN-003.
+
+The v1 -> v2 migration MUST preserve every existing row and migrate every old PlanningProfile to `Unconfigured` without inventing Planner settings.
+
+Required database work:
+
+```text
+planning_profiles configuration columns
+planning_profile_availability_windows child table
+explicit mapper validation for configured/unconfigured variants
+schema export for version 2
+migration test 1 -> 2
+close/reopen round-trip for Configured and Unconfigured profiles
+```
+
+No PlanBranch or request Constraint table is added.
+
+No destructive migration fallback is allowed.
 
 ---
 
-# 5. TaskPriority
+# 8. Application persistence change
 
-D6-00 must define whether and where:
+Keep `PlanningProfileRepository` in `:shared:application` and Room implementation in `:shared:database`.
 
-```text
-LOW
-NORMAL
-HIGH
+D6 also explicitly adds:
+
+```kotlin
+suspend fun deleteFocusBlock(id: FocusBlockId)
 ```
 
-changes planning choice.
+to the Task persistence boundary (exact interface organization may remain locally consistent).
 
-Enum declaration order must not become an accidental score.
+Only FocusBlock deletion is authorized here. D6 does not create generic Task/Event/Academic delete semantics.
 
 ---
 
-# 6. Task dependencies
+# 9. Planner public input
 
-D6-00 must define scheduling semantics for TaskDependency.
-
-At minimum decide:
+Define a complete immutable Planner input equivalent to `PlanningSnapshot` with:
 
 ```text
-whether dependent work may be scheduled before prerequisite work
-whether prerequisite completion or merely planned completion is required
-how dependency-related infeasibility is reported
+referenceNow
+planning horizon
+a configured PlanningProfile
+Tasks
+TaskDependencies
+FocusBlocks
+Events
+resolved CourseSessions
+Exams
+PlanningConstraints
+ASK-overflow authorization set
 ```
 
-The dependency graph remains a DAG invariant owned by deterministic Domain logic.
+The application layer is responsible for deriving CourseSessions from authoritative D3 facts before constructing the snapshot.
+
+The Planner validates cross-reference/coherence problems and returns structured input issues rather than reading repositories to repair them.
+
+Every input collection is canonicalized before result-affecting iteration.
 
 ---
 
-# 7. Deadline semantics
+# 10. Constraint v1
 
-D2 explicitly deferred the Planner meaning of:
+Implement only the D6 constraint kind frozen by PLN-004:
 
 ```text
-DeadlinePolicy.NORMAL
-DeadlinePolicy.HARD
-OverflowPolicy.NEVER
-OverflowPolicy.ASK
-OverflowPolicy.ALLOW
+PlanningConstraint.UnavailableWindow
+ConstraintSource = USER | PROFILE | AGENT_INTERPRETED | SYSTEM
 ```
 
-D6-00 must freeze those meanings.
+It is request-scoped, finite, hard, and non-persistent.
 
-`Deadline.DateOnly` must not silently become "23:59 system timezone". The exact timezone/day-boundary resolution rule must be explicit.
+Do not add soft free-text preferences, generic expressions, recurrence constraints, or Agent-specific prompt fields.
 
 ---
 
-# 8. Movement / occupancy inheritance
+# 11. Task eligibility
 
-Already-frozen rules:
+Implement PLN-006 exactly.
+
+Planner-created work:
 
 ```text
-PINNED => Planner cannot automatically move the item.
-HARD   => Planner cannot automatically move the item even when UNPINNED.
+OPEN / IN_PROGRESS + known remaining > 0 only
 ```
 
-`PinState` and `Flexibility` remain independent dimensions.
-
-D6-00 must additionally define Planner participation/movement behavior for:
+Explicit issues/results cover:
 
 ```text
-FLEXIBLE
-SOFT
-CourseSession
+UnknownRemainingEffort
+known remaining == 0
+COMPLETED/CANCELLED cleanup eligibility for SOFT+UNPINNED future blocks
+```
+
+Never compute authoritative remaining effort as `estimated - completed`.
+
+---
+
+# 12. FocusBlock mutation authority
+
+Implement PLN-007 exactly.
+
+Future block authority matrix:
+
+```text
+PINNED               fixed
+HARD                  fixed
+FLEXIBLE + UNPINNED   move only; preserve ID + duration
+SOFT + UNPINNED       Full Replan may move/resize/delete
+```
+
+Already-started blocks are fixed.
+
+New blocks:
+
+```text
+SOFT + UNPINNED
+```
+
+D6 Planner proposals contain only FocusBlock mutations.
+
+---
+
+# 13. Task ordering and dependencies
+
+Task selection uses PLN-008, with explicit rank constants rather than enum ordinals.
+
+Dependencies use PLN-009 finish-before-start semantics.
+
+Planner output must visibly distinguish dependency blocking cases such as:
+
+```text
+cancelled prerequisite
+unknown prerequisite effort
+remaining == 0 but not explicitly COMPLETED
+prerequisite not fully planned
+```
+
+Do not silently mark a dependency satisfied from effort arithmetic alone.
+
+---
+
+# 14. Deadline implementation
+
+Implement PLN-010 exactly.
+
+Important invariants:
+
+```text
+DateOnly cutoff = start of next date in PlanningProfile.timeZone
+HARD always forbids automatic overflow
+NORMAL + NEVER forbids overflow
+NORMAL + ASK requires explicit per-run authorization
+NORMAL + ALLOW permits overflow inside horizon but ranks before-deadline first
+```
+
+A HARD shortfall returns `Infeasible` and no applicable PlanBranch.
+
+A NORMAL shortfall/ASK requirement is structured explanation and may coexist with a valid best-effort branch.
+
+---
+
+# 15. Occupancy conversion
+
+Implement PLN-011 / PLN-012.
+
+Fixed occupancy includes as applicable:
+
+```text
+Zoned Event
+Floating Event resolved in explicit PlanningProfile timezone
+AllDay Event when profile policy is BLOCK_WHOLE_LOCAL_DAY
+Scheduled CourseSession
 ExamSchedule.Exact
-AllDay Event
-Floating Event
+fixed FocusBlocks
+UnavailableWindow constraints
 ```
 
-D3 intentionally did not assign implicit Planner occupancy/movement defaults to Academic entities.
-
-Do not infer Planner policy from D5 rendering visibility.
-
----
-
-# 9. Explicit deterministic input
-
-The Planner must consume one complete immutable snapshot/input containing every value that can affect the result.
-
-Forbidden hidden inputs:
+Non-occupancy:
 
 ```text
-system clock
-system-default timezone
-unordered collection iteration
-unseeded randomness
-LLM preference
-platform-specific iteration behavior
+Cancelled CourseSession
+ExamSchedule.DateOnly
+ExamSchedule.Unscheduled
+AllDay Event under NON_BLOCKING
 ```
 
-If stochastic optimization is ever introduced, the seed becomes an explicit reproducible input and requires a separate decision.
+D6 never edits Event/Academic/Exam source facts.
+
+Ambiguous/nonexistent Floating/availability local-time resolution is reported explicitly. Do not choose an offset silently.
 
 ---
 
-# 10. OD-020 — scoring model
+# 16. Free-interval construction
 
-OD-020 remains `PENDING`.
-
-Recommended direction: lexicographic objectives rather than one opaque weighted floating-point score.
-
-The final decision must explicitly order or otherwise define:
+Construct legal free intervals from:
 
 ```text
-hard feasibility
-deadline satisfaction/overflow behavior
-pinned/hard preservation
-movement/disruption
-fragmentation
-context switching
-TaskPriority influence
-stable placement preference
-canonical final tie-break
+configured weekly availability
+intersect planning horizon
+intersect [referenceNow, +infinity)
+subtract fixed occupancy
+subtract request UnavailableWindow constraints
 ```
 
-LLM output never supplies missing scoring weights/preferences.
+Use half-open interval semantics everywhere.
+
+Real stored conflicts remain valid facts. The Planner must not create a new illegal overlap in proposed FocusBlocks.
+
+DST/day calculations use calendar/timezone APIs, never fixed 24-hour arithmetic.
 
 ---
 
-# 11. OD-021 — Local Reflow
+# 17. Chunking
 
-OD-021 remains `PENDING`.
+Implement the finite chunk candidate rule from PLN-013 exactly.
 
-The final deterministic rule must define:
+There is no hidden 5/15-minute scheduling grid.
+
+Tests must include:
 
 ```text
-affected-set construction
-candidate-slot enumeration
-search horizon
-hard rejection rules
-comparison tuple
-canonical tie-break
+remaining < minimum exception
+minimum boundary
+preferred boundary
+maximum boundary
+sub-minimum remainder rejection
+free interval shorter than minimum
+candidate tie determinism
 ```
-
-Same complete snapshot must produce the same proposal on every supported client.
 
 ---
 
-# 12. Planner modes
+# 18. Full Replan
 
-D6 intends to implement:
+Implement PLN-014 as the D6 v1 deterministic constructive planner.
+
+Required characteristics:
 
 ```text
-Local Reflow
-Full Replan
+no stochastic search
+no hidden weights
+canonical Task selection
+canonical free-interval/candidate ordering
+outside-horizon FocusBlocks untouched
+future outside-horizon coverage counted
+FLEXIBLE blocks preserve ID/duration
+SOFT blocks may be reused/moved/resized/deleted
+new blocks only when needed
 ```
 
-Both produce proposed state.
+Full Replan may leave NORMAL/no-deadline work unscheduled when capacity is insufficient; it must report exact unscheduled effort.
 
-Neither writes Active State directly.
+HARD deadline infeasibility prevents an applicable proposal.
 
 ---
 
-# 13. Structured explanation
+# 19. OD-020 implementation
 
-Planner output must contain structured explanation facts, including as applicable:
+OD-020 is **RESOLVED** by PLN-015.
+
+No weighted score table is allowed.
+
+Candidate comparison order is frozen as:
 
 ```text
-ConstraintMatch
-DecisionReason
-objective/score components
-moved blocks
-unscheduled effort
-infeasibility reasons
+deadline legality / before-overflow
+smaller authorized lateness
+schedule preservation
+smaller movement distance
+smaller context-switch delta
+chunk-duration rank
+start
+end
+canonical identity
 ```
 
-Natural-language explanation is downstream presentation and never the only copy of Planner truth.
+Task selection rank remains separate and precedes candidate placement.
+
+Explanation output must retain the deterministic reason/criteria used.
 
 ---
 
-# 14. PlanBranch lifecycle
+# 20. Local Reflow / OD-021
 
-Minimum intended lifecycle:
+OD-021 is **RESOLVED** by PLN-016.
+
+Local Reflow:
+
+```text
+uses explicit affected/disrupted inputs
+uses explicit search window
+never cascades into unrelated movable blocks
+never creates/deletes/resizes
+preserves ID and duration
+moves only eligible future FLEXIBLE/SOFT + UNPINNED blocks
+chooses closest legal position, then earlier start, then ID
+returns Infeasible atomically if any affected block cannot be placed
+```
+
+Tests must prove identical result under input permutation.
+
+---
+
+# 21. Planner result model
+
+Use explicit operation-specific results, consistent with OD-002.
+
+Conceptually distinguish:
+
+```text
+Success / applicable proposal
+Infeasible / no applicable branch
+InvalidInput
+```
+
+Structured issues/explanations include the families frozen by PLN-020.
+
+Do not use generic null/false or natural-language strings as the only result truth.
+
+---
+
+# 22. Production UUIDv7 generator
+
+Implement PLN-019 and the now-resolved implementation portion of OD-004.
+
+Required boundary:
+
+```text
+application/infrastructure injectable ID generator
+production Clock + SecureRandom adapter
+Domain constructors receive IDs; they never generate IDs
+```
+
+Current supported production targets are Android/Wear/JVM Desktop, so platform randomness uses `java.security.SecureRandom` in the appropriate Android/JVM source sets.
+
+No UUID library dependency is added.
+
+---
+
+# 23. PlanBranch
+
+D6 v1 PlanBranch is session-local and non-persistent.
+
+Required state:
+
+```text
+PlanBranchId
+original request
+normalized relevant base facts
+ordered FocusBlock mutations
+structured explanation
+lifecycle status
+```
+
+Lifecycle:
 
 ```text
 DRAFT
@@ -279,113 +556,174 @@ APPLIED
 DISCARDED
 ```
 
-A PlanBranch is not Active State.
-
-Before Apply, branch-only proposals trigger no ordinary active-state side effects.
-
----
-
-# 15. PlanBranch base identity
-
-Do not leave "revision/fingerprint" ambiguous.
-
-Recommended v1 direction:
+Mutation kinds:
 
 ```text
-record the exact relevant immutable base facts/versions required by the proposal
-compare them structurally at Apply/rebase time
+CreateFocusBlock
+MoveFocusBlock
+ResizeFocusBlock
+DeleteFocusBlock
 ```
 
-A cryptographic snapshot hash is not required merely to detect staleness.
-
-The exact contract is part of D6-02 approval.
+No Active State write occurs when merely constructing/previewing a branch.
 
 ---
 
-# 16. Apply
+# 24. Stale / rebase semantics
 
-PlanBranch Apply is one application-level transaction through `ApplicationTransactionRunner`.
+At Apply time, compare the current relevant facts against the branch's normalized base facts.
+
+If any fact used by the Planner changed:
 
 ```text
-all proposed active-state changes commit
-or
-none commit
+DRAFT -> STALE
 ```
 
-A stale branch cannot blind-apply.
+No blind Apply.
 
----
-
-# 17. Persistence/schema rule
-
-D6 must explicitly choose whether PlanBranch survives process restart.
-
-If D6 expands durable PlanningProfile/Constraint state or persists PlanBranch:
+Rebase:
 
 ```text
-bump then-current Room schema N → N+1
-export schema
-add migration tests
+rebuild current snapshot
+use new explicit referenceNow
+rerun same deterministic request
+produce refreshed proposal/explanation
 ```
 
-Do not assume D4 schema v1 is still current when the future implementation begins.
+Do not implement Git runtime/repository mechanics for PlanBranch.
 
 ---
 
-# 18. Out of D6 v1 unless separately introduced
+# 25. Atomic Apply
 
-Current Domain does not yet contain enough semantics for these to be silently added:
+Apply goes through `ApplicationTransactionRunner`.
+
+Inside the same transaction:
 
 ```text
-travel/location-aware planning
-energy requirements
-attachment-aware planning
-generic recurrence planning
+validate current base/staleness
+validate applyNow against proposed future intervals
+apply all FocusBlock mutations
+commit all or none
 ```
+
+A forced failure after any intermediate mutation must roll back every mutation.
+
+D6 does not append ChangeLog/SyncOperation/AgentAction; those are later milestone responsibilities.
 
 ---
 
-# 19. Required tests once READY
+# 26. Tests — pure Planner
 
 At minimum:
 
 ```text
-deterministic replay
-input iteration permutation => identical output
-HARD + UNPINNED never auto-moves
-PINNED never auto-moves
-deadline policy matrix
-DateOnly deadline resolution
-unknown remaining-effort case
-TaskDependency planning case
-chunking boundary cases
-stale branch refusal
-deterministic rebase
-atomic Apply rollback
-DST/timezone cases
-no hidden system clock/random input
+configured/unconfigured PlanningProfile validation
+availability canonicalization/non-overlap
+DST availability resolution
+TaskStatus eligibility matrix
+remaining null / zero behavior
+priority rank not enum ordinal
+finish-before-start dependency cases
+cancelled/unknown/zero prerequisite cases
+Exact deadline
+DateOnly next-day-start cutoff
+HARD shortfall
+NORMAL NEVER / ASK / ALLOW
+ASK with and without per-run authorization
+AllDay NON_BLOCKING / BLOCK_WHOLE_LOCAL_DAY
+Floating resolution + DST failure
+CourseSession / Exam occupancy
+HARD + UNPINNED fixed
+PINNED fixed
+FLEXIBLE move-only
+SOFT move/resize/delete
+chunk boundary matrix
+Full Replan deterministic replay
+input permutation produces identical result
+Local Reflow closest-position tie-break
+Local Reflow infeasible is all-or-nothing
+context-switch definition
+outside-horizon coverage behavior
 ```
 
 ---
 
-# 20. READY gate
+# 27. Tests — application/persistence
 
-D6 must remain `BLOCKED_BY_DECISION` until:
+At minimum:
 
 ```text
-[ ] PlanningProfile/Constraint semantics frozen
-[ ] task eligibility frozen
-[ ] TaskPriority influence frozen
-[ ] dependency scheduling semantics frozen
-[ ] DeadlinePolicy semantics frozen
-[ ] OverflowPolicy semantics frozen
-[ ] DateOnly deadline resolution frozen
-[ ] unknown-effort behavior frozen
-[ ] availability/chunking semantics frozen
-[ ] Academic/Exam/AllDay/Floating Planner participation frozen
-[ ] OD-020 resolved
-[ ] OD-021 resolved
-[ ] module boundary approved
+Room migration v1 -> v2
+existing PlanningProfile becomes Unconfigured
+Configured PlanningProfile round-trip including availability windows
+schema v2 export committed
+FocusBlock delete repository behavior
+UUIDv7 deterministic fixture generator tests
+production generated ID format/version/variant tests
+PlanBranch creation causes no Active State mutation
+stale Apply refusal
+expired Apply refusal
+deterministic rebase
+atomic multi-mutation Apply commit
+atomic Apply forced rollback
+close/reopen preserves PlanningProfile configuration
+D2–D5 tests remain green
 ```
 
-Only then should D6-01/D6-02 be rewritten as implementation-ready specs.
+---
+
+# 28. MUST NOT
+
+D6 MUST NOT:
+
+```text
+add Timefold as runtime dependency
+add stochastic optimizer/random search
+read system clock inside :shared:planner
+move Event entities automatically
+persist/sync PlanBranch
+persist request constraints
+add ChangeLog/SyncOperation/AgentAction
+implement Agent/LLM orchestration
+choose local DB encryption
+add network/server code
+introduce project-wide DI/MVI/navigation frameworks
+invent travel/energy/recurrence/location planning
+weaken HARD/PINNED semantics
+use object/repository iteration order as tie-break
+```
+
+---
+
+# 29. D6 acceptance criteria
+
+D6 passes only when:
+
+```text
+[x] D6-00 Planner decisions frozen in docs/PLANNER_DECISIONS.md
+[x] OD-020 decision contract resolved
+[x] OD-021 decision contract resolved
+[x] :shared:planner module authorized
+[x] PlanningProfile/Constraint semantics frozen
+[x] task eligibility/priority/dependency/deadline/overflow semantics frozen
+[x] Academic/Exam/AllDay/Floating participation frozen
+[x] production UUIDv7 implementation contract frozen
+
+[ ] :shared:planner exists with allowed dependencies only
+[ ] PlanningProfile Domain model matches PLN-002
+[ ] schema v2 + migration 1 -> 2 pass
+[ ] Full Replan is deterministic
+[ ] Local Reflow is deterministic
+[ ] structured infeasibility/explanations exist
+[ ] HARD/PINNED authority tests pass
+[ ] PlanBranch is isolated from Active State
+[ ] stale branch cannot blind-apply
+[ ] rebase is deterministic
+[ ] Apply is atomic
+[ ] UUIDv7 generation is injectable/testable
+[ ] no Planner/Agent/Sync scope violation exists
+[ ] repository-wide CI is green
+```
+
+The unchecked implementation items are the authorized D6 work. No additional architecture approval is required to implement them exactly as specified.
