@@ -47,10 +47,11 @@ class DeterministicPlanner {
             block.time.start >= snapshot.referenceNow && block.flexibility == Flexibility.SOFT && block.pinState == PinState.UNPINNED &&
                 (task?.status == TaskStatus.COMPLETED || task?.status == TaskStatus.CANCELLED || task?.effort?.remaining == Duration.ZERO)
         }
-        // Retained blocks are occupancy. A proposal must never overlap a block it has not moved/deleted.
-        val occupied = snapshot.focusBlocks.filterNot { it in cleanup }.map { Range(it.time.start, it.time.endExclusive) }.toMutableList()
+        // PLN-014: future mutable blocks are intentionally removed from fixed occupancy and
+        // reintroduced only as retained/moved/resized proposals for their own task.
+        val occupied = snapshot.focusBlocks.filterNot { it in cleanup || it in mutable }.map { Range(it.time.start, it.time.endExclusive) }.toMutableList()
         occupancy(snapshot, config, issues)?.let(occupied::addAll) ?: return invalid(*issues.toTypedArray())
-        val free = subtract(available, occupied)
+        val baseFree = subtract(available, occupied)
         val tasks = snapshot.tasks.sortedWith(taskComparator(config.timeZone))
         val byId = tasks.associateBy { it.id }
         val dependencies = snapshot.dependencies.sortedBy { it.id.value }
@@ -58,10 +59,9 @@ class DeterministicPlanner {
         val coverage = mutableMapOf<dev.agenticscheduler.domain.id.TaskId, Duration>()
         val completion = mutableMapOf<dev.agenticscheduler.domain.id.TaskId, Instant>()
 
-        // Retained future mutable blocks are real planned coverage, unless cleanup is authorized.
-        snapshot.focusBlocks.filter { it.time.start >= snapshot.referenceNow && it !in cleanup }.groupBy { it.taskId }.forEach { (id, blocks) ->
+        // Fixed future blocks, including those beyond the requested horizon, count as coverage.
+        snapshot.focusBlocks.filter { it.time.start >= snapshot.referenceNow && it !in cleanup && it !in mutable }.groupBy { it.taskId }.forEach { (id, blocks) ->
             coverage[id] = blocks.fold(Duration.ZERO) { total, block -> total + (block.time.endExclusive - block.time.start) }
-            completion[id] = blocks.maxOf { it.time.endExclusive }
         }
         cleanup.forEach { block ->
             mutations += FocusBlockMutation.Delete(block.id, block.taskId)
@@ -70,7 +70,16 @@ class DeterministicPlanner {
         tasks.filter { (it.status == TaskStatus.OPEN || it.status == TaskStatus.IN_PROGRESS) && it.effort.remaining == null }
             .forEach { issues += PlannerIssue.UnknownRemainingEffort(it.id) }
 
+        tasks.forEach { task ->
+            val remaining = task.effort.remaining
+            if (task.status != TaskStatus.COMPLETED && remaining != null && remaining > Duration.ZERO && (coverage[task.id] ?: Duration.ZERO) >= remaining) {
+                completion[task.id] = snapshot.focusBlocks.filter { it.taskId == task.id && it.time.start >= snapshot.referenceNow && it !in mutable && it !in cleanup }.maxOfOrNull { it.time.endExclusive } ?: snapshot.referenceNow
+            }
+        }
+
         val waiting = tasks.filter { it.eligible() }.toMutableList()
+        val processed = mutableSetOf<dev.agenticscheduler.domain.id.TaskId>()
+        val placed = mutableListOf<Pair<dev.agenticscheduler.domain.id.TaskId, Range>>()
         while (waiting.isNotEmpty()) {
             val ready = waiting.filter { task -> dependencies.filter { it.dependentTaskId == task.id }.all { dep ->
                 byId[dep.prerequisiteTaskId]?.status == TaskStatus.COMPLETED || completion.containsKey(dep.prerequisiteTaskId)
@@ -81,14 +90,45 @@ class DeterministicPlanner {
             }
             val task = ready.first(); waiting.remove(task)
             val after = dependencies.filter { it.dependentTaskId == task.id }.mapNotNull { completion[it.prerequisiteTaskId] }.maxOrNull() ?: snapshot.referenceNow
+            val free = subtract(
+                baseFree,
+                mutable.filter { it.taskId != task.id && it.taskId !in processed }.map { Range(it.time.start, it.time.endExclusive) } + placed.map { it.second },
+            )
             var remaining = task.effort.remaining!! - (coverage[task.id] ?: Duration.ZERO)
+            if (remaining < Duration.ZERO) { issues += PlannerIssue.OverallocatedPlannedEffort(task.id); remaining = Duration.ZERO }
+            mutable.filter { it.taskId == task.id }.sortedBy { it.time.start }.forEach { block ->
+                if (block.flexibility == Flexibility.FLEXIBLE) {
+                    val proposed = preservedOrMoved(block, task, after, free, config, snapshot)
+                    if (proposed == null) {
+                        // Existing state remains real occupancy; never delete/resize FLEXIBLE.
+                        placed += task.id to Range(block.time.start, block.time.endExclusive)
+                        coverage[task.id] = (coverage[task.id] ?: Duration.ZERO) + (block.time.endExclusive - block.time.start)
+                    } else {
+                        if (proposed.start != block.time.start) mutations += FocusBlockMutation.Move(block.id, block.taskId, ZonedTimeRange(proposed.start, proposed.endExclusive, config.timeZone))
+                        placed += task.id to proposed; consume(free, proposed)
+                        coverage[task.id] = (coverage[task.id] ?: Duration.ZERO) + (proposed.endExclusive - proposed.start)
+                    }
+                } else if (remaining > Duration.ZERO) {
+                    val proposed = preservedOrResized(block, task, remaining, after, free, config, snapshot)
+                    if (proposed == null) mutations += FocusBlockMutation.Delete(block.id, block.taskId)
+                    else {
+                        val unchanged = proposed.start == block.time.start && proposed.endExclusive == block.time.endExclusive
+                        if (!unchanged) mutations += if (proposed.endExclusive - proposed.start == block.time.endExclusive - block.time.start) FocusBlockMutation.Move(block.id, block.taskId, ZonedTimeRange(proposed.start, proposed.endExclusive, config.timeZone)) else FocusBlockMutation.Resize(block.id, block.taskId, ZonedTimeRange(proposed.start, proposed.endExclusive, config.timeZone))
+                        placed += task.id to proposed; consume(free, proposed)
+                        val duration = proposed.endExclusive - proposed.start; coverage[task.id] = (coverage[task.id] ?: Duration.ZERO) + duration; remaining -= duration
+                    }
+                } else {
+                    mutations += FocusBlockMutation.Delete(block.id, block.taskId)
+                }
+            }
+            remaining = task.effort.remaining!! - (coverage[task.id] ?: Duration.ZERO)
             if (remaining < Duration.ZERO) { issues += PlannerIssue.OverallocatedPlannedEffort(task.id); remaining = Duration.ZERO }
             while (remaining > Duration.ZERO) {
                 val candidate = candidate(task, remaining, after, free, config, snapshot) ?: break
                 mutations += FocusBlockMutation.Create(FocusBlockDraft(task.id, ZonedTimeRange(candidate.start, candidate.endExclusive, config.timeZone)))
                 consume(free, candidate)
                 remaining -= candidate.endExclusive - candidate.start
-                completion[task.id] = candidate.endExclusive
+                placed += task.id to candidate
             }
             if (remaining > Duration.ZERO) {
                 if (task.deadline?.policy == DeadlinePolicy.HARD) issues += PlannerIssue.HardDeadlineShortfall(task.id, remaining)
@@ -98,17 +138,28 @@ class DeterministicPlanner {
                 }
                 if (mutations.none { it.taskId == task.id }) issues += PlannerIssue.NoLegalAvailability(task.id)
             }
-            if (remaining == Duration.ZERO && !completion.containsKey(task.id)) completion[task.id] = after
+            if (remaining == Duration.ZERO) completion[task.id] = plannedCompletion(task, placed.filter { it.first == task.id }.map { it.second }, snapshot, cleanup)
+            processed += task.id
         }
         val ordered = issues.distinct().sortedBy { it.toString() }.toImmutableList()
         return if (ordered.any { it is PlannerIssue.HardDeadlineShortfall }) PlannerResult.Infeasible(ordered)
-        else PlannerResult.Success(mutations.sortedWith(mutationComparator()).toImmutableList(), ordered)
+        else {
+            val orderedMutations = mutations.sortedWith(mutationComparator()).toImmutableList()
+            PlannerResult.Success(orderedMutations, ordered, orderedMutations.map { mutation ->
+                PlannerExplanation(mutation.taskId, mutation, listOf(
+                    PlacementCriterion.DEADLINE_LEGALITY, PlacementCriterion.CHUNK_DURATION,
+                    PlacementCriterion.EARLIER_START, PlacementCriterion.EARLIER_END,
+                    PlacementCriterion.CANONICAL_IDENTITY,
+                ).toImmutableList())
+            }.toImmutableList())
+        }
     }
 
     fun localReflow(snapshot: PlanningSnapshot, request: LocalReflowRequest): PlannerResult {
         val config = snapshot.profile.configuration as? PlanningProfileConfiguration.Configured ?: return invalid(PlannerIssue.ProfileUnconfigured)
         validate(snapshot)?.let { return invalid(it) }
-        val affected = snapshot.focusBlocks.filter { it.id in request.affectedFocusBlockIds || request.disruptedRanges.any { range -> it.time.overlaps(range) } }
+        val affected = snapshot.focusBlocks.filter { it.id in request.affectedFocusBlockIds ||
+            (it.time.start >= snapshot.referenceNow && request.disruptedRanges.any { range -> it.time.overlaps(range) }) }
             .sortedWith(compareBy<FocusBlock>({ it.time.start }, { it.id.value }))
         if (affected.any { it.time.start < snapshot.referenceNow || !it.isMutable() }) {
             return PlannerResult.Infeasible(affected.filter { it.time.start < snapshot.referenceNow || !it.isMutable() }.map { PlannerIssue.ImmovableConflict(it.id) }.toImmutableList())
@@ -137,7 +188,8 @@ class DeterministicPlanner {
             moves += FocusBlockMutation.Move(block.id, block.taskId, ZonedTimeRange(placement.start, placement.endExclusive, config.timeZone))
             consume(free, placement)
         }
-        return PlannerResult.Success(moves.toImmutableList(), issues.sortedBy { it.toString() }.toImmutableList())
+        val orderedMoves = moves.toImmutableList()
+        return PlannerResult.Success(orderedMoves, issues.sortedBy { it.toString() }.toImmutableList(), orderedMoves.map { PlannerExplanation(it.taskId, it, listOf(PlacementCriterion.MINIMAL_MOVEMENT, PlacementCriterion.EARLIER_START, PlacementCriterion.CANONICAL_IDENTITY).toImmutableList()) }.toImmutableList())
     }
 
     private fun validate(snapshot: PlanningSnapshot): PlannerIssue.InvalidSnapshot? = when {
@@ -203,6 +255,38 @@ class DeterministicPlanner {
         return null
     }
 
+    private fun preservedOrMoved(block: FocusBlock, task: Task, after: Instant, free: List<Range>, config: PlanningProfileConfiguration.Configured, snapshot: PlanningSnapshot): Range? {
+        val original = Range(block.time.start, block.time.endExclusive)
+        if (original.start >= after && free.any { it.start <= original.start && it.endExclusive >= original.endExclusive } && original.isLegalFor(task, config, snapshot)) return original
+        val duration = original.endExclusive - original.start
+        return free.mapNotNull { interval ->
+            if (interval.endExclusive - interval.start < duration) null else {
+                val latest = interval.endExclusive - duration
+                val start = maxOf(after, block.time.start.coerceIn(interval.start, latest))
+                if (start <= latest) Range(start, start + duration).takeIf { it.isLegalFor(task, config, snapshot) } else null
+            }
+        }.sortedWith(compareBy<Range>({ abs((it.start - block.time.start).inWholeMilliseconds) }, { it.start }, { it.endExclusive })).firstOrNull()
+    }
+
+    private fun preservedOrResized(block: FocusBlock, task: Task, remaining: Duration, after: Instant, free: List<Range>, config: PlanningProfileConfiguration.Configured, snapshot: PlanningSnapshot): Range? {
+        val original = Range(block.time.start, block.time.endExclusive)
+        if (original.start >= after && free.any { it.start <= original.start && it.endExclusive >= original.endExclusive } && original.endExclusive - original.start <= remaining && original.isLegalFor(task, config, snapshot)) return original
+        return candidate(task, remaining, after, free, config, snapshot)
+    }
+
+    private fun plannedCompletion(task: Task, proposed: List<Range>, snapshot: PlanningSnapshot, cleanup: List<FocusBlock>): Instant {
+        val target = requireNotNull(task.effort.remaining)
+        val retained = snapshot.focusBlocks.filter { it.taskId == task.id && it.time.start >= snapshot.referenceNow && it !in cleanup && !it.isMutable() }
+            .map { Range(it.time.start, it.time.endExclusive) }
+        var covered = Duration.ZERO
+        (retained + proposed).sortedBy { it.start }.forEach { range ->
+            val duration = range.endExclusive - range.start
+            if (covered + duration >= target) return range.start + (target - covered)
+            covered += duration
+        }
+        error("planned completion requested without complete coverage")
+    }
+
     private fun chunk(remaining: Duration, capacity: Duration, config: PlanningProfileConfiguration.Configured): Duration? {
         val upper = minOf(remaining, capacity, config.maximumFocusBlock)
         if (remaining < config.minimumFocusBlock) return if (upper == remaining) remaining else null
@@ -218,6 +302,15 @@ class DeterministicPlanner {
         return (status == TaskStatus.OPEN || status == TaskStatus.IN_PROGRESS) && remaining != null && remaining > Duration.ZERO
     }
     private fun Range.isLegalFor(task: Task, config: PlanningProfileConfiguration.Configured, snapshot: PlanningSnapshot): Boolean {
+        if (snapshot.dependencies.filter { it.dependentTaskId == task.id }.any { dependency ->
+                val prerequisite = snapshot.tasks.first { it.id == dependency.prerequisiteTaskId }
+                prerequisite.status != TaskStatus.COMPLETED && prerequisiteCompletion(prerequisite, snapshot) == null
+            }) return false
+        val dependencyEnd = snapshot.dependencies.filter { it.dependentTaskId == task.id }.mapNotNull { dependency ->
+            val prerequisite = snapshot.tasks.first { it.id == dependency.prerequisiteTaskId }
+            if (prerequisite.status == TaskStatus.COMPLETED) snapshot.referenceNow else prerequisiteCompletion(prerequisite, snapshot)
+        }.maxOrNull()
+        if (dependencyEnd != null && start < dependencyEnd) return false
         val deadline = task.deadline ?: return true
         val cutoff = deadline.deadline.effective(config.timeZone)
         if (endExclusive <= cutoff) return true
@@ -226,6 +319,17 @@ class DeterministicPlanner {
             OverflowPolicy.ASK -> task.id in snapshot.askOverflowAuthorizedTaskIds
             OverflowPolicy.NEVER -> false
         }
+    }
+    private fun prerequisiteCompletion(task: Task, snapshot: PlanningSnapshot): Instant? {
+        val required = task.effort.remaining ?: return null
+        if (required <= Duration.ZERO || task.status == TaskStatus.CANCELLED || task.status == TaskStatus.COMPLETED) return null
+        var covered = Duration.ZERO
+        snapshot.focusBlocks.filter { it.taskId == task.id && it.time.start >= snapshot.referenceNow }.sortedBy { it.time.start }.forEach { block ->
+            val duration = block.time.endExclusive - block.time.start
+            if (covered + duration >= required) return block.time.start + (required - covered)
+            covered += duration
+        }
+        return null
     }
     private fun FocusBlock.isMutable() = pinState == PinState.UNPINNED && flexibility != Flexibility.HARD
     private fun Deadline.effective(zone: TimeZone): Instant = when (this) { is Deadline.Exact -> at; is Deadline.DateOnly -> date.plus(1, DateTimeUnit.DAY).atStartOfDayIn(zone) }

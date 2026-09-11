@@ -24,6 +24,7 @@ import dev.agenticscheduler.planner.PlanningHorizon
 import dev.agenticscheduler.planner.PlanningSnapshot
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
@@ -39,7 +40,7 @@ class PlanBranchTest {
             persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC)))), persistentListOf())
         val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot.copy(referenceNow = Instant.parse("2026-01-02T09:30:00Z")) }
         assertEquals(0, repository.blocks.size)
-        assertEquals(PlanBranchApplyResult.Applied, applier.apply(branch, Instant.parse("2026-01-02T09:30:00Z")))
+        assertEquals(PlanBranchStatus.APPLIED, assertIs<PlanBranchApplyResult.Applied>(applier.apply(branch, Instant.parse("2026-01-02T09:30:00Z"))).branch.status)
         assertEquals(1, repository.blocks.size)
     }
 
@@ -47,7 +48,7 @@ class PlanBranchTest {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(3)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf())
         val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot.copy(profile = PlanningProfile(PlanningProfileId(id(9)), "changed", PlanningProfileConfiguration.Unconfigured)) }
-        assertEquals(PlanBranchApplyResult.Stale, applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z")))
+        assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
     }
 
     @Test fun `apply rejects a proposal that reaches apply now`() = runBlocking {
@@ -55,7 +56,7 @@ class PlanBranchTest {
         val branch = PlanBranch(PlanBranchId(id(4)), PlanningRequest.FullReplan, snapshot,
             persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T10:00:00Z"), TimeZone.UTC)))), persistentListOf())
         val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot }
-        assertEquals(PlanBranchApplyResult.Stale, applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z")))
+        assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
         assertEquals(0, repository.blocks.size)
     }
 

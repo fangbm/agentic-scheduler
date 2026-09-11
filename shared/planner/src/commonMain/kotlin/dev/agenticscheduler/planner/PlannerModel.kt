@@ -77,8 +77,31 @@ sealed interface PlannerIssue {
     data class ImmovableConflict(val focusBlockId: FocusBlockId) : PlannerIssue
 }
 
+/** Records the lexicographic decision facts rather than hiding weighted scoring. */
+data class PlannerExplanation(
+    val taskId: TaskId,
+    val mutation: FocusBlockMutation,
+    val criteria: ImmutableList<PlacementCriterion>,
+)
+
+enum class PlacementCriterion {
+    DEADLINE_LEGALITY,
+    LATENESS,
+    PRESERVED_EXISTING_PLACEMENT,
+    MINIMAL_MOVEMENT,
+    MINIMAL_CONTEXT_SWITCHES,
+    CHUNK_DURATION,
+    EARLIER_START,
+    EARLIER_END,
+    CANONICAL_IDENTITY,
+}
+
 sealed interface PlannerResult {
-    data class Success(val mutations: ImmutableList<FocusBlockMutation>, val issues: ImmutableList<PlannerIssue>) : PlannerResult
+    data class Success(
+        val mutations: ImmutableList<FocusBlockMutation>,
+        val issues: ImmutableList<PlannerIssue>,
+        val explanations: ImmutableList<PlannerExplanation>,
+    ) : PlannerResult
     data class Infeasible(val issues: ImmutableList<PlannerIssue>) : PlannerResult
     data class InvalidInput(val issues: ImmutableList<PlannerIssue>) : PlannerResult
 }

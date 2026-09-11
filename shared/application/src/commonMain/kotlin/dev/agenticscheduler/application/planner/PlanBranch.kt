@@ -33,7 +33,10 @@ data class PlanBranch(
     val mutations: ImmutableList<FocusBlockMutation>,
     val explanations: ImmutableList<PlannerIssue>,
     val status: PlanBranchStatus = PlanBranchStatus.DRAFT,
-)
+) {
+    fun discard(): PlanBranch = copy(status = PlanBranchStatus.DISCARDED)
+    fun markRebaseable(): PlanBranch = copy(status = PlanBranchStatus.REBASEABLE)
+}
 
 class PlanBranchFactory(private val uuidV7: UuidV7Generator) {
     fun fromApplicableResult(
@@ -73,12 +76,15 @@ class PlannerPreviewService(
     }
 
     /** Rebase creates a new branch from current facts and explicit current referenceNow; it never patches old mutations. */
-    fun rebase(branch: PlanBranch, currentSnapshot: PlanningSnapshot): PlannerPreview = preview(branch.originalRequest, currentSnapshot)
+    fun rebase(branch: PlanBranch, currentSnapshot: PlanningSnapshot): PlannerPreview {
+        require(branch.status == PlanBranchStatus.STALE || branch.status == PlanBranchStatus.REBASEABLE) { "Only stale/rebaseable PlanBranches can be rebased." }
+        return preview(branch.originalRequest, currentSnapshot)
+    }
 }
 
 sealed interface PlanBranchApplyResult {
-    data object Applied : PlanBranchApplyResult
-    data object Stale : PlanBranchApplyResult
+    data class Applied(val branch: PlanBranch) : PlanBranchApplyResult
+    data class Stale(val branch: PlanBranch) : PlanBranchApplyResult
 }
 
 /**
@@ -93,7 +99,7 @@ class PlanBranchApplier(
 ) {
     suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult = transactions.inWriteTransaction {
         if (branch.status != PlanBranchStatus.DRAFT || currentSnapshot().withoutReferenceNow() != branch.baseFacts.withoutReferenceNow()) {
-            return@inWriteTransaction PlanBranchApplyResult.Stale
+            return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
         val targetIds = branch.mutations.mapNotNull { mutation -> when (mutation) {
             is FocusBlockMutation.Create -> null
@@ -108,9 +114,9 @@ class PlanBranchApplier(
                 is FocusBlockMutation.Resize -> mutation.time.start <= applyNow
                 is FocusBlockMutation.Delete -> false
             }
-        }) return@inWriteTransaction PlanBranchApplyResult.Stale
+        }) return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         val existing = targetIds.associateWith { tasks.getFocusBlock(it) }
-        if (existing.values.any { it == null }) return@inWriteTransaction PlanBranchApplyResult.Stale
+        if (existing.values.any { it == null }) return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         branch.mutations.forEach { mutation -> when (mutation) {
             is FocusBlockMutation.Create -> tasks.upsertFocusBlock(FocusBlock(
                 id = FocusBlockId(uuidV7.next()), taskId = mutation.draft.taskId, time = mutation.draft.time,
@@ -120,7 +126,7 @@ class PlanBranchApplier(
             is FocusBlockMutation.Resize -> tasks.upsertFocusBlock(requireNotNull(existing[mutation.id]).copy(time = mutation.time))
             is FocusBlockMutation.Delete -> tasks.deleteFocusBlock(mutation.id)
         } }
-        PlanBranchApplyResult.Applied
+        PlanBranchApplyResult.Applied(branch.copy(status = PlanBranchStatus.APPLIED))
     }
 }
 
