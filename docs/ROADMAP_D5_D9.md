@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5 complete; D6-00 decisions frozen  
+> Baseline: D5-01 complete; D5-02 ready; D6-00 decisions frozen  
 > Date: 2026-09-11
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
@@ -11,9 +11,10 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 # Sequence
 
 ```text
-D5  Calendar / Application Surface       COMPLETE
+D5-01 Calendar / Application read surface      COMPLETE
+D5-02 Event/Task creation + editing            READY (parallel follow-on)
  ↓
-D6  Deterministic Planner + PlanBranch   READY
+D6  Deterministic Planner + PlanBranch         READY
  ↓
 D7  Mutation Journal / ChangeLog / Undo / DVV-HLC
  ↓
@@ -22,7 +23,9 @@ D8  E2EE Multi-device Sync + Thin Server
 D9  Agent Runtime + Typed Tools
 ```
 
-The order is deliberate:
+D5-02 may be implemented in parallel with D6 because it is limited to Event/Task create-edit flows and does not own Planner semantics. The shared UUIDv7 generator/application boundary is an explicit integration touchpoint and must be reconciled before merge.
+
+The main milestone order remains deliberate:
 
 ```text
 Domain semantics
@@ -42,13 +45,26 @@ The Agent comes after deterministic Tools/Planner/history semantics exist. It mu
 
 D5-01 Calendar projection / Agenda-Day baseline is complete.
 
-D5-02 explicit creation/editing is not required for D6. The production UUIDv7 implementation previously deferred under OD-004 is now frozen by D6-00 because D6 is the first production creator of Planner-generated FocusBlocks/PlanBranches.
+D5-02 explicit Event/Task creation/editing is now implementation-ready. The production UUIDv7 implementation previously deferred under OD-004 is frozen by D6-00 / PLN-019 and is reused by D5-02.
+
+D5-02 scope is intentionally narrow:
+
+```text
+Android/Desktop Event create + edit
+Android/Desktop Task create + edit
+Wear remains read-only
+no delete
+no Planner invocation
+no ChangeLog/SyncOperation/AgentAction
+no academic timetable authoring
+```
 
 Authoritative D5 sources:
 
 ```text
 docs/CALENDAR_DECISIONS.md
 docs/tasks/D5_CALENDAR_SURFACE.md
+docs/tasks/D5_02_CREATION_EDITING.md
 ```
 
 ---
@@ -185,7 +201,7 @@ v1 → v2
 
 unless the immediately preceding frozen milestone guarantees that exact source version.
 
-D6 is now the exception by construction: D5 introduced no schema change and current `main` is schema v1, so D6 explicitly freezes migration `v1 -> v2` in `PLANNER_DECISIONS.md`.
+D6 is now the exception by construction: D5-01 and D5-02 own no schema change and the D6 decision contract explicitly freezes migration `v1 -> v2` in `PLANNER_DECISIONS.md`.
 
 For later milestones use:
 
