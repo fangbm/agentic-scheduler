@@ -48,6 +48,7 @@ class CourseSessionResolverTest {
         )
         val result = resolveCourseSessions(semester, course, listOf(lateRule, earlyRule), listOf(template), emptyList(), emptyList())
         val sessions = assertIs<CourseSessionResolutionResult.Success>(result).sessions
+        immutableSessions(sessions)
         assertEquals(4, sessions.size)
         assertEquals(listOf(1, 1, 3, 3), sessions.map { it.occurrenceKey.academicWeekNumber.value })
         assertEquals(listOf(earlyRule.id, lateRule.id, earlyRule.id, lateRule.id), sessions.map { it.occurrenceKey.scheduleRuleId })
@@ -291,6 +292,7 @@ class CourseSessionResolverTest {
         val result = assertIs<CourseSessionResolutionResult.Invalid>(
             resolveCourseSessions(dstSemester, dstCourse, listOf(dstRule), emptyList(), emptyList(), emptyList()),
         )
+        immutableIssues(result.issues)
         assertEquals(1, result.issues.size)
         assertEquals(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1))), result.issues.single())
     }

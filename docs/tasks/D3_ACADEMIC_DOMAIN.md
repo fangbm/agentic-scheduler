@@ -113,13 +113,14 @@ D3 may refine existing D2 source files only where this task explicitly authorize
 
 # 4. Dependency/tooling
 
-No new dependency is authorized.
+The D3 immutable-collections amendment is folded into this spec. D3 authorizes exactly `org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2`, pinned through the Version Catalog and declared only by modules that use it. Do not upgrade it or add another third-party dependency in D3.
 
 Use the repository's existing:
 
 ```text
 Kotlin 2.3.21
 kotlinx-datetime 0.8.0
+kotlinx-collections-immutable 0.5.2
 kotlin.time.Instant
 kotlin.time.Duration
 kotlinx.datetime.LocalDate
@@ -267,22 +268,18 @@ Do not require Monday as the start day. Institutions may define a different acad
 Canonical public shape and value semantics are equivalent to:
 
 ```kotlin
-class Semester(
+data class Semester(
     val id: SemesterId,
     val academicYearId: AcademicYearId,
     val name: String,
     val startDate: LocalDate,
     val endDateExclusive: LocalDate,
     val timeZone: TimeZone,
-    academicWeeks: List<AcademicWeek>,
-) {
-    val academicWeeks: List<AcademicWeek>
-}
+    val academicWeeks: ImmutableList<AcademicWeek>,
+)
 ```
 
-Exact `class` / `data class` syntax is not frozen where collection ownership requires a different implementation. `Semester` must own an immutable snapshot of the supplied `academicWeeks`; caller-owned mutable collections must not be able to mutate an already-validated Semester after construction.
-
-The public object must preserve structural value semantics for all canonical fields, including equivalent `equals`, `hashCode`, `copy`, and readable `toString` behavior. Kotlin destructuring / generated `componentN()` functions are not part of the D3 contract.
+Call sites convert caller-owned collections with `toImmutableList()` before construction. The generated data-class value semantics are part of the contract.
 
 Construction invariants:
 
@@ -451,18 +448,14 @@ D3 periods do not cross local midnight.
 Canonical public shape and value semantics are equivalent to:
 
 ```kotlin
-class PeriodTemplate(
+data class PeriodTemplate(
     val id: PeriodTemplateId,
     val name: String,
-    periods: List<AcademicPeriod>,
-) {
-    val periods: List<AcademicPeriod>
-}
+    val periods: ImmutableList<AcademicPeriod>,
+)
 ```
 
-Exact `class` / `data class` syntax is not frozen where collection ownership requires a different implementation. `PeriodTemplate` must own an immutable snapshot of the supplied `periods`; caller-owned mutable collections must not be able to mutate an already-validated PeriodTemplate after construction.
-
-The public object must preserve structural value semantics for all canonical fields, including equivalent `equals`, `hashCode`, `copy`, and readable `toString` behavior. Kotlin destructuring / generated `componentN()` functions are not part of the D3 contract.
+Call sites convert caller-owned collections with `toImmutableList()` before construction. The generated data-class value semantics are part of the contract.
 
 Invariants:
 
@@ -1246,6 +1239,7 @@ Semester overlapping week ranges rejected
 Semester week outside Semester rejected
 Semester name blank rejected
 Semester owns an immutable snapshot of caller-supplied academicWeeks
+Semester copy/value semantics preserve invariants
 Semester-vs-AcademicYear validator covers all three results
 overlapping separate Semesters are not globally rejected
 ```
@@ -1284,6 +1278,7 @@ unsorted period numbers rejected
 time order contradicting period order rejected
 non-consecutive period numbers allowed
 PeriodTemplate owns an immutable snapshot of caller-supplied periods
+PeriodTemplate copy/value semantics preserve invariants
 ClockTime valid accepted
 ClockTime zero/reversed rejected
 PeriodBased single period accepted
@@ -1339,6 +1334,7 @@ multiple covering holidays create one logical CourseSession
 resolver allows two different rules to produce overlapping sessions
 canonical output ordering follows week number then rule UUID text
 input Collection iteration order does not alter output
+Success.sessions and Invalid.issues retain ImmutableList state
 ```
 
 ---
