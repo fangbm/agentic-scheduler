@@ -69,7 +69,7 @@ CourseOccurrenceKey
 CourseSession
 ```
 
-`CourseSession` is a derived projection. Do not introduce `CourseSessionId` in D3.
+`CourseSession` is a derived projection. Do not introduce `CourseSessionId` in D3/D5.
 
 Teaching-week input forms such as:
 
@@ -95,6 +95,31 @@ A one-off class change uses `CourseOccurrenceException`; never describe a one-of
 
 ---
 
+# Calendar/application vocabulary
+
+| Canonical term | Meaning | Do not confuse with |
+|---|---|---|
+| `CalendarViewport` | Explicit date range + display timezone used to query/project a visible calendar window | system timezone, Planner horizon |
+| `CalendarItem` | Application-level read projection of an authoritative source fact for rendering | Domain entity, persisted row |
+| `CalendarSourceRef` | Stable reference from a CalendarItem back to Event/FocusBlock/CourseOccurrenceKey/Exam identity | title/start-time identity |
+| `CalendarConflict` | Deterministically detected overlap between two concrete occupied Instant ranges | invalid database state, Planner decision |
+| `CalendarProjectionIssue` | Structured problem encountered while deriving/projecting calendar state | swallowed error, UI-only warning string |
+| `Agenda/Day` | Viewport-bounded first calendar renderer | Week grid, Planner horizon |
+
+Calendar projection is a read/application concern:
+
+```text
+Authoritative Domain/application state
+→ Calendar projection
+→ platform rendering
+```
+
+`CalendarItem` never becomes a generic replacement Domain entity.
+
+`CalendarConflict` reports current overlap truth. It does not imply that persistence should reject the state or that Planner may move either item.
+
+---
+
 # Planner vocabulary
 
 | Canonical term | Meaning | Do not confuse with |
@@ -108,7 +133,7 @@ A one-off class change uses `CourseOccurrenceException`; never describe a one-of
 | `ConstraintMatch` | Structured evidence of a matched constraint | natural-language reason |
 | `DecisionReason` | Planner-produced structured reason | LLM-invented explanation |
 | `ScoreDelta` / `ScoreContribution` | Structured scoring contribution | model confidence |
-| `PlanningHorizon` | Time range considered by planning | FreezeHorizon |
+| `PlanningHorizon` | Time range considered by planning | FreezeHorizon, CalendarViewport |
 | `InfeasibleSchedule` | No valid solution under current constraints/policies | Planner crash |
 
 `Local Reflow` and `Full Replan` must always be written as separate operations in code/docs.
@@ -244,6 +269,9 @@ Exam == Event(type=EXAM)              FALSE
 AcademicHoliday == Event              FALSE
 AcademicWeek == fixed week offset     FALSE
 Period number == global clock time    FALSE
+CalendarItem == Domain entity         FALSE
+CalendarConflict == invalid state     FALSE
+CalendarViewport == PlanningHorizon   FALSE
 PlanBranch == Active State            FALSE
 Agent == Planner                      FALSE
 AgentThread == Provider conversation  FALSE
