@@ -36,8 +36,8 @@ enum class ExamValidationResult {
     LINKED_COURSE_REQUIRED,
     LINKED_COURSE_ID_MISMATCH,
     LINKED_COURSE_SEMESTER_MISMATCH,
-    SCHEDULE_OUTSIDE_SEMESTER,
     TIME_ZONE_MISMATCH,
+    SCHEDULE_OUTSIDE_SEMESTER,
 }
 
 fun validateExamAgainstSemester(
@@ -60,9 +60,9 @@ fun validateExamAgainstSemester(
             ExamValidationResult.SCHEDULE_OUTSIDE_SEMESTER
         }
         is ExamSchedule.Exact -> when {
+            schedule.time.timeZone != semester.timeZone -> ExamValidationResult.TIME_ZONE_MISMATCH
             !semester.containsExactRange(schedule.time.start, schedule.time.endExclusive) ->
                 ExamValidationResult.SCHEDULE_OUTSIDE_SEMESTER
-            schedule.time.timeZone != semester.timeZone -> ExamValidationResult.TIME_ZONE_MISMATCH
             else -> ExamValidationResult.VALID
         }
     }
