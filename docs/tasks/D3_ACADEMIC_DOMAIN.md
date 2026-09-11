@@ -264,19 +264,25 @@ Do not require Monday as the start day. Institutions may define a different acad
 
 # 10. Semester
 
-Canonical shape:
+Canonical public shape and value semantics are equivalent to:
 
 ```kotlin
-data class Semester(
+class Semester(
     val id: SemesterId,
     val academicYearId: AcademicYearId,
     val name: String,
     val startDate: LocalDate,
     val endDateExclusive: LocalDate,
     val timeZone: TimeZone,
-    val academicWeeks: List<AcademicWeek>,
-)
+    academicWeeks: List<AcademicWeek>,
+) {
+    val academicWeeks: List<AcademicWeek>
+}
 ```
+
+Exact `class` / `data class` syntax is not frozen where collection ownership requires a different implementation. `Semester` must own an immutable snapshot of the supplied `academicWeeks`; caller-owned mutable collections must not be able to mutate an already-validated Semester after construction.
+
+The public object must preserve structural value semantics for all canonical fields, including equivalent `equals`, `hashCode`, `copy`, and readable `toString` behavior. Kotlin destructuring / generated `componentN()` functions are not part of the D3 contract.
 
 Construction invariants:
 
@@ -442,15 +448,21 @@ D3 periods do not cross local midnight.
 
 # 16. PeriodTemplate
 
-Canonical shape:
+Canonical public shape and value semantics are equivalent to:
 
 ```kotlin
-data class PeriodTemplate(
+class PeriodTemplate(
     val id: PeriodTemplateId,
     val name: String,
-    val periods: List<AcademicPeriod>,
-)
+    periods: List<AcademicPeriod>,
+) {
+    val periods: List<AcademicPeriod>
+}
 ```
+
+Exact `class` / `data class` syntax is not frozen where collection ownership requires a different implementation. `PeriodTemplate` must own an immutable snapshot of the supplied `periods`; caller-owned mutable collections must not be able to mutate an already-validated PeriodTemplate after construction.
+
+The public object must preserve structural value semantics for all canonical fields, including equivalent `equals`, `hashCode`, `copy`, and readable `toString` behavior. Kotlin destructuring / generated `componentN()` functions are not part of the D3 contract.
 
 Invariants:
 
@@ -1233,6 +1245,7 @@ Semester unsorted numbers rejected
 Semester overlapping week ranges rejected
 Semester week outside Semester rejected
 Semester name blank rejected
+Semester owns an immutable snapshot of caller-supplied academicWeeks
 Semester-vs-AcademicYear validator covers all three results
 overlapping separate Semesters are not globally rejected
 ```
@@ -1270,6 +1283,7 @@ overlapping periods rejected
 unsorted period numbers rejected
 time order contradicting period order rejected
 non-consecutive period numbers allowed
+PeriodTemplate owns an immutable snapshot of caller-supplied periods
 ClockTime valid accepted
 ClockTime zero/reversed rejected
 PeriodBased single period accepted
@@ -1446,12 +1460,12 @@ D3 Gate passes only if all are true:
 [ ] AcademicYear implemented exactly
 [ ] AcademicWeekNumber implemented exactly
 [ ] AcademicWeek exactly-seven-day invariant implemented
-[ ] Semester exact fields + week invariants implemented
+[ ] Semester canonical fields + week invariants + immutable collection ownership implemented
 [ ] SemesterAcademicYear validator implemented
 [ ] Course exact fields implemented
 [ ] TeachingWeekSet canonical factory/equality implemented
 [ ] AcademicPeriodNumber / AcademicPeriod implemented
-[ ] PeriodTemplate exact invariants implemented
+[ ] PeriodTemplate canonical fields + invariants + immutable collection ownership implemented
 [ ] CourseTimeSpec has exactly ClockTime / PeriodBased D3 variants
 [ ] CourseScheduleRule exact fields implemented
 [ ] CourseOccurrenceKey stable identity implemented
