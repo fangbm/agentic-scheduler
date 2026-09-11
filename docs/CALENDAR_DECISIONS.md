@@ -71,6 +71,15 @@ displayTimeZone
 
 No projection code reads system-default timezone implicitly.
 
+For filtering Zoned items, the viewport's exact Instant span is:
+
+```kotlin
+val startInstant = startDate.atStartOfDayIn(displayTimeZone)
+val endInstantExclusive = endDateExclusive.atStartOfDayIn(displayTimeZone)
+```
+
+Use calendar-day boundaries in the explicit timezone; never compute the end as `start + 24h * dayCount`, because DST/calendar transitions may make a local day shorter or longer than 24 hours.
+
 Projection rules:
 
 ```text
