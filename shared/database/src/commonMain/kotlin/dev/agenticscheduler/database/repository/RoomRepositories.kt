@@ -31,6 +31,7 @@ class RoomTaskRepository(private val database: AgenticSchedulerDatabase) : TaskR
     override fun observeFocusBlocks() = database.focusBlockDao().observeAll().map { it.map { row -> row.toDomain() }.toImmutableList() }
     override suspend fun getFocusBlock(id: FocusBlockId) = database.focusBlockDao().get(id.value)?.toDomain()
     override suspend fun upsertFocusBlock(focusBlock: FocusBlock) = database.focusBlockDao().upsert(focusBlock.toRecord())
+    override suspend fun deleteFocusBlock(id: FocusBlockId) = database.focusBlockDao().delete(id.value)
     override fun observeWorkLogs() = database.workLogDao().observeAll().map { it.map { row -> row.toDomain() }.toImmutableList() }
     override suspend fun getWorkLog(id: WorkLogId) = database.workLogDao().get(id.value)?.toDomain()
     override suspend fun upsertWorkLog(workLog: WorkLog) = database.workLogDao().upsert(workLog.toRecord())
@@ -46,9 +47,9 @@ class RoomTaskRepository(private val database: AgenticSchedulerDatabase) : TaskR
 }
 
 class RoomPlanningProfileRepository(private val database: AgenticSchedulerDatabase) : PlanningProfileRepository {
-    override fun observeAll(): Flow<kotlinx.collections.immutable.ImmutableList<PlanningProfile>> = database.planningProfileDao().observeAll().map { it.map { row -> row.toDomain() }.toImmutableList() }
-    override suspend fun get(id: PlanningProfileId) = database.planningProfileDao().get(id.value)?.toDomain()
-    override suspend fun upsert(profile: PlanningProfile) = database.planningProfileDao().upsert(profile.toRecord())
+    override fun observeAll(): Flow<kotlinx.collections.immutable.ImmutableList<PlanningProfile>> = combine(database.planningProfileDao().observeAll(), database.planningProfileDao().observeAllWindows()) { parents,windows -> parents.map { it.toDomain(windows.filter { window -> window.planningProfileId==it.id }) }.toImmutableList() }
+    override suspend fun get(id: PlanningProfileId) = database.planningProfileDao().get(id.value)?.let { it.toDomain(database.planningProfileDao().windows(it.id)) }
+    override suspend fun upsert(profile: PlanningProfile) = database.withWriteTransaction { database.planningProfileDao().upsert(profile.toRecord()); database.planningProfileDao().deleteWindows(profile.id.value); database.planningProfileDao().upsertWindows(profile.windowRecords()) }
 }
 
 class RoomAcademicRepository(private val database: AgenticSchedulerDatabase) : AcademicRepository {

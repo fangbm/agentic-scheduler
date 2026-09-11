@@ -4,18 +4,20 @@ import androidx.room3.Database
 import androidx.room3.ConstructedBy
 import androidx.room3.RoomDatabase
 import androidx.room3.RoomDatabaseConstructor
+import androidx.room3.AutoMigration
 import dev.agenticscheduler.database.record.*
 import dev.agenticscheduler.database.dao.*
 
 @Database(
     entities = [
         EventRecord::class, TaskRecord::class, FocusBlockRecord::class, WorkLogRecord::class, TaskDependencyRecord::class,
-        PlanningProfileRecord::class, AcademicYearRecord::class, SemesterRecord::class, AcademicWeekRecord::class,
+        PlanningProfileRecord::class, PlanningProfileAvailabilityWindowRecord::class, AcademicYearRecord::class, SemesterRecord::class, AcademicWeekRecord::class,
         CourseRecord::class, PeriodTemplateRecord::class, AcademicPeriodRecord::class, CourseScheduleRuleRecord::class,
         CourseRuleWeekRecord::class, AcademicHolidayRecord::class, CourseOccurrenceExceptionRecord::class, ExamRecord::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
+    autoMigrations = [AutoMigration(from = 1, to = 2)],
 )
 @ConstructedBy(AgenticSchedulerDatabaseConstructor::class)
 abstract class AgenticSchedulerDatabase : RoomDatabase() {

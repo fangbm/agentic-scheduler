@@ -12,7 +12,7 @@ interface ApplicationTransactionRunner { suspend fun <T> inWriteTransaction(bloc
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }
 interface TaskRepository {
     fun observeTasks(): Flow<ImmutableList<Task>>; suspend fun getTask(id: TaskId): Task?; suspend fun upsertTask(task: Task)
-    fun observeFocusBlocks(): Flow<ImmutableList<FocusBlock>>; suspend fun getFocusBlock(id: FocusBlockId): FocusBlock?; suspend fun upsertFocusBlock(focusBlock: FocusBlock)
+    fun observeFocusBlocks(): Flow<ImmutableList<FocusBlock>>; suspend fun getFocusBlock(id: FocusBlockId): FocusBlock?; suspend fun upsertFocusBlock(focusBlock: FocusBlock); suspend fun deleteFocusBlock(id: FocusBlockId)
     fun observeWorkLogs(): Flow<ImmutableList<WorkLog>>; suspend fun getWorkLog(id: WorkLogId): WorkLog?; suspend fun upsertWorkLog(workLog: WorkLog)
     fun observeDependencies(): Flow<ImmutableList<TaskDependency>>; suspend fun getDependency(id: TaskDependencyId): TaskDependency?; suspend fun upsertDependency(dependency: TaskDependency)
 }

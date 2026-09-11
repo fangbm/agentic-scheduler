@@ -18,6 +18,7 @@ rootProject.name = "agentic-scheduler"
 
 include(":shared:domain")
 include(":shared:application")
+include(":shared:planner")
 include(":shared:database")
 include(":apps:android")
 include(":apps:desktop")

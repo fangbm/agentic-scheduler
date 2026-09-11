@@ -13,6 +13,7 @@ class EntityIdsTest {
         assertEquals("018f6e68-7d0c-7000-8000-000000000004", WorkLogId("018f6e68-7d0c-7000-8000-000000000004").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000005", TaskDependencyId("018f6e68-7d0c-7000-8000-000000000005").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000006", PlanningProfileId("018f6e68-7d0c-7000-8000-000000000006").value)
+        assertEquals("018f6e68-7d0c-7000-8000-00000000000f", PlanBranchId("018f6e68-7d0c-7000-8000-00000000000f").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000007", AcademicYearId("018f6e68-7d0c-7000-8000-000000000007").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000008", SemesterId("018f6e68-7d0c-7000-8000-000000000008").value)
         assertEquals("018f6e68-7d0c-7000-8000-000000000009", CourseId("018f6e68-7d0c-7000-8000-000000000009").value)
@@ -37,6 +38,7 @@ class EntityIdsTest {
         assertFailsWith<IllegalArgumentException> { ExamId("invalid") }
         assertFailsWith<IllegalArgumentException> { AcademicHolidayId("invalid") }
         assertFailsWith<IllegalArgumentException> { PeriodTemplateId("invalid") }
+        assertFailsWith<IllegalArgumentException> { PlanBranchId("invalid") }
     }
 
     @Test
