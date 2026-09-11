@@ -1,5 +1,7 @@
 package dev.agenticscheduler.database
 
+import dev.agenticscheduler.application.calendar.CalendarViewport
+import dev.agenticscheduler.application.calendar.RepositoryCalendarQueryService
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
@@ -131,6 +133,22 @@ class PersistenceIntegrationTest {
         val afterCourse = second.getCourse(course.id)!!
         val afterRule = second.getCourseScheduleRule(rule.id)!!
         val after = resolveCourseSessions(afterSemester, afterCourse, listOf(afterRule), emptyList(), emptyList(), emptyList())
+        assertEquals(before, after)
+        secondDatabase.close(); Files.deleteIfExists(path); Unit
+    }
+
+    @Test fun `calendar projection is identical after close reopen for the same viewport`() = runBlocking {
+        val path = Files.createTempFile("agentic-scheduler-d5-", ".db")
+        Files.delete(path)
+        val event = Event(EventId(id(14)), "D5 event", ZonedTimeRange(Instant.parse("2026-09-08T01:00:00Z"), Instant.parse("2026-09-08T02:00:00Z"), TimeZone.of("Asia/Shanghai")), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val viewport = CalendarViewport(LocalDate(2026, 9, 8), LocalDate(2026, 9, 9), TimeZone.of("Asia/Shanghai"))
+        val firstDatabase = openDesktopDatabase(path.toString())
+        val firstEvents = RoomEventRepository(firstDatabase)
+        firstEvents.upsert(event)
+        val before = RepositoryCalendarQueryService(firstEvents, RoomTaskRepository(firstDatabase), RoomAcademicRepository(firstDatabase)).observe(viewport).first()
+        firstDatabase.close()
+        val secondDatabase = openDesktopDatabase(path.toString())
+        val after = RepositoryCalendarQueryService(RoomEventRepository(secondDatabase), RoomTaskRepository(secondDatabase), RoomAcademicRepository(secondDatabase)).observe(viewport).first()
         assertEquals(before, after)
         secondDatabase.close(); Files.deleteIfExists(path); Unit
     }
