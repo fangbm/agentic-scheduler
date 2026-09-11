@@ -8,6 +8,8 @@
 
 This task is a narrow correction to D3's collection ownership implementation. It does not reopen Academic semantics, resolver behavior, IDs, time handling, DST policy, exception precedence, or persistence boundaries.
 
+The dependency introduced here becomes a **project-wide approved dependency for every later milestone and module**. This D3 task only adds it to `:shared:domain` because that is the module changed by D3; future code may use the same approved dependency without another dependency decision.
+
 Where this file conflicts with the following parts of `D3_ACADEMIC_DOMAIN.md`, **this amendment wins**:
 
 ```text
@@ -62,7 +64,7 @@ kotlinx-collections-immutable = {
 }
 ```
 
-Add to `shared/domain/build.gradle.kts`:
+Add to `shared/domain/build.gradle.kts` for this D3 implementation:
 
 ```kotlin
 commonMain.dependencies {
@@ -71,9 +73,9 @@ commonMain.dependencies {
 }
 ```
 
-Do not add the dependency to UI, database, or platform modules merely for convenience.
+Future modules may add the same catalog dependency whenever they actually use it; no additional architectural/dependency approval is required. Do not add it to modules that do not use it merely for symmetry.
 
-Do not upgrade Kotlin, Gradle, AGP, Compose, or kotlinx-datetime as part of this task.
+Do not upgrade Kotlin, Gradle, AGP, Compose, kotlinx-datetime, or the immutable-collections version as part of this task.
 
 ---
 
@@ -251,7 +253,7 @@ No D2 Domain type migration is currently required.
 
 D2's task spec correctly prohibited adding a collections framework during the D2 milestone. Keep that historical scope fence intact.
 
-The new dependency is a later explicit decision authorized by this D3 amendment; it does not retroactively change what D2 was allowed to implement.
+The new dependency is a later explicit decision introduced by this D3 amendment; it does not retroactively change what D2 was allowed to implement. **All code written from D3 onward may use the dependency, including code that extends or integrates D1/D2-era types, without editing the historical D1/D2 task specs.**
 
 The D2 dependency-cycle validator may retain local `mutableMapOf` / `MutableList` scratch structures because they are confined to a deterministic pure call and are not exposed as public Domain state.
 
@@ -307,7 +309,7 @@ If the exact `CourseSessionResolutionResult` declaration lives in another file, 
 
 # 11. Non-goals
 
-This amendment does **not** authorize:
+This amendment does **not** authorize implementing future features merely because their code may later use the approved collection library:
 
 ```text
 Planner implementation
@@ -323,7 +325,7 @@ changes to DST policy
 changes to resolver precedence or ordering
 ```
 
-Future milestones may use `PersistentList/Set/Map` where structural sharing is useful, but D3 should not implement future Planner/Sync state early.
+Future milestones may freely use `Immutable*` / `Persistent*` types where appropriate once those milestones themselves are in scope. Project-wide dependency authorization does not bypass milestone scope fences.
 
 ---
 
@@ -331,7 +333,7 @@ Future milestones may use `PersistentList/Set/Map` where structural sharing is u
 
 Implement in this order to keep the diff reviewable:
 
-1. Add and pin `kotlinx-collections-immutable:0.5.2` in the Version Catalog and `shared:domain` only.
+1. Add and pin `kotlinx-collections-immutable:0.5.2` in the Version Catalog and add it to `shared:domain` for D3.
 2. Migrate `Semester` and its tests.
 3. Migrate `PeriodTemplate` and its tests.
 4. Migrate `TeachingWeekSet` storage without weakening its factory invariant.
@@ -349,7 +351,8 @@ The amendment passes only if:
 
 ```text
 [ ] exact dependency 0.5.2 is pinned centrally
-[ ] dependency is added only where required
+[ ] shared:domain declares the dependency for D3
+[ ] project-wide future use is documented as pre-authorized
 [ ] Semester stored weeks use ImmutableList
 [ ] Semester is a data class with generated value semantics
 [ ] no caller-owned mutable alias can mutate Semester
