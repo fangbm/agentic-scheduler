@@ -18,7 +18,7 @@ Use the following precedence when deciding implementation behavior:
 3. OPEN_DECISIONS.md
    - a PENDING item blocks autonomous selection
    - a RESOLVED item is binding at the level stated
-4. Approved ADRs
+4. Approved ADRs / milestone decision documents
 5. IMPLEMENTATION_CONTRACT.md
 6. ARCHITECTURE_DIAGRAMS.md
 7. MODULE_OWNERSHIP.md
@@ -28,7 +28,7 @@ Use the following precedence when deciding implementation behavior:
 11. Local engineering judgment for LOCAL_REVERSIBLE details only
 ```
 
-`OPEN_DECISIONS.md` does not override a higher frozen invariant. Its special purpose is to state explicitly that a high-impact implementation choice is **not yet authorized**.
+`OPEN_DECISIONS.md` does not override a higher frozen invariant. Its special purpose is to state explicitly whether a high-impact implementation choice is authorized.
 
 If approved sources conflict:
 
@@ -71,40 +71,39 @@ Consult `OPEN_DECISIONS.md` or register/escalate the missing decision.
 
 ---
 
-# Clarification: local persistence baseline
+# Current module/application baseline
 
-The persistence **family is already frozen**:
+D4 is complete.
 
-```text
-SQLite + Room/KMP direction
-```
-
-The statement in `IMPLEMENTATION_CONTRACT.md` that D4 chooses/implements the concrete persistence stack must be interpreted as:
+Current modules are:
 
 ```text
-D4 chooses/freezes:
-- exact Room version
-- exact KMP driver/configuration
-- schema/table design
-- migration strategy
-- schema export/test setup
-- transaction integration
-- mapping details
+:shared:domain
+:shared:application
+:shared:database
+:apps:android
+:apps:desktop
+:apps:wear
 ```
 
-It does **not** authorize a coding agent to choose SQLDelight or another persistence engine instead of Room/SQLite.
+D4 resolved the local persistence and repository boundary:
 
-Before D4, D2/D3 still MUST NOT introduce Room annotations/schema/repository implementation early.
+```text
+:shared:application
+→ owns application-facing repository/transaction contracts
+→ depends on :shared:domain
 
----
+:shared:database
+→ implements :shared:application persistence contracts
+→ maps Room records ↔ Domain
+→ owns Room/SQLite schema/migrations
+```
 
-# Clarification: application/repository boundary
+The concrete D4 stack is frozen by `docs/PERSISTENCE_DECISIONS.md` and `docs/tasks/D4_PERSISTENCE.md`.
 
-Repository contracts must not be placed into `shared:domain` simply because no application module exists yet.
+Coding agents must not revisit Room/SQLite choice or repository placement inside unrelated tasks.
 
-Their final application-layer placement is explicitly tracked as `OD-011` in `OPEN_DECISIONS.md` and must be resolved before the first repository interface is added.
-
-Do not create `:shared:core` or another module solely to resolve this locally unless the task/decision explicitly authorizes that module.
+OD-012 local database encryption at rest remains pending and is a production-sensitive-data gate.
 
 ---
 
@@ -134,15 +133,15 @@ A coding agent must not independently decide any of the following:
 ```text
 "I'll default Task priority to MEDIUM."
 "I'll use LWW for this sync conflict."
-"I'll put repository interfaces in Domain for now."
-"I'll add SQLDelight because it is easier here."
+"I'll move repository interfaces into Domain."
+"I'll replace Room with SQLDelight because it is easier here."
 "I'll use provider conversation IDs as Agent memory."
 "I'll delete the old AgentAction when Undo happens."
 "I'll choose an encryption algorithm now."
 "I'll add Koin while wiring this feature."
 "I'll upgrade Kotlin/Gradle as part of the fix."
 "I'll add serialization annotations now for future sync."
-"I'll implement D4 persistence while doing D2 because we need it later."
+"I'll implement a later milestone because the current feature may need it someday."
 ```
 
 Each is either explicitly forbidden or requires a recorded decision.
@@ -164,13 +163,34 @@ CODING_AGENT_POLICY.md
 current Task Spec
 ```
 
+## Academic work
+
+Add:
+
+```text
+ACADEMIC_INVARIANTS.md
+ACADEMIC_DECISIONS.md
+relevant D3 task/amendment docs
+```
+
+## Calendar/application surface work
+
+Add:
+
+```text
+CALENDAR_DECISIONS.md
+ARCHITECTURE_DIAGRAMS.md
+D5 Task Spec
+OD-060 / OD-061 status as applicable
+```
+
 ## Planner work
 
 Add:
 
 ```text
 ARCHITECTURE_DIAGRAMS.md
-Planner ADR/spec
+Planner decision/spec documents
 OD-020 / OD-021 resolution
 ```
 
@@ -179,7 +199,8 @@ OD-020 / OD-021 resolution
 Add:
 
 ```text
-D4 persistence decision/spec
+PERSISTENCE_DECISIONS.md
+D4 persistence task/compatibility baseline
 OD-010 / OD-011 / OD-012 as applicable
 ```
 
@@ -229,7 +250,7 @@ A task may be marked `READY` only when every high-impact decision required by it
 ```text
 already frozen
 or
-explicitly resolved in Task Spec / ADR / OPEN_DECISIONS
+explicitly resolved in Task Spec / ADR / OPEN_DECISIONS / approved milestone decision doc
 ```
 
 A future decision that the task does not touch may remain pending.
@@ -242,7 +263,8 @@ Milestones are scope fences.
 
 ```text
 D2 does not get to implement D4 because D4 will need the same entity.
-D4 does not get to design Sync because persistence will later be synchronized.
+D5 does not get to invent Planner occupancy because a calendar item is visible.
+D7 does not get to freeze a wire protocol merely because D8 will need one.
 Sync does not get to weaken Domain semantics because merge would be easier.
 Agent does not get to bypass Tools because direct writes would be simpler.
 ```
