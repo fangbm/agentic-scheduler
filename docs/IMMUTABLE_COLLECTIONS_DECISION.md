@@ -4,7 +4,7 @@
 > Date: 2026-09-11  
 > Scope: **project-wide for D3 and every later milestone/module**
 
-This decision freezes the project-wide collection-immutability implementation baseline that was previously described only semantically as "immutable public Domain state".
+This decision freezes the project-wide choice to use Kotlin's immutable/persistent collections where appropriate. It does **not** permanently freeze the library to one version.
 
 All dependency selection/versioning behavior also follows [`docs/DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md).
 
@@ -15,10 +15,16 @@ All dependency selection/versioning behavior also follows [`docs/DEPENDENCY_POLI
 Use JetBrains/Kotlin's official multiplatform library:
 
 ```text
-org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2
+org.jetbrains.kotlinx:kotlinx-collections-immutable
 ```
 
-The exact version is part of the approved dependency decision and is pinned in the Version Catalog when implementation begins.
+Initial adopted version for the D3 migration:
+
+```text
+0.5.2
+```
+
+After implementation, the **current selected version is defined by `gradle/libs.versions.toml`**, not by this historical decision document.
 
 **From D3 onward, this dependency is pre-authorized for all repository code and all future modules.** A task, contributor, or Coding Agent does not need a new dependency decision or ADR merely to use `kotlinx.collections.immutable` where it is technically appropriate.
 
@@ -39,9 +45,9 @@ future tests and utilities
 
 A module should still declare the dependency only when that module actually uses it. Project-wide authorization does not mean every module must depend on it.
 
-The library is currently experimental and its API is subject to change. The repository therefore pins an exact version; unrelated work must not silently upgrade or downgrade it.
+The library is currently experimental and its API is subject to change. Every committed repository state must therefore use an exact pinned version, but compatible future upgrades may be proposed and merged through the normal dependency-review process in `docs/DEPENDENCY_POLICY.md`.
 
-The selected release supports Kotlin Multiplatform and requires Kotlin stdlib 2.3.0 or newer. The repository Kotlin baseline is 2.3.21.
+The initially adopted 0.5.2 release supports Kotlin Multiplatform and requires Kotlin stdlib 2.3.0 or newer. The repository Kotlin baseline at adoption time is 2.3.21.
 
 ---
 
@@ -143,7 +149,7 @@ Future work may use this dependency while extending or interacting with D1/D2-er
 
 # 6. Dependency declaration policy
 
-The version is centralized in `gradle/libs.versions.toml`.
+The currently selected version is centralized in `gradle/libs.versions.toml` once the dependency is introduced.
 
 Later modules may add:
 
@@ -156,28 +162,31 @@ without a new architecture/dependency decision whenever the module needs the lib
 Do not:
 
 ```text
-pin a different version in an individual module
-use a dynamic/ranged version selector
+use a dynamic/ranged version
+pin a second conflicting version in an individual module
 use a second immutable-collections framework for the same role without a new decision
 add the dependency to an unused module merely for symmetry
 let library-specific representation define persistence or wire compatibility
 ```
 
-Any future replacement or version change must name the exact target version in the proposal/PR, consistent with `docs/DEPENDENCY_POLICY.md`.
-
 ---
 
 # 7. Upgrade policy
 
-Because the library is experimental:
+The approved decision is the **library/role**, not a permanent version number.
+
+Routine compatible updates may be proposed by a Coding Agent through a normal reviewed dependency-maintenance PR. The PR must change the exact pinned version explicitly, review relevant release notes, and run affected verification.
+
+Additional explicit architecture/dependency review is required only when the upgrade materially changes project contracts, for example:
 
 ```text
-pin exact version
-no silent upgrades in unrelated work
-review changelog before upgrade
-run repository-wide tests after upgrade
-avoid depending on mutable Builder types in public APIs
-avoid assuming serialization format from collection implementation details
+breaking public API migration
+persisted/wire representation change
+security-sensitive behavior change
+broad toolchain/platform migration
+replacement with a different library/framework
 ```
 
-A future stable 1.0 release may justify a dedicated upgrade task, but must preserve Domain and cross-module semantics rather than redefining them.
+Because the library is experimental, upgrades deserve closer compatibility review than an ordinary stable API, but they do not require reopening this decision merely because the version number changed.
+
+See `docs/DEPENDENCY_POLICY.md` for the repository-wide versioning and upgrade rules.
