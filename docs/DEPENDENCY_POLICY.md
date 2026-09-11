@@ -4,9 +4,9 @@
 > Date: 2026-09-11  
 > Audience: coding agents, reviewers, maintainers
 
-This policy defines how third-party dependencies may be selected, versioned, reviewed, and introduced.
+This policy defines how third-party dependencies may be selected, versioned, reviewed, introduced, and upgraded.
 
-The goal is to give Coding Agents enough freedom to solve local engineering problems without turning a small implementation choice into an unreviewed architecture decision.
+The goal is to give Coding Agents enough freedom to solve local engineering problems while keeping every repository revision reproducible and preventing small implementation choices from becoming hidden architecture decisions.
 
 For dependency selection/versioning specifically, this policy supersedes the older generic wording in:
 
@@ -19,16 +19,16 @@ Those documents still govern all non-conflicting architecture and task-scope rul
 
 ---
 
-# 1. Non-negotiable version rule
+# 1. Reproducible version rule
 
-**Every third-party dependency proposed or added by a Coding Agent MUST specify an exact concrete version at the time of the proposal/commit.**
+**Every third-party dependency proposed or added by a Coding Agent MUST resolve from an exact concrete version in the committed repository state.**
 
-The version is part of the dependency decision, not a later cleanup step.
+Exact pinning exists for reproducibility. It does **not** mean that the selected version is permanently frozen.
 
 Allowed example:
 
 ```toml
-kotlinxCollectionsImmutable = "0.5.2"
+someLibrary = "1.4.2"
 ```
 
 Forbidden examples:
@@ -44,7 +44,7 @@ latest.integration
 any other dynamic/ranged selector
 ```
 
-When Gradle Version Catalog can represent the dependency, the exact version belongs in:
+When Gradle Version Catalog can represent the dependency, the selected version belongs in:
 
 ```text
 gradle/libs.versions.toml
@@ -56,28 +56,57 @@ BOM-managed artifacts are allowed when the **BOM itself is pinned to an exact ve
 
 Plugin versions follow the same rule: no dynamic or ranged plugin versions.
 
-A dependency proposal that omits its exact version is incomplete and is not eligible for merge/review approval.
+A dependency proposal that omits its exact selected version is incomplete.
 
 ---
 
-# 2. Dependency authorization classes
+# 2. Current-version source of truth
+
+`gradle/libs.versions.toml` is the canonical source of truth for the **currently selected dependency/plugin versions** whenever the dependency can be represented there.
+
+Architecture/decision documents may record:
+
+```text
+library identity
+why the library was selected
+initially adopted version
+compatibility constraints
+special upgrade risks
+```
+
+They should not be treated as a second manually synchronized registry of every current library version.
+
+When a version changes through an approved PR, the Version Catalog changes with it. Historical decision documents do not need to be rewritten merely because a compatible dependency version advanced, unless the decision itself changed.
+
+If documentation needs to mention a concrete historical adoption version, prefer wording such as:
+
+```text
+Initial adopted version: 0.5.2
+Current version: see gradle/libs.versions.toml
+```
+
+---
+
+# 3. Dependency authorization classes
 
 Every third-party dependency falls into one of three classes.
 
 ## APPROVED
 
-Already selected and approved at project level.
+The **library choice/role** is already approved at project level.
 
 A Coding Agent may use it in an appropriate module without requesting another dependency decision, while preserving task scope and module ownership.
 
-The repository's Version Catalog / approved decision source defines the exact authorized version.
+Approval of a library is not permanent approval of one immutable version number. The current selected version is the version pinned by the repository.
 
-If the Agent wants a different version, that is an **upgrade proposal**, not ordinary use.
+A compatible version update is handled through the normal upgrade rules below; it does not automatically reopen the original architecture decision.
 
 Current example:
 
 ```text
-org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2
+org.jetbrains.kotlinx:kotlinx-collections-immutable
+Initial adopted version: 0.5.2
+Current selected version after implementation: see gradle/libs.versions.toml
 ```
 
 ---
@@ -98,7 +127,7 @@ All of the following should be true:
 - does not replace an already approved project-level solution
 - can be removed/replaced without a migration
 - platform/KMP compatibility has been checked where relevant
-- exact version is pinned
+- exact version is pinned in the committed repository state
 ```
 
 Human review of the PR remains the approval point for merging the new dependency.
@@ -131,13 +160,13 @@ The proposal must remain visible as `BLOCKED_BY_DECISION` for the affected imple
 
 ---
 
-# 3. Required dependency proposal record
+# 4. Required dependency proposal record
 
 Whenever a Coding Agent introduces a new AGENT_SELECTABLE dependency or proposes a DECISION_REQUIRED dependency, its implementation report / PR description must include:
 
 ```text
 Dependency: group:artifact
-Exact version: x.y.z
+Selected exact version: x.y.z
 Authorization class: AGENT_SELECTABLE | DECISION_REQUIRED
 Scope/module: where it will be used
 Current requirement: why it is needed now
@@ -151,11 +180,11 @@ License: identify it when introducing a new library
 Removal/migration difficulty: low / medium / high
 ```
 
-A proposal without an exact version is incomplete and must not be merged.
+The exact version is part of the proposal because the committed build must be reproducible. It is not a promise that this version will never change.
 
 ---
 
-# 4. Version selection rule
+# 5. Version selection rule
 
 When choosing the exact version, the Coding Agent should normally select a current stable release compatible with the repository toolchain and target platforms.
 
@@ -169,33 +198,50 @@ introduces a known regression relevant to the project
 conflicts with an existing BOM/version family
 ```
 
-If the best compatible version is not the newest stable release, record the reason in the PR.
+If the best compatible version is not the newest stable release, record the reason in the PR when material.
 
-For an experimental library whose releases are stable-tagged but whose API is explicitly experimental, pinning an exact version is mandatory and upgrade review should consider API changes.
+For an experimental library whose releases are stable-tagged but whose API is explicitly experimental, exact pinning remains mandatory and upgrade review should consider API changes.
 
 ---
 
-# 5. Upgrade and downgrade rule
+# 6. Upgrade and downgrade rule
 
-Changing an existing dependency version is a deliberate change.
+Dependency versions are expected to evolve.
 
-A Coding Agent may update an AGENT_SELECTABLE dependency in an in-scope maintenance/change PR when:
+A Coding Agent may proactively propose or implement a dependency update through a reviewed PR. Every update must produce an explicit version diff rather than relying on a dynamic selector.
+
+For ordinary compatible patch/minor updates, the Agent may update the pinned version when:
 
 ```text
-- the exact target version is stated
-- changelog/release notes relevant to the project are reviewed
-- compatibility is checked
+- old version -> exact new version is visible in the diff/report
+- relevant release notes/changelog are checked
+- repository/toolchain/platform compatibility is checked
 - affected tests/builds are run
-- the change does not force unrelated architecture/toolchain migration
+- the update does not silently alter a persisted/wire/security/public contract
+- required unrelated toolchain migrations are not smuggled into the change
 ```
 
-For APPROVED project-level dependencies, major or contract-affecting upgrades require an explicit dependency decision/review. Small compatible updates may be proposed in a dedicated maintenance PR but must still pin the exact target version.
+A dedicated dependency-maintenance PR is preferred when the upgrade is unrelated to the feature currently being implemented. A feature PR may include a necessary compatible upgrade when the relationship is explicit and reviewable.
 
-Never silently change dependency versions while implementing an unrelated feature.
+Additional explicit decision/review is required when an upgrade is materially high-impact, including:
+
+```text
+major-version migration with meaningful breaking changes
+public API/architecture change
+persisted data or wire-format change
+Sync/convergence behavior change
+cryptography/security-boundary change
+required Kotlin/Gradle/AGP/SDK migration with broad impact
+replacement of the approved library with a different library/framework
+```
+
+A version number changing by itself does not reopen the architecture decision. **Impact determines escalation, not merely semver position.**
+
+Downgrades follow the same visibility/testing rules and should state the reason, such as regression avoidance or compatibility restoration.
 
 ---
 
-# 6. Task scope still wins
+# 7. Task scope still wins
 
 Dependency freedom does not override milestone/task scope.
 
@@ -213,25 +259,6 @@ A dependency may be technically allowed while the feature that would use it is s
 
 ---
 
-# 7. Existing approved versions
-
-At the time this policy is introduced, repository versions already include:
-
-```text
-Kotlin                         2.3.21
-Android Gradle Plugin          9.4.0
-Compose Multiplatform          1.10.3
-AndroidX Activity Compose      1.13.0
-AndroidX Compose BOM           2026.08.00
-Wear Compose                   1.6.2
-kotlinx-datetime               0.8.0
-kotlinx-collections-immutable  0.5.2   (authorized by the D3 amendment; add to catalog during implementation)
-```
-
-`gradle/libs.versions.toml` is the executable source of truth for versions already present there. This section is documentation for Coding Agents and must be updated when a frozen/approved version changes materially.
-
----
-
 # 8. Review rule
 
 Human review should focus on whether:
@@ -239,12 +266,21 @@ Human review should focus on whether:
 ```text
 - the dependency is actually needed
 - its authorization class is correct
-- the exact version is pinned
+- the committed version is exact/reproducible
 - an existing approved dependency already solves the problem
 - the library creates hidden long-term coupling
 - target/platform compatibility is real
 - licensing/security/maintenance risk is acceptable
 - dependency scope is no broader than necessary
+- an upgrade changes contracts or merely advances a compatible implementation
 ```
 
-The Agent is allowed to make local engineering choices. It is not allowed to hide architecture choices inside Gradle changes.
+The Agent is allowed to make local engineering choices and routine dependency maintenance. It is not allowed to hide architecture choices inside Gradle changes.
+
+---
+
+# Final rule
+
+**Pin versions for reproducibility; update versions through visible reviewed diffs.**
+
+The project approves library roles and architecture choices. It does not permanently freeze ordinary dependency versions unless a specific compatibility/security decision explicitly says otherwise.
