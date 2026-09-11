@@ -5,7 +5,7 @@
 > Milestone: **D5 — Calendar / Application Surface**  
 > Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Date: 2026-09-11
-> Final implementation revision: `e52e7c2` (`feat: implement D5 calendar surface baseline`)
+> Final implementation revision: `be262d2` (`fix: close D5 calendar surface gaps`)
 
 ---
 
