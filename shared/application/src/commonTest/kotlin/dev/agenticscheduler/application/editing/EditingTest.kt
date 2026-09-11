@@ -50,7 +50,8 @@ class EditingTest {
     }
 
     @Test
-    fun `Event creation and editing preserve identity across every time variant`() = runBlocking {
+    fun `Event creation and editing preserve identity across every time variant`() {
+        runBlocking {
         val repository = FakeEventRepository()
         val transactions = CountingTransactions()
         val service = EventEditingService(repository, transactions, generator())
@@ -83,10 +84,12 @@ class EditingTest {
         assertEquals(created.id, floating.id)
         assertIs<FloatingTimeRange>(floating.time)
         assertEquals(Flexibility.SOFT, floating.flexibility)
+        }
     }
 
     @Test
-    fun `Event validation rejects blank missing and DST transition input`() = runBlocking {
+    fun `Event validation rejects blank missing and DST transition input`() {
+        runBlocking {
         val service = EventEditingService(FakeEventRepository(), CountingTransactions(), generator())
 
         assertIs<EditingResult.Invalid>(service.create(eventInput(null, title = " ")))
@@ -106,10 +109,12 @@ class EditingTest {
 
         assertIs<EditingResult.Invalid>(nonexistent)
         assertIs<EditingResult.Invalid>(ambiguous)
+        }
     }
 
     @Test
-    fun `Task creation defaults and edits preserve independent effort and deadline facts`() = runBlocking {
+    fun `Task creation defaults and edits preserve independent effort and deadline facts`() {
+        runBlocking {
         val repository = FakeTaskRepository()
         val service = TaskEditingService(repository, CountingTransactions(), generator())
 
@@ -160,10 +165,12 @@ class EditingTest {
             ),
         ))).value)
         assertIs<dev.agenticscheduler.domain.planning.Deadline.Exact>(exactDeadline.deadline!!.deadline)
+        }
     }
 
     @Test
-    fun `updates return NotFound without creating a replacement entity`() = runBlocking {
+    fun `updates return NotFound without creating a replacement entity`() {
+        runBlocking {
         val eventRepository = FakeEventRepository()
         val taskRepository = FakeTaskRepository()
         val eventService = EventEditingService(eventRepository, CountingTransactions(), generator())
@@ -179,10 +186,12 @@ class EditingTest {
         )
         assertNull(eventRepository.get(EventId(id(50))))
         assertNull(taskRepository.getTask(TaskId(id(51))))
+        }
     }
 
     @Test
-    fun `Task validation rejects invalid effort without writing`() = runBlocking {
+    fun `Task validation rejects invalid effort without writing`() {
+        runBlocking {
         val repository = FakeTaskRepository()
         val transactions = CountingTransactions()
         val result = TaskEditingService(repository, transactions, generator()).create(
@@ -192,6 +201,7 @@ class EditingTest {
         assertIs<EditingResult.Invalid>(result)
         assertEquals(0, transactions.writes)
         assertEquals(0, repository.taskCount())
+        }
     }
 
     private fun eventInput(time: EventTimeInput?, title: String = "Meeting") = CreateEventInput(

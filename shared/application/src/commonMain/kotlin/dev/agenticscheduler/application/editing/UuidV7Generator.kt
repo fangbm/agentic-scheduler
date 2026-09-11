@@ -28,9 +28,9 @@ class UuidV7Generator(
 }
 
 private fun ByteArray.toCanonicalUuidText(): String = buildString(36) {
-    forEachIndexed { index, value ->
+    for (index in indices) {
         if (index == 4 || index == 6 || index == 8 || index == 10) append('-')
-        val unsigned = value.toInt() and 0xFF
+        val unsigned = this@toCanonicalUuidText[index].toInt() and 0xFF
         append(HEX[unsigned ushr 4])
         append(HEX[unsigned and 0x0F])
     }
