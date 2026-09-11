@@ -8,6 +8,15 @@ This policy defines how third-party dependencies may be selected, versioned, rev
 
 The goal is to give Coding Agents enough freedom to solve local engineering problems without turning a small implementation choice into an unreviewed architecture decision.
 
+For dependency selection/versioning specifically, this policy supersedes the older generic wording in:
+
+```text
+docs/CODING_AGENT_POLICY.md §14 Dependency rule
+docs/IMPLEMENTATION_CONTRACT.md §23 Dependency additions
+```
+
+Those documents still govern all non-conflicting architecture and task-scope rules.
+
 ---
 
 # 1. Non-negotiable version rule
@@ -46,6 +55,8 @@ Do not hard-code a second version for the same library in an individual module.
 BOM-managed artifacts are allowed when the **BOM itself is pinned to an exact version**. Artifacts intentionally controlled by that BOM do not need duplicate explicit versions.
 
 Plugin versions follow the same rule: no dynamic or ranged plugin versions.
+
+A dependency proposal that omits its exact version is incomplete and is not eligible for merge/review approval.
 
 ---
 
