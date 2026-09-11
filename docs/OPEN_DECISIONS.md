@@ -31,6 +31,7 @@ Causality                  Dotted Version Vector
 Logical ordering           HLC
 Merge                      semantic merge + explicit conflicts
 IDs                         client-generated immutable UUIDv7 semantics
+Domain collections          kotlinx.collections.immutable 0.5.2 for retained immutable collection state
 Agent principle             Agentic Surface, Deterministic Core
 LLM writes                  typed Tool path only; never direct DB writes
 Agent memory                application-owned, not Provider-owned
@@ -90,13 +91,26 @@ Impact: CONTRACT_AFFECTING
 
 This means invalid `TimeRange(start >= end)` is a programmer/input-boundary error that cannot enter active Domain State, while operations such as dependency-cycle creation or stale PlanBranch application expose explicit expected failures.
 
-## OD-003 — Domain object mutability
+## OD-003 — Domain object mutability and retained collection ownership
 
 ```text
 Status: RESOLVED
-Decision: immutable public Domain state by default; val/copy/explicit transitions.
-Impact: CONTRACT_AFFECTING
+Decision:
+- immutable public Domain state by default; val/copy/explicit transitions;
+- retained public collection-valued Domain state uses immutable collection types
+  when caller aliasing or later mutation could violate the object's invariants;
+- selected implementation baseline is
+  org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2;
+- public stored state prefers ImmutableList/ImmutableSet/ImmutableMap;
+- PersistentList/PersistentSet/PersistentMap are used when structural sharing or
+  persistent-update operations are intentionally part of the state transition;
+- ordinary Collection/List/Set/Map remain valid for non-retained inputs and local
+  deterministic algorithm scratch/results where mutability does not escape.
+Source: docs/IMMUTABLE_COLLECTIONS_DECISION.md
+Impact: CONTRACT_AFFECTING / ARCHITECTURE_AFFECTING
 ```
+
+The library is experimental/API-subject-to-change, so the exact version is pinned and may not be silently changed by unrelated work. This decision is first authorized for implementation by `docs/tasks/D3_IMMUTABLE_COLLECTIONS_AMENDMENT.md`; it does not retroactively invalidate D2's milestone-local prohibition on adding a collections framework.
 
 ## OD-004 — ID generation implementation
 
@@ -175,10 +189,11 @@ Impact: ARCHITECTURE_AFFECTING / CORRECTNESS
 Status: RESOLVED
 Decision:
 - exact D3 AcademicYear, Semester, Course, AcademicHoliday, and Exam surfaces are
-  frozen by docs/tasks/D3_ACADEMIC_DOMAIN.md;
+  frozen by docs/tasks/D3_ACADEMIC_DOMAIN.md plus approved D3 amendments;
 - ExamSchedule = Unscheduled | DateOnly | Exact;
 - Academic entities do not receive implicit Planner movement/occupancy defaults.
 Source: docs/ACADEMIC_DECISIONS.md AD-009 / AD-013 / AD-014 / AD-015 / AD-016 / AD-017
+        + docs/tasks/D3_IMMUTABLE_COLLECTIONS_AMENDMENT.md
 Impact: CONTRACT_AFFECTING / BOUNDARY_AFFECTING
 ```
 
