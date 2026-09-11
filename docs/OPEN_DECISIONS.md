@@ -206,13 +206,21 @@ No D3-required Academic decision remains `PENDING`. Deferred Academic features a
 ## OD-010 — Concrete Room/KMP database configuration
 
 ```text
-Status: PENDING
-Must resolve by: D4 persistence implementation
-Frozen direction: SQLite + Room/KMP family
+Status: RESOLVED
+Decision: Room 3.0.3 with SQLite KMP 2.7.0 and BundledSQLiteDriver on
+          Android, Wear OS, and JVM Desktop; KSP 2.3.12; Room schema v1
+          exported to shared/database/schemas; AgenticSchedulerDatabase uses
+          agentic-scheduler.db with no destructive-migration fallback.
+Source: docs/PERSISTENCE_DECISIONS.md PD-001 / PD-002
+        + docs/tasks/D4_PERSISTENCE.md
 Impact: ARCHITECTURE_AFFECTING
 ```
 
-D4 must freeze:
+The D4 persistence configuration is frozen. Later persistence work must retain
+the recorded compatibility and migration rules unless an explicit ADR or task
+supersedes them.
+
+The resolved configuration covers:
 
 - exact Room version;
 - KMP platform driver/configuration;
@@ -227,23 +235,23 @@ D2/D3 must not add Room annotations/schema early.
 ## OD-011 — Application/repository port placement
 
 ```text
-Status: PENDING
-Must resolve by: before first repository interface is introduced
+Status: RESOLVED
+Decision: application-facing repository ports live in :shared:application
+          under dev.agenticscheduler.application.persistence; Room/SQLite
+          implementations remain in :shared:database.
+Source: docs/PERSISTENCE_DECISIONS.md PD-003 / PD-004
+        + docs/tasks/D4_PERSISTENCE.md
 Impact: ARCHITECTURE_AFFECTING
 ```
 
-Question:
-
-> Do application-facing repository ports live in a future `:shared:core` / application module, or is another explicit boundary preferred?
-
-Frozen constraints regardless of answer:
+The resolved boundary preserves these constraints:
 
 - concrete persistence implementation belongs outside Domain;
 - Domain entities do not depend on Room/database APIs;
 - platform UI does not own repositories;
 - repository placement must not invert dependency direction.
 
-Coding agents may not preemptively put repository interfaces into `shared:domain` or create `shared:core` without resolution/task authorization.
+Coding agents must not move repository interfaces into `shared:domain` or create `shared:core` unless an explicit later decision supersedes this boundary.
 
 ## OD-012 — Local database encryption at rest
 

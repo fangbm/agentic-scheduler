@@ -3,8 +3,9 @@
 > Task ID: **D4-01**  
 > Title: **Local Persistence Baseline**  
 > Milestone: **D4 — Persistence / Database**  
-> Status: **READY FOR IMPLEMENTATION once this spec is approved/merged**  
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Date: 2026-09-11
+> Final implementation revision: `a8c7520` (`fix: close D4 persistence contract gaps`)
 
 ---
 
@@ -1450,48 +1451,48 @@ The test infrastructure must be ready so v2 cannot be introduced without migrati
 D4 passes only when every item below is true.
 
 ```text
-[ ] :shared:application exists and has the frozen dependency direction
-[ ] repository ports live in :shared:application, not :shared:domain
-[ ] :shared:database implements those ports
-[ ] Room 3.0.3 pinned centrally
-[ ] SQLite bundled 2.7.0 pinned centrally
-[ ] KSP 2.3.12 pinned centrally
-[ ] coroutines 1.11.0 pinned centrally
-[ ] Room Gradle plugin 3.0.3 configured
-[ ] schema export points to shared/database/schemas
-[ ] AgenticSchedulerDatabase version == 1
-[ ] exact 17-table D4 inventory exists
-[ ] no CourseSession table exists
-[ ] no future Sync/Agent/Planner placeholder tables exist
-[ ] all persistence records are separate from Domain entities
-[ ] all required Domain↔record mappers exist
-[ ] no enum ordinal persistence exists
-[ ] Instant precision round-trips exactly
-[ ] Duration mapping is not lossy whole-millisecond storage
-[ ] D2 positive round-trip tests pass
-[ ] D3 positive round-trip tests pass
-[ ] all TimePlacement variants pass
-[ ] all ExamSchedule variants pass
-[ ] all CourseTimeSpec variants pass
-[ ] all RoomOverride variants pass
-[ ] repository list ordering is explicit/deterministic
-[ ] nested Academic list ordering is canonical
-[ ] required foreign keys/indexes/unique constraints exist
-[ ] no cascade delete defines business behavior
-[ ] ApplicationTransactionRunner commit test passes
-[ ] ApplicationTransactionRunner rollback test passes
-[ ] multi-row aggregate writes are atomic
-[ ] Flow observation test passes
-[ ] CourseSession re-derivation after DB reopen is identical
-[ ] exported schema committed
-[ ] migration-test harness works
-[ ] fallbackToDestructiveMigration is absent
-[ ] D2 tests remain green
-[ ] D3 tests remain green
-[ ] :shared:application build passes
-[ ] :shared:database build passes
-[ ] repository-wide build/test passes
-[ ] CI green on final D4 revision
+[x] :shared:application exists and has the frozen dependency direction
+[x] repository ports live in :shared:application, not :shared:domain
+[x] :shared:database implements those ports
+[x] Room 3.0.3 pinned centrally
+[x] SQLite bundled 2.7.0 pinned centrally
+[x] KSP 2.3.12 pinned centrally
+[x] coroutines 1.11.0 pinned centrally
+[x] Room Gradle plugin 3.0.3 configured
+[x] schema export points to shared/database/schemas
+[x] AgenticSchedulerDatabase version == 1
+[x] exact 17-table D4 inventory exists
+[x] no CourseSession table exists
+[x] no future Sync/Agent/Planner placeholder tables exist
+[x] all persistence records are separate from Domain entities
+[x] all required Domain↔record mappers exist
+[x] no enum ordinal persistence exists
+[x] Instant precision round-trips exactly
+[x] Duration mapping is not lossy whole-millisecond storage
+[x] D2 positive round-trip tests pass
+[x] D3 positive round-trip tests pass
+[x] all TimePlacement variants pass
+[x] all ExamSchedule variants pass
+[x] all CourseTimeSpec variants pass
+[x] all RoomOverride variants pass
+[x] repository list ordering is explicit/deterministic
+[x] nested Academic list ordering is canonical
+[x] required foreign keys/indexes/unique constraints exist
+[x] no cascade delete defines business behavior
+[x] ApplicationTransactionRunner commit test passes
+[x] ApplicationTransactionRunner rollback test passes
+[x] multi-row aggregate writes are atomic
+[x] Flow observation test passes
+[x] CourseSession re-derivation after DB reopen is identical
+[x] exported schema committed
+[x] migration-test harness works
+[x] fallbackToDestructiveMigration is absent
+[x] D2 tests remain green
+[x] D3 tests remain green
+[x] :shared:application build passes
+[x] :shared:database build passes
+[x] repository-wide build/test passes
+[x] CI green on final D4 revision
 ```
 
 ---
