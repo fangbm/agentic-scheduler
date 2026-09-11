@@ -3,8 +3,9 @@
 > Task ID: **D5-01**  
 > Title: **Calendar Projection & Agenda/Day Surface**  
 > Milestone: **D5 — Calendar / Application Surface**  
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Date: 2026-09-11
+> Final implementation revision: `e52e7c2` (`feat: implement D5 calendar surface baseline`)
 
 ---
 
@@ -677,29 +678,29 @@ Manual visual verification may supplement but not replace shared semantic tests.
 D5-01 passes only when every item below is true.
 
 ```text
-[ ] docs/CALENDAR_DECISIONS.md is merged and OD-061 is resolved for Agenda/Day
-[ ] no new Gradle module was added
-[ ] calendar projection code lives in :shared:application
-[ ] UI does not call DAOs/Room records
-[ ] CalendarViewport has explicit displayTimeZone
-[ ] Zoned / AllDay / Floating distinctions are preserved
-[ ] Exam.DateOnly remains date-only
-[ ] Exam.Unscheduled is omitted from calendar projection
-[ ] CourseSession remains derived and unpersisted
-[ ] academic resolution issues are surfaced
-[ ] stable mixed-source ordering is explicit
-[ ] concrete instant-range conflicts are deterministic
-[ ] adjacent ranges do not conflict
-[ ] conflict state is rendered, not rejected
-[ ] Android Agenda/Day is functional
-[ ] Desktop Agenda/Day is functional
-[ ] Wear read-only agenda is functional offline
-[ ] no production entity creation/ID generation was introduced
-[ ] no Planner/Sync/Agent/server scope was entered
-[ ] D2 tests remain green
-[ ] D3 tests remain green
-[ ] D4 persistence tests remain green
-[ ] repository-wide CI is green
+[x] docs/CALENDAR_DECISIONS.md is merged and OD-061 is resolved for Agenda/Day
+[x] no new Gradle module was added
+[x] calendar projection code lives in :shared:application
+[x] UI does not call DAOs/Room records
+[x] CalendarViewport has explicit displayTimeZone
+[x] Zoned / AllDay / Floating distinctions are preserved
+[x] Exam.DateOnly remains date-only
+[x] Exam.Unscheduled is omitted from calendar projection
+[x] CourseSession remains derived and unpersisted
+[x] academic resolution issues are surfaced
+[x] stable mixed-source ordering is explicit
+[x] concrete instant-range conflicts are deterministic
+[x] adjacent ranges do not conflict
+[x] conflict state is rendered, not rejected
+[x] Android Agenda/Day is functional
+[x] Desktop Agenda/Day is functional
+[x] Wear read-only agenda is functional offline
+[x] no production entity creation/ID generation was introduced
+[x] no Planner/Sync/Agent/server scope was entered
+[x] D2 tests remain green
+[x] D3 tests remain green
+[x] D4 persistence tests remain green
+[x] repository-wide CI is green
 ```
 
 ---
