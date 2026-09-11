@@ -18,28 +18,28 @@ This register does not list every local implementation detail. It lists choices 
 The following are **not** open decisions and must not be revisited inside unrelated tasks:
 
 ```text
-Client stack              Kotlin Multiplatform
-Android/Desktop UI        Compose / Compose Multiplatform
-Wear UI                   Compose for Wear OS
+Client stack               Kotlin Multiplatform
+Android/Desktop UI         Compose / Compose Multiplatform
+Wear UI                    Compose for Wear OS
 JVM target                 17
-Local persistence family  SQLite with Room/KMP direction
-Server framework          Kotlin + Ktor
+Local persistence family   SQLite with Room/KMP direction
+Server framework           Kotlin + Ktor
 Server database            PostgreSQL
 Blob storage               S3-compatible / MinIO
 Production sync            custom Git-like semantic sync; NOT Git runtime
 Causality                  Dotted Version Vector
 Logical ordering           HLC
 Merge                      semantic merge + explicit conflicts
-IDs                         client-generated immutable UUIDv7 semantics
-Domain collections          kotlinx.collections.immutable 0.5.2 for retained immutable collection state
-Agent principle             Agentic Surface, Deterministic Core
-LLM writes                  typed Tool path only; never direct DB writes
-Agent memory                application-owned, not Provider-owned
-History                     ChangeLog/AgentAction inspectable by Agent
-PlanBranch                  isolated proposal state; stale cannot blind-apply
-Wear                        real local-first node
-Wear LLM default            Watch-originated request; Phone config inheritance
-Server plaintext            schedule/task/attachment plaintext not required
+IDs                        client-generated immutable UUIDv7 semantics
+Domain collections         kotlinx.collections.immutable 0.5.2 for retained immutable collection state
+Agent principle            Agentic Surface, Deterministic Core
+LLM writes                 typed Tool path only; never direct DB writes
+Agent memory               application-owned, not Provider-owned
+History                    ChangeLog/AgentAction inspectable by Agent
+PlanBranch                 isolated proposal state; stale cannot blind-apply
+Wear                       real local-first node
+Wear LLM default           Watch-originated request; Phone config inheritance
+Server plaintext           schedule/task/attachment plaintext not required
 Academic occurrence identity CourseOccurrenceKey(ruleId, academicWeekNumber)
 Academic CourseSession       deterministic derived projection, not source of truth
 ```
@@ -216,9 +216,7 @@ Source: docs/PERSISTENCE_DECISIONS.md PD-001 / PD-002
 Impact: ARCHITECTURE_AFFECTING
 ```
 
-The D4 persistence configuration is frozen. Later persistence work must retain
-the recorded compatibility and migration rules unless an explicit ADR or task
-supersedes them.
+The D4 persistence configuration is frozen. Later persistence work must retain the recorded compatibility and migration rules unless an explicit ADR or task supersedes them.
 
 The resolved configuration covers:
 
@@ -531,12 +529,20 @@ Do not introduce MVI/navigation/DI frameworks preemptively.
 ## OD-061 — Calendar rendering architecture
 
 ```text
-Status: PENDING
-Must resolve by: first production Day/Week calendar renderer
+Status: RESOLVED FOR D5 AGENDA/DAY BASELINE
+Decision:
+- semantic calendar projection/grouping/ordering/conflict facts live in :shared:application;
+- platform Compose code owns rendering, interaction, accessibility, and lifecycle;
+- D5 uses viewport-bounded Agenda/Day lazy-list rendering;
+- no shared UI Gradle module is introduced;
+- Week-grid/Month-grid layout and large-calendar virtualization remain deferred
+  and require an OD-061 amendment before their first production implementation.
+Source: docs/CALENDAR_DECISIONS.md CD-001 / CD-002 / CD-007
+        + docs/tasks/D5_CALENDAR_SURFACE.md
 Impact: CONTRACT/PERFORMANCE
 ```
 
-Must define shared layout model versus platform-specific rendering boundary and large-calendar virtualization strategy before this becomes entrenched.
+The D5 resolution is intentionally narrow: it prevents the first Agenda/Day renderer from entrenching business logic in UI while preserving freedom to choose a specialized Week/Month virtualization architecture later.
 
 ---
 

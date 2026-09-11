@@ -21,13 +21,7 @@ Read, in order:
 
 Do not start from nearby code patterns before checking the frozen contracts.
 
-For D3 specifically, mandatory milestone documents include:
-
-```text
-docs/tasks/D3_ACADEMIC_DOMAIN.md
-docs/ACADEMIC_INVARIANTS.md
-docs/ACADEMIC_DECISIONS.md
-```
+A historical milestone's task document remains authoritative for that milestone, but its old scope fence is not automatically the current repository scope. The **current Task Spec** defines the active positive and negative scope.
 
 ## Core rule
 
@@ -44,6 +38,21 @@ DO NOT GUESS
 ```
 
 Only `LOCAL_REVERSIBLE` implementation details may be chosen autonomously.
+
+## Current module baseline
+
+The repository currently contains:
+
+```text
+:shared:domain
+:shared:application
+:shared:database
+:apps:android
+:apps:desktop
+:apps:wear
+```
+
+A future Task Spec may explicitly authorize another module. Do not create one merely because it seems cleaner.
 
 ## Non-negotiable invariants
 
@@ -67,7 +76,7 @@ See `docs/DOMAIN_INVARIANTS.md` and milestone-specific invariant documents for t
 
 ## No invented defaults
 
-Do not invent product-semantic defaults such as priority, flexibility, reminder timing, deadline/overflow behavior, Agent autonomy, Tool permission, Provider/model, PlanningProfile, academic holiday behavior, course occurrence behavior, or history/context retention.
+Do not invent product-semantic defaults such as priority, flexibility, reminder timing, deadline/overflow behavior, Agent autonomy, Tool permission, Provider/model, PlanningProfile, academic holiday behavior, course occurrence behavior, calendar participation, or history/context retention.
 
 Require explicit values or a recorded decision.
 
@@ -83,6 +92,18 @@ Android Context / Wear APIs
 LLM Provider SDKs
 Sync transport
 Crypto implementation
+```
+
+D4 established the current application/persistence boundary:
+
+```text
+:shared:application
+    → consumes :shared:domain
+    → owns application-facing repository/transaction contracts
+
+:shared:database
+    → implements :shared:application persistence contracts
+    → maps database records ↔ :shared:domain
 ```
 
 Domain objects do not receive persistence or future wire-format annotations for convenience.
@@ -107,50 +128,31 @@ No LLM/provider-to-database bypass is allowed.
 
 A `PENDING` item in `docs/OPEN_DECISIONS.md` is explicitly **not authorized** for autonomous selection.
 
-A milestone-specific decision document may freeze additional decisions for that milestone. Coding agents must not reinterpret a `RESOLVED` milestone decision merely because the global register has not duplicated every detail.
+A current Task Spec or milestone-specific decision document may explicitly resolve a decision for that milestone. When it does, follow the more specific approved decision and keep the global register synchronized as part of the same documentation change.
 
 Do not reason that an unspecified option is allowed because no document forbids it.
 
-## Current D3 scope fence
-
-The authoritative D3 scope is `docs/tasks/D3_ACADEMIC_DOMAIN.md`.
-
-### D3 MUST
-
-- implement the specified pure Academic Domain types and validators;
-- implement deterministic CourseSession resolution;
-- preserve explicit academic-week, period, timezone, holiday, and occurrence-exception semantics;
-- use canonical vocabulary;
-- add the required deterministic common tests.
-
-### D3 MAY
-
-- extend the existing typed UUIDv7 ID file with the exact D3 ID families;
-- add small internal pure helpers needed by deterministic academic resolution;
-- split Academic source files for readability without changing public architecture.
-
-### D3 MUST NOT
-
-- add Room schema/DAO/repository implementation;
-- persist/materialize CourseSession as an authoritative source;
-- add generic recurrence infrastructure for convenience;
-- add school/CSV/Excel/ICS/screenshot import;
-- add Planner movement/occupancy defaults to academic entities;
-- add SyncOperation/wire serialization;
-- add server/network code;
-- add Agent runtime/provider adapters;
-- build UI feature flows;
-- introduce DI/navigation/state frameworks;
-- add future serialization annotations;
-- create new Gradle modules;
-- add third-party dependencies;
-- invent Course instructor/credits/color/location/reminder fields.
-
 ## Determinism
 
-Do not introduce hidden semantic inputs such as system time reads inside pure logic, random IDs in tests, unordered iteration as a tie-break, implicit platform timezone/locale, silent DST offset selection, or unseeded randomness.
+Do not introduce hidden semantic inputs such as:
 
-For D3, the same complete academic input must produce the same `CourseSessionResolutionResult` including canonical session/issue ordering.
+```text
+system time reads inside pure logic
+random IDs in deterministic tests
+unordered iteration as a tie-break
+implicit platform timezone/locale
+silent DST offset selection
+unseeded randomness
+LLM preference masquerading as Planner truth
+```
+
+When a current Task Spec defines a deterministic comparator, projection, resolver, Planner rule, or merge rule, identical complete inputs must produce identical structured outputs across supported clients.
+
+## Scope control
+
+Follow the current Task Spec's `MUST`, `MAY`, and `MUST NOT` sections exactly.
+
+Do not implement a later milestone merely because its architecture is already documented. A useful future abstraction is not sufficient authorization to add it now.
 
 ## Completion
 
