@@ -5,7 +5,7 @@
 > Milestone: **D5 — Calendar / Application Surface**  
 > Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Date: 2026-09-11
-> Final implementation revision: `be262d2` (`fix: close D5 calendar surface gaps`)
+> Final implementation revision: `2db9836` (`fix: classify cross midnight Wear items by intersection`)
 
 ---
 
