@@ -134,7 +134,7 @@ class EventEditingService(
     suspend fun create(input: CreateEventInput): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
-        val event = Event(EventId(ids.generate()), input.title, built.time, input.flexibility, input.pinState)
+        val event = Event(EventId(ids.generate()), input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
         return transactions.inWriteTransaction {
             events.upsert(event)
             EditingResult.Success(event)
@@ -144,7 +144,7 @@ class EventEditingService(
     suspend fun update(input: UpdateEventInput): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
-        val event = Event(input.id, input.title, built.time, input.flexibility, input.pinState)
+        val event = Event(input.id, input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
         return transactions.inWriteTransaction {
             if (events.get(input.id) == null) {
                 EditingResult.NotFound
@@ -164,7 +164,8 @@ class TaskEditingService(
     suspend fun create(input: CreateTaskInput): EditingResult<Task> {
         val built = validateTask(input.title, input.estimated, Duration.ZERO, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
-        val task = Task(TaskId(ids.generate()), input.title, TaskStatus.OPEN, input.priority, built.effort, built.deadline)
+        val valid = built as TaskInput.Valid
+        val task = Task(TaskId(ids.generate()), input.title, TaskStatus.OPEN, input.priority, valid.effort, valid.deadline)
         return transactions.inWriteTransaction {
             tasks.upsertTask(task)
             EditingResult.Success(task)
@@ -174,7 +175,8 @@ class TaskEditingService(
     suspend fun update(input: UpdateTaskInput): EditingResult<Task> {
         val built = validateTask(input.title, input.estimated, input.completed, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
-        val task = Task(input.id, input.title, input.status, input.priority, built.effort, built.deadline)
+        val valid = built as TaskInput.Valid
+        val task = Task(input.id, input.title, input.status, input.priority, valid.effort, valid.deadline)
         return transactions.inWriteTransaction {
             if (tasks.getTask(input.id) == null) {
                 EditingResult.NotFound
