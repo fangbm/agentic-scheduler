@@ -115,15 +115,22 @@ The library is experimental/API-subject-to-change, so the exact version is pinne
 ## OD-004 — ID generation implementation
 
 ```text
-Status: RESOLVED at contract level
-Decision: Domain receives strongly typed IDs; production generation is an
-          application/infrastructure concern with UUIDv7 semantics; tests use
-          deterministic generators.
-Exact generator implementation/library: DEFERRED until first production creator.
+Status: RESOLVED
+Decision:
+- Domain receives strongly typed IDs; constructors never generate IDs;
+- application/infrastructure owns an injectable production generator;
+- production generator uses RFC UUIDv7 layout with 48-bit Unix epoch milliseconds
+  from injected Clock and rand_a/rand_b from java.security.SecureRandom on the
+  currently supported Android/Wear/JVM targets;
+- canonical output is lowercase hyphenated UUIDv7 text;
+- no third-party UUID dependency is introduced;
+- tests use deterministic injected clock/random sources.
+Source: docs/PLANNER_DECISIONS.md PLN-019
+        + docs/tasks/D6_DETERMINISTIC_PLANNER.md
 Impact: CONTRACT_AFFECTING
 ```
 
-A future implementation/library choice must not alter the canonical ID semantics.
+No strict monotonic ordering within one millisecond is promised by v1. The frozen Domain UUIDv7 validation/identity semantics remain unchanged.
 
 ---
 
@@ -270,33 +277,34 @@ Do not silently assume plaintext local SQLite is the final production security m
 ## OD-020 — Planner scoring model v1
 
 ```text
-Status: PENDING
-Must resolve by: before Full Replan implementation
+Status: RESOLVED
+Decision: deterministic lexicographic decision model; no weighted floating-point
+          score and no hidden LLM/provider preference. Task selection uses explicit
+          deadline/dependency/priority ordering. Legal placement candidates rank by
+          deadline legality/overflow, lateness, schedule preservation, movement,
+          context-switch delta, chunk rank, time, then canonical identity.
+Source: docs/PLANNER_DECISIONS.md PLN-015
+        + docs/tasks/D6_DETERMINISTIC_PLANNER.md
 Impact: ARCHITECTURE_AFFECTING
 ```
 
-Must freeze:
-
-- objective terms;
-- relative weights / lexicographic priorities;
-- hard versus soft handling;
-- stable deterministic tie-break order;
-- fragmentation/context-switch treatment;
-- disruption cost;
-- schedule-stability cost;
-- infeasibility reporting.
-
-LLM output must not fill missing scoring weights.
+Hard feasibility is non-negotiable. Fragmentation, context-switch, disruption, schedule stability, and infeasibility behavior are explicitly frozen in `PLANNER_DECISIONS.md`.
 
 ## OD-021 — Local Reflow deterministic search/tie-break rules
 
 ```text
-Status: PENDING
-Must resolve by: before Local Reflow implementation
+Status: RESOLVED
+Decision: bounded non-cascading repair over an explicit affected set and explicit
+          search window; move-only for eligible future FLEXIBLE/SOFT + UNPINNED
+          FocusBlocks; preserve identity/duration; candidate position is the legal
+          point closest to original start, then earlier start, then FocusBlockId;
+          any unplaceable affected block makes the reflow Infeasible and applies none.
+Source: docs/PLANNER_DECISIONS.md PLN-016
+        + docs/tasks/D6_DETERMINISTIC_PLANNER.md
 Impact: ARCHITECTURE_AFFECTING
 ```
 
-Must define exactly how equally valid shifts are ordered so identical snapshots replay identically.
+Identical normalized snapshot + request must replay to equivalent semantic output ordering across supported clients.
 
 ## OD-022 — Timefold benchmark protocol
 
