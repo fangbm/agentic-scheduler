@@ -6,6 +6,8 @@
 
 This decision freezes the project-wide collection-immutability implementation baseline that was previously described only semantically as "immutable public Domain state".
 
+All dependency selection/versioning behavior also follows [`docs/DEPENDENCY_POLICY.md`](DEPENDENCY_POLICY.md).
+
 ---
 
 # 1. Decision
@@ -16,7 +18,7 @@ Use JetBrains/Kotlin's official multiplatform library:
 org.jetbrains.kotlinx:kotlinx-collections-immutable:0.5.2
 ```
 
-The version is pinned in the Version Catalog when implementation begins.
+The exact version is part of the approved dependency decision and is pinned in the Version Catalog when implementation begins.
 
 **From D3 onward, this dependency is pre-authorized for all repository code and all future modules.** A task, contributor, or Coding Agent does not need a new dependency decision or ADR merely to use `kotlinx.collections.immutable` where it is technically appropriate.
 
@@ -155,10 +157,13 @@ Do not:
 
 ```text
 pin a different version in an individual module
+use a dynamic/ranged version selector
 use a second immutable-collections framework for the same role without a new decision
 add the dependency to an unused module merely for symmetry
 let library-specific representation define persistence or wire compatibility
 ```
+
+Any future replacement or version change must name the exact target version in the proposal/PR, consistent with `docs/DEPENDENCY_POLICY.md`.
 
 ---
 
