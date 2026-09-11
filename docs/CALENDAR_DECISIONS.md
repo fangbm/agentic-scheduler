@@ -252,6 +252,37 @@ Creation/editing is a later D5 subtask and must first freeze the production ID g
 
 ---
 
+# CD-009 — Platform composition may depend on database infrastructure
+
+```text
+Status: RESOLVED
+Impact: MODULE BOUNDARY / COMPOSITION
+```
+
+The D5 application/UI dependency sketch describes semantic ownership, not an artificial prohibition on composing infrastructure.
+
+An existing platform app module MAY depend on `:shared:database` at its application/composition root in order to:
+
+```text
+open AgenticSchedulerDatabase
+construct Room repository implementations
+construct RepositoryCalendarQueryService
+pass application-facing services/contracts into UI
+```
+
+The boundary is:
+
+```text
+platform composition root → database factories/repository implementations    ALLOWED
+Compose screen/UI logic   → DAO / Room record / raw database API             FORBIDDEN
+```
+
+No new DI module/framework is introduced for this wiring. Use constructor/manual composition under the D5 OD-060 baseline.
+
+This preserves the existing architecture's allowed app→infrastructure composition edge while ensuring calendar semantics and UI state consume `:shared:application` APIs rather than DAOs.
+
+---
+
 # Final D5 invariant
 
 The first calendar UI is a **deterministic view over authoritative local Domain/application state**, not a new source of scheduling truth.
