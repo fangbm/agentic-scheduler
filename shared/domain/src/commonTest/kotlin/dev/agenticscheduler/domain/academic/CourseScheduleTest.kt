@@ -13,6 +13,7 @@ import kotlin.test.assertIs
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
+import kotlinx.collections.immutable.toImmutableList
 import kotlin.time.Instant
 
 class CourseScheduleTest {
@@ -30,21 +31,21 @@ class CourseScheduleTest {
     fun `period templates and time specifications enforce explicit ordering`() {
         val first = AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(8, 45))
         val second = AcademicPeriod(AcademicPeriodNumber(3), LocalTime(9, 0), LocalTime(9, 45))
-        PeriodTemplate(PeriodTemplateId(id(20)), "Regular", listOf(first, second))
-        PeriodTemplate(PeriodTemplateId(id(20)), "Adjacent", listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(8, 45), LocalTime(9, 30))))
+        PeriodTemplate(PeriodTemplateId(id(20)), "Regular", listOf(first, second).toImmutableList())
+        PeriodTemplate(PeriodTemplateId(id(20)), "Adjacent", listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(8, 45), LocalTime(9, 30))).toImmutableList())
         assertFailsWith<IllegalArgumentException> { AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(8, 0)) }
         assertFailsWith<IllegalArgumentException> {
-            PeriodTemplate(PeriodTemplateId(id(21)), "x", listOf(second, first))
+            PeriodTemplate(PeriodTemplateId(id(21)), "x", listOf(second, first).toImmutableList())
         }
         assertFailsWith<IllegalArgumentException> {
             PeriodTemplate(
                 PeriodTemplateId(id(22)),
                 "x",
-                listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(8, 30), LocalTime(9, 0))),
+                listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(8, 30), LocalTime(9, 0))).toImmutableList(),
             )
         }
         assertFailsWith<IllegalArgumentException> {
-            PeriodTemplate(PeriodTemplateId(id(23)), "x", listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(7, 0), LocalTime(7, 45))))
+            PeriodTemplate(PeriodTemplateId(id(23)), "x", listOf(first, AcademicPeriod(AcademicPeriodNumber(2), LocalTime(7, 0), LocalTime(7, 45))).toImmutableList())
         }
         CourseTimeSpec.ClockTime(LocalTime(8, 0), LocalTime(9, 0))
         CourseTimeSpec.PeriodBased(PeriodTemplateId(id(20)), AcademicPeriodNumber(1), AcademicPeriodNumber(1))
@@ -95,8 +96,12 @@ class CourseScheduleTest {
     @Test
     fun `period template owns an immutable snapshot of periods`() {
         val suppliedPeriods = mutableListOf(AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(9, 0)))
-        val template = PeriodTemplate(PeriodTemplateId(id(36)), "Regular", suppliedPeriods)
+        val template = PeriodTemplate(PeriodTemplateId(id(36)), "Regular", suppliedPeriods.toImmutableList())
         suppliedPeriods.clear()
         assertEquals(listOf(1), template.periods.map { it.number.value })
+        assertEquals(template, template.copy())
+        assertEquals(template.hashCode(), template.copy().hashCode())
+        assertEquals(template.toString(), template.copy().toString())
+        assertFailsWith<IllegalArgumentException> { template.copy(periods = emptyList<AcademicPeriod>().toImmutableList()) }
     }
 }

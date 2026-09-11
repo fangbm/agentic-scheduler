@@ -42,17 +42,15 @@ data class AcademicWeek(
     }
 }
 
-class Semester(
+data class Semester(
     val id: SemesterId,
     val academicYearId: AcademicYearId,
     val name: String,
     val startDate: LocalDate,
     val endDateExclusive: LocalDate,
     val timeZone: TimeZone,
-    academicWeeks: List<AcademicWeek>,
+    val academicWeeks: kotlinx.collections.immutable.ImmutableList<AcademicWeek>,
 ) {
-    val academicWeeks: List<AcademicWeek> = academicWeeks.toList()
-
     init {
         require(name.isNotBlank()) { "A semester name must not be blank." }
         require(startDate < endDateExclusive) { "A semester must have a positive date range." }
@@ -74,24 +72,6 @@ class Semester(
         }
     }
 
-    fun copy(
-        id: SemesterId = this.id,
-        academicYearId: AcademicYearId = this.academicYearId,
-        name: String = this.name,
-        startDate: LocalDate = this.startDate,
-        endDateExclusive: LocalDate = this.endDateExclusive,
-        timeZone: TimeZone = this.timeZone,
-        academicWeeks: List<AcademicWeek> = this.academicWeeks,
-    ): Semester = Semester(id, academicYearId, name, startDate, endDateExclusive, timeZone, academicWeeks)
-
-    override fun equals(other: Any?): Boolean = other is Semester &&
-        id == other.id && academicYearId == other.academicYearId && name == other.name &&
-        startDate == other.startDate && endDateExclusive == other.endDateExclusive && timeZone == other.timeZone &&
-        academicWeeks == other.academicWeeks
-
-    override fun hashCode(): Int = listOf(id, academicYearId, name, startDate, endDateExclusive, timeZone, academicWeeks).hashCode()
-
-    override fun toString(): String = "Semester(id=$id, academicYearId=$academicYearId, name=$name, startDate=$startDate, endDateExclusive=$endDateExclusive, timeZone=$timeZone, academicWeeks=$academicWeeks)"
 }
 
 enum class SemesterAcademicYearValidationResult {

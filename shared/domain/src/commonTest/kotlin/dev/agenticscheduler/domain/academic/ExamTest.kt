@@ -10,12 +10,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.collections.immutable.toImmutableList
 import kotlin.time.Instant
 
 class ExamTest {
     private val semester = Semester(
         SemesterId(id(200)), AcademicYearId(id(201)), "Fall", LocalDate(2026, 9, 1), LocalDate(2026, 10, 1), TimeZone.UTC,
-        listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 8))),
+        listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 8))).toImmutableList(),
     )
     private val course = Course(CourseId(id(202)), semester.id, "Algorithms", null)
 

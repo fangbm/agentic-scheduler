@@ -24,6 +24,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.datetime)
+            implementation(libs.kotlinx.collections.immutable)
             // The domain module deliberately has no database, HTTP, UI, or AI dependencies.
         }
         commonTest.dependencies {

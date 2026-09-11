@@ -18,6 +18,7 @@ import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlin.time.Instant
+import kotlinx.collections.immutable.toImmutableList
 
 class CourseSessionResolverTest {
     private val semester = Semester(
@@ -31,7 +32,7 @@ class CourseSessionResolverTest {
             AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 1), LocalDate(2026, 9, 8)),
             AcademicWeek(AcademicWeekNumber(2), LocalDate(2026, 9, 8), LocalDate(2026, 9, 15)),
             AcademicWeek(AcademicWeekNumber(3), LocalDate(2026, 9, 22), LocalDate(2026, 9, 29)),
-        ),
+        ).toImmutableList(),
     )
     private val course = Course(CourseId(id(102)), semester.id, "Algorithms", "CS101")
 
@@ -43,7 +44,7 @@ class CourseSessionResolverTest {
             PeriodTemplateId(id(103)), "standard", listOf(
                 AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(8, 45)),
                 AcademicPeriod(AcademicPeriodNumber(2), LocalTime(9, 0), LocalTime(9, 45)),
-            ),
+            ).toImmutableList(),
         )
         val result = resolveCourseSessions(semester, course, listOf(lateRule, earlyRule), listOf(template), emptyList(), emptyList())
         val sessions = assertIs<CourseSessionResolutionResult.Success>(result).sessions
@@ -215,7 +216,7 @@ class CourseSessionResolverTest {
         )
         val template = PeriodTemplate(PeriodTemplateId(id(127)), "only one", listOf(
             AcademicPeriod(AcademicPeriodNumber(1), LocalTime(8, 0), LocalTime(9, 0)),
-        ))
+        ).toImmutableList())
         val duplicateTemplate = template.copy()
         val duplicateHoliday = AcademicHoliday(
             AcademicHolidayId(id(128)), semester.id, "h", AllDayRange(LocalDate(2026, 9, 1), LocalDate(2026, 9, 2)),
@@ -280,7 +281,7 @@ class CourseSessionResolverTest {
         val newYork = TimeZone.of("America/New_York")
         val dstSemester = Semester(
             SemesterId(id(140)), AcademicYearId(id(141)), "Spring", LocalDate(2026, 3, 1), LocalDate(2026, 4, 1), newYork,
-            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 3, 2), LocalDate(2026, 3, 9))),
+            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 3, 2), LocalDate(2026, 3, 9))).toImmutableList(),
         )
         val dstCourse = Course(CourseId(id(142)), dstSemester.id, "DST", null)
         val dstRule = CourseScheduleRule(
@@ -290,7 +291,8 @@ class CourseSessionResolverTest {
         val result = assertIs<CourseSessionResolutionResult.Invalid>(
             resolveCourseSessions(dstSemester, dstCourse, listOf(dstRule), emptyList(), emptyList(), emptyList()),
         )
-        assertEquals(listOf(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1)))), result.issues)
+        assertEquals(1, result.issues.size)
+        assertEquals(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1))), result.issues.single())
     }
 
     @Test
@@ -298,7 +300,7 @@ class CourseSessionResolverTest {
         val newYork = TimeZone.of("America/New_York")
         val dstSemester = Semester(
             SemesterId(id(144)), AcademicYearId(id(145)), "Fall", LocalDate(2026, 10, 1), LocalDate(2026, 12, 1), newYork,
-            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 10, 26), LocalDate(2026, 11, 2))),
+            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 10, 26), LocalDate(2026, 11, 2))).toImmutableList(),
         )
         val dstCourse = Course(CourseId(id(146)), dstSemester.id, "DST", null)
         val dstRule = CourseScheduleRule(
@@ -308,7 +310,8 @@ class CourseSessionResolverTest {
         val result = assertIs<CourseSessionResolutionResult.Invalid>(
             resolveCourseSessions(dstSemester, dstCourse, listOf(dstRule), emptyList(), emptyList(), emptyList()),
         )
-        assertEquals(listOf(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1)))), result.issues)
+        assertEquals(1, result.issues.size)
+        assertEquals(CourseSessionResolutionIssue.DstTransitionRejected(CourseOccurrenceKey(dstRule.id, AcademicWeekNumber(1))), result.issues.single())
     }
 
     @Test
@@ -316,7 +319,7 @@ class CourseSessionResolverTest {
         val newYork = TimeZone.of("America/New_York")
         val dstSemester = Semester(
             SemesterId(id(148)), AcademicYearId(id(149)), "Fall", LocalDate(2026, 10, 1), LocalDate(2026, 12, 1), newYork,
-            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 10, 26), LocalDate(2026, 11, 2))),
+            listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 10, 26), LocalDate(2026, 11, 2))).toImmutableList(),
         )
         val dstCourse = Course(CourseId(id(150)), dstSemester.id, "DST", null)
         val dstRule = CourseScheduleRule(
@@ -340,4 +343,7 @@ class CourseSessionResolverTest {
         CourseScheduleRuleId(id(ruleNumber)), course.id, day,
         TeachingWeekSet.of(weeks.map(::AcademicWeekNumber)), time, room,
     )
+
+    private fun immutableSessions(value: kotlinx.collections.immutable.ImmutableList<CourseSession>) = value
+    private fun immutableIssues(value: kotlinx.collections.immutable.ImmutableList<CourseSessionResolutionIssue>) = value
 }

@@ -18,11 +18,13 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.offsetAt
 import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 
 sealed interface CourseSessionResolutionResult {
-    data class Success(val sessions: List<CourseSession>) : CourseSessionResolutionResult
+    data class Success(val sessions: ImmutableList<CourseSession>) : CourseSessionResolutionResult
 
-    data class Invalid(val issues: List<CourseSessionResolutionIssue>) : CourseSessionResolutionResult {
+    data class Invalid(val issues: ImmutableList<CourseSessionResolutionIssue>) : CourseSessionResolutionResult {
         init {
             require(issues.isNotEmpty()) { "An invalid resolution must report at least one issue." }
         }
@@ -209,7 +211,7 @@ fun resolveCourseSessions(
         }
     }
 
-    if (issues.isNotEmpty()) return CourseSessionResolutionResult.Invalid(issues.sortedForResolution())
+    if (issues.isNotEmpty()) return CourseSessionResolutionResult.Invalid(issues.sortedForResolution().toImmutableList())
 
     val validTemplatesById = periodTemplates.associateBy(PeriodTemplate::id)
     val baseOccurrences = rules.flatMap { rule ->
@@ -229,7 +231,7 @@ fun resolveCourseSessions(
             baseTimes[occurrence.key] = range
         }
     }
-    if (dstIssues.isNotEmpty()) return CourseSessionResolutionResult.Invalid(dstIssues.sortedForResolution())
+    if (dstIssues.isNotEmpty()) return CourseSessionResolutionResult.Invalid(dstIssues.sortedForResolution().toImmutableList())
 
     val exceptionsByKey = exceptions.associateBy(CourseOccurrenceException::occurrenceKey)
     val sessions = baseOccurrences.map { occurrence ->
@@ -256,7 +258,7 @@ fun resolveCourseSessions(
             .thenBy { it.occurrenceKey.scheduleRuleId.value },
     )
 
-    return CourseSessionResolutionResult.Success(sessions)
+    return CourseSessionResolutionResult.Success(sessions.toImmutableList())
 }
 
 private fun occurrenceDate(week: AcademicWeek, rule: CourseScheduleRule): LocalDate =

@@ -6,14 +6,16 @@ import dev.agenticscheduler.domain.id.PeriodTemplateId
 import kotlin.collections.Collection
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalTime
+import kotlinx.collections.immutable.ImmutableList
+import kotlinx.collections.immutable.toImmutableList
 
 class TeachingWeekSet private constructor(
-    val weeks: List<AcademicWeekNumber>,
+    val weeks: ImmutableList<AcademicWeekNumber>,
 ) {
     companion object {
         fun of(weeks: Collection<AcademicWeekNumber>): TeachingWeekSet {
             require(weeks.isNotEmpty()) { "Teaching weeks must not be empty." }
-            return TeachingWeekSet(weeks.distinct().sortedBy(AcademicWeekNumber::value))
+            return TeachingWeekSet(weeks.distinct().sortedBy(AcademicWeekNumber::value).toImmutableList())
         }
     }
 

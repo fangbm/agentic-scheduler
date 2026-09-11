@@ -20,12 +20,11 @@ data class AcademicPeriod(
     }
 }
 
-class PeriodTemplate(
+data class PeriodTemplate(
     val id: PeriodTemplateId,
     val name: String,
-    periods: List<AcademicPeriod>,
+    val periods: kotlinx.collections.immutable.ImmutableList<AcademicPeriod>,
 ) {
-    val periods: List<AcademicPeriod> = periods.toList()
 
     init {
         require(name.isNotBlank()) { "A period template name must not be blank." }
@@ -44,16 +43,4 @@ class PeriodTemplate(
         }
     }
 
-    fun copy(
-        id: PeriodTemplateId = this.id,
-        name: String = this.name,
-        periods: List<AcademicPeriod> = this.periods,
-    ): PeriodTemplate = PeriodTemplate(id, name, periods)
-
-    override fun equals(other: Any?): Boolean = other is PeriodTemplate &&
-        id == other.id && name == other.name && periods == other.periods
-
-    override fun hashCode(): Int = listOf(id, name, periods).hashCode()
-
-    override fun toString(): String = "PeriodTemplate(id=$id, name=$name, periods=$periods)"
 }

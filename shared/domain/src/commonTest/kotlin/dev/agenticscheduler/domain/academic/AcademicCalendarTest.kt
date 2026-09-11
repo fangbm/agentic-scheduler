@@ -7,6 +7,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
+import kotlinx.collections.immutable.toImmutableList
 
 class AcademicCalendarTest {
     private val year = AcademicYear(
@@ -62,6 +63,10 @@ class AcademicCalendarTest {
         val semester = semester(suppliedWeeks)
         suppliedWeeks.clear()
         assertEquals(listOf(1), semester.academicWeeks.map { it.number.value })
+        assertEquals(semester, semester.copy())
+        assertEquals(semester.hashCode(), semester.copy().hashCode())
+        assertEquals(semester.toString(), semester.copy().toString())
+        assertFailsWith<IllegalArgumentException> { semester.copy(academicWeeks = emptyList<AcademicWeek>().toImmutableList()) }
     }
 
     @Test
@@ -77,7 +82,7 @@ class AcademicCalendarTest {
         )
         val shortYear = AcademicYear(year.id, year.name, LocalDate(2026, 9, 2), year.endDateExclusive)
         assertEquals(SemesterAcademicYearValidationResult.OUTSIDE_ACADEMIC_YEAR, validateSemesterAgainstAcademicYear(shortYear, valid))
-        Semester(SemesterId(id(11)), year.id, "Also Fall", LocalDate(2026, 9, 1), LocalDate(2026, 10, 1), TimeZone.UTC, listOf(week(1, 1)))
+        Semester(SemesterId(id(11)), year.id, "Also Fall", LocalDate(2026, 9, 1), LocalDate(2026, 10, 1), TimeZone.UTC, listOf(week(1, 1)).toImmutableList())
     }
 
     private fun semester(weeks: List<AcademicWeek>): Semester = Semester(
@@ -87,7 +92,7 @@ class AcademicCalendarTest {
         startDate = LocalDate(2026, 9, 1),
         endDateExclusive = LocalDate(2026, 10, 1),
         timeZone = TimeZone.UTC,
-        academicWeeks = weeks,
+        academicWeeks = weeks.toImmutableList(),
     )
 
     private fun week(number: Int, day: Int): AcademicWeek =
