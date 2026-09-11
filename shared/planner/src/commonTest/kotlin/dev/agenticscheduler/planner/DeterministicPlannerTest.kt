@@ -51,6 +51,15 @@ class DeterministicPlannerTest {
         assertIs<PlannerResult.Infeasible>(result)
     }
 
+    @Test fun `hard and pinned blocks remain fixed occupancy`() {
+        val fixedTask = task(1, kotlin.time.Duration.ZERO)
+        val plannedTask = task(2, 2.hours)
+        val hard = FocusBlock(FocusBlockId(id(4)), fixedTask.id, ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC), Flexibility.HARD, PinState.UNPINNED)
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(fixedTask, plannedTask), listOf(hard))))
+        val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
+        assertEquals(Instant.parse("2026-01-05T10:00:00Z"), create.draft.time.start)
+    }
+
     @Test fun `local reflow keeps identity duration and finds closest legal interval`() {
         val original = FocusBlock(FocusBlockId(id(4)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val snapshot = snapshot(tasks = listOf(task(1, 1.hours)), focusBlocks = listOf(original))
