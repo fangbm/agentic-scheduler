@@ -79,6 +79,41 @@ class CalendarProjectionTest {
         assertTrue(project(viewport, listOf(allDay, floating), emptyList(), input()).conflicts.isEmpty())
     }
 
+    @Test fun `mixed source ordering uses the canonical source rank after equal times`() {
+        val courseViewport = CalendarViewport(LocalDate(2026, 3, 2), LocalDate(2026, 3, 3), zone)
+        val sharedTime = ZonedTimeRange(
+            Instant.parse("2026-03-02T14:00:00Z"),
+            Instant.parse("2026-03-02T15:00:00Z"),
+            zone,
+        )
+        val event = event(40, "Event", sharedTime)
+        val exam = Exam(ExamId(id(41)), semester().id, null, "Exam", ExamSchedule.Exact(sharedTime))
+        val focus = FocusBlock(
+            FocusBlockId(id(42)),
+            TaskId(id(43)),
+            sharedTime,
+            Flexibility.HARD,
+            PinState.PINNED,
+        )
+
+        val result = project(
+            courseViewport,
+            listOf(event),
+            listOf(focus),
+            input(courses = listOf(course()), rules = listOf(rule()), exams = listOf(exam)),
+        )
+
+        assertEquals(
+            listOf(
+                CalendarSourceRef.Event(event.id),
+                CalendarSourceRef.CourseSession(CourseOccurrenceKey(rule().id, AcademicWeekNumber(1))),
+                CalendarSourceRef.Exam(exam.id),
+                CalendarSourceRef.FocusBlock(focus.id),
+            ),
+            result.items.filterIsInstance<CalendarItem.Zoned>().map { it.source },
+        )
+    }
+
     @Test fun `repository flow updates produce a new projection`() = runBlocking {
         val eventRepository = FakeEventRepository()
         val service = RepositoryCalendarQueryService(eventRepository, FakeTaskRepository(), FakeAcademicRepository())
