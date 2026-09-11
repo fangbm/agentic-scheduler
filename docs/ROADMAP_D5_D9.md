@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D4 complete  
+> Baseline: D5 complete; D6-00 decisions frozen  
 > Date: 2026-09-11
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
@@ -11,9 +11,9 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 # Sequence
 
 ```text
-D5  Calendar / Application Surface
+D5  Calendar / Application Surface       COMPLETE
  ↓
-D6  Deterministic Planner + PlanBranch
+D6  Deterministic Planner + PlanBranch   READY
  ↓
 D7  Mutation Journal / ChangeLog / Undo / DVV-HLC
  ↓
@@ -40,35 +40,40 @@ The Agent comes after deterministic Tools/Planner/history semantics exist. It mu
 
 # D5 — Calendar / Application Surface
 
-Split:
+D5-01 Calendar projection / Agenda-Day baseline is complete.
 
-```text
-D5-01  Calendar projection + conflict facts + Agenda/Day read UI
-D5-02  Explicit creation/editing after production UUIDv7 generator decision
-```
+D5-02 explicit creation/editing is not required for D6. The production UUIDv7 implementation previously deferred under OD-004 is now frozen by D6-00 because D6 is the first production creator of Planner-generated FocusBlocks/PlanBranches.
 
-D5-01 is implementation-ready through:
+Authoritative D5 sources:
 
 ```text
 docs/CALENDAR_DECISIONS.md
 docs/tasks/D5_CALENDAR_SURFACE.md
 ```
 
-D5-02 must resolve the exact production ID generator implementation under OD-004 before creating new entities.
-
 ---
 
 # D6 — Deterministic Planner
 
-Recommended split:
+D6-00 is complete and D6 implementation is authorized.
+
+Split:
 
 ```text
-D6-00  Planner semantic decisions
-D6-01  deterministic Planner engine
-D6-02  PlanBranch preview/rebase/apply
+D6-00  Planner semantic decisions             COMPLETE
+D6-01  deterministic Planner engine           READY
+D6-02  PlanBranch preview/rebase/apply        READY
 ```
 
-D6 cannot become `READY` until it freezes at minimum:
+Authoritative sources:
+
+```text
+docs/PLANNER_DECISIONS.md
+docs/tasks/D6_DETERMINISTIC_PLANNER.md
+docs/OPEN_DECISIONS.md  // OD-020 / OD-021 / OD-004 resolved
+```
+
+The frozen D6 contract covers:
 
 ```text
 PlanningProfile real rule set
@@ -80,14 +85,18 @@ DeadlinePolicy / OverflowPolicy semantics
 DateOnly deadline resolution
 unknown remaining-effort behavior
 working/availability windows
-chunking/min/max FocusBlock rules
+chunking/min/preferred/max FocusBlock rules
 Academic/Exam participation
 AllDay/Floating planning participation
-OD-020 scoring model
+OD-020 lexicographic deterministic decision model
 OD-021 Local Reflow deterministic search/tie-break
+:shared:planner module authorization
+session-scoped PlanBranch lifecycle
+atomic Apply
+production UUIDv7 generation
 ```
 
-Inherited rule:
+Inherited rule remains:
 
 ```text
 HARD + UNPINNED still cannot be moved automatically by Planner.
@@ -110,7 +119,7 @@ D7 freezes local semantic mutation/history behavior before network transport exi
 
 Production wire serialization remains D8 scope unless OD-030 is intentionally resolved earlier.
 
-Do not create generic tombstone/delete behavior before synchronized delete semantics are explicitly frozen.
+Do not create generic tombstone/delete behavior before synchronized delete semantics are explicitly frozen. D6's FocusBlock delete authorization is local active-state behavior only and does not resolve synchronized deletion/tombstone semantics.
 
 ---
 
@@ -176,7 +185,9 @@ v1 → v2
 
 unless the immediately preceding frozen milestone guarantees that exact source version.
 
-Use:
+D6 is now the exception by construction: D5 introduced no schema change and current `main` is schema v1, so D6 explicitly freezes migration `v1 -> v2` in `PLANNER_DECISIONS.md`.
+
+For later milestones use:
 
 ```text
 current schema N → N+1
@@ -212,6 +223,8 @@ AgentThread
 AgentMessage
 AgentAction
 ```
+
+D6 explicitly keeps request Constraints and PlanBranch local/session-scoped and non-synchronized.
 
 ---
 
