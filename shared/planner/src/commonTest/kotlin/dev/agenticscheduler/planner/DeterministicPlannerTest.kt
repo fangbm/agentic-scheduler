@@ -73,7 +73,7 @@ class DeterministicPlannerTest {
     }
 
     @Test fun `full replan moves future flexible block instead of treating it as fixed occupancy`() {
-        val existing = FocusBlock(FocusBlockId(id(6)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T08:00:00Z"), Instant.parse("2026-01-05T09:00:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val existing = FocusBlock(FocusBlockId(id(6)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T08:30:00Z"), Instant.parse("2026-01-05T09:30:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(existing))))
         val move = assertIs<FocusBlockMutation.Move>(result.mutations.single())
         assertEquals(existing.id, move.id)
@@ -81,7 +81,7 @@ class DeterministicPlannerTest {
     }
 
     @Test fun `dependent stays blocked until prerequisite is fully planned`() {
-        val prerequisite = task(1, 4.hours)
+        val prerequisite = task(1, 5.hours)
         val dependent = task(2, 1.hours)
         val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(prerequisite, dependent),
