@@ -68,7 +68,7 @@ class PlannerConformanceMatrixTest {
             "unconfigured",
             PlanningProfileConfiguration.Unconfigured,
         )
-        val result = DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), profile = profile))
+        val result = DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), profile = profile))
         val invalid = assertIs<PlannerResult.InvalidInput>(result)
         assertEquals(true, invalid.issues.any { it is PlannerIssue.ProfileUnconfigured })
     }
@@ -84,7 +84,7 @@ class PlannerConformanceMatrixTest {
             preferred = 2.hours,
             maximum = 2.hours,
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 2.hours)), profile = profile)))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 2.hours)), profile = profile)))
         val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
         assertEquals(at("09:00"), create.draft.time.start)
         assertEquals(2.hours, create.draft.time.endExclusive - create.draft.time.start)
@@ -103,7 +103,7 @@ class PlannerConformanceMatrixTest {
             ),
         )
         // 2026-03-08 is the US spring-forward date: 02:00-03:00 local does not exist.
-        val result = DeterministicPlannerV2().fullReplan(
+        val result = DeterministicPlanner().fullReplan(
             snapshot(
                 tasks = listOf(task(1, 1.hours)),
                 profile = profile,
@@ -115,12 +115,37 @@ class PlannerConformanceMatrixTest {
         assertEquals(true, invalid.issues.any { it is PlannerIssue.TimeResolutionFailure })
     }
 
+    @Test
+    fun `floating event inside a DST gap is a structured failure`() {
+        val zone = TimeZone.of("America/New_York")
+        val profile = profile(zone = zone)
+        // 2026-03-08 02:00-03:00 local does not exist; the offset is never guessed.
+        val floating = Event(
+            EventId(id(20)),
+            "gap floating",
+            FloatingTimeRange(kotlinx.datetime.LocalDateTime(2026, 3, 8, 2, 0), kotlinx.datetime.LocalDateTime(2026, 3, 8, 3, 0)),
+            Flexibility.HARD,
+            PinState.UNPINNED,
+        )
+        val result = DeterministicPlanner().fullReplan(
+            snapshot(
+                tasks = listOf(task(1, 1.hours)),
+                events = listOf(floating),
+                profile = profile,
+                referenceNow = "2026-03-08T08:00:00Z",
+                horizonEnd = "2026-03-08T13:00:00Z",
+            ),
+        )
+        val invalid = assertIs<PlannerResult.InvalidInput>(result)
+        assertEquals(true, invalid.issues.any { it is PlannerIssue.TimeResolutionFailure })
+    }
+
     // ------------------------------------------------------------------ occupancy conversion
 
     @Test
     fun `floating event resolves in profile timezone and blocks occupancy`() {
         val floating = Event(EventId(id(20)), "floating", FloatingTimeRange(Local(9, 0), Local(10, 0)), Flexibility.HARD, PinState.UNPINNED)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(task(1, 1.hours)),
             events = listOf(floating),
         )))
@@ -132,13 +157,13 @@ class PlannerConformanceMatrixTest {
     fun `all day event follows the profile policy`() {
         val allDay = Event(EventId(id(20)), "all day", AllDayRange(LocalDate.parse("2026-01-05"), LocalDate.parse("2026-01-06")), Flexibility.HARD, PinState.UNPINNED)
         val blocking = profile(allDayPolicy = AllDayEventPolicy.BLOCK_WHOLE_LOCAL_DAY, windows = listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))))
-        val blocked = DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), events = listOf(allDay), profile = blocking))
+        val blocked = DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), events = listOf(allDay), profile = blocking))
         val blockedResult = assertIs<PlannerResult.Success>(blocked)
         assertEquals(true, blockedResult.mutations.isEmpty(), "blocked whole local day offers no capacity")
         assertEquals(true, blockedResult.issues.any { it is PlannerIssue.NoLegalAvailability })
 
         val nonBlocking = profile(allDayPolicy = AllDayEventPolicy.NON_BLOCKING)
-        val free = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), events = listOf(allDay), profile = nonBlocking)))
+        val free = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), events = listOf(allDay), profile = nonBlocking)))
         assertIs<FocusBlockMutation.Create>(free.mutations.single())
     }
 
@@ -154,7 +179,7 @@ class PlannerConformanceMatrixTest {
             occurrenceKey = CourseOccurrenceKey(CourseScheduleRuleId(id(33)), AcademicWeekNumber(2)),
             state = CourseSessionState.Cancelled(CourseCancellationReason.EXPLICIT_EXCEPTION),
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(task(1, 1.hours)),
             courseSessions = listOf(scheduled, cancelled),
         )))
@@ -165,7 +190,7 @@ class PlannerConformanceMatrixTest {
     @Test
     fun `exact exam blocks while date only and unscheduled exams do not`() {
         fun exam(schedule: ExamSchedule) = Exam(ExamId(id(31)), SemesterId(id(32)), null, "exam", schedule)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(task(1, 1.hours)),
             exams = listOf(
                 exam(ExamSchedule.Exact(ZonedTimeRange(at("09:00"), at("10:00"), TimeZone.UTC))),
@@ -194,7 +219,7 @@ class PlannerConformanceMatrixTest {
             maximum = 2.hours,
         )
         val deadline = TaskDeadline(Deadline.DateOnly(LocalDate.parse("2026-01-05")), DeadlinePolicy.HARD, OverflowPolicy.NEVER)
-        val result = DeterministicPlannerV2().fullReplan(snapshot(
+        val result = DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(task(1, 5.hours, deadline = deadline)),
             profile = profile,
             horizonEnd = "2026-01-06T13:00:00Z",
@@ -210,7 +235,7 @@ class PlannerConformanceMatrixTest {
         val snapshot = snapshot(tasks = listOf(askTask)).copy(
             askOverflowAuthorizedTaskIds = listOf(askTask.id).toImmutableList(),
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot))
         val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
         assertEquals(at("09:00"), create.draft.time.start)
     }
@@ -221,7 +246,7 @@ class PlannerConformanceMatrixTest {
         val owner = task(2, 1.hours)
         val flexible = FocusBlock(FocusBlockId(id(6)), owner.id, range("09:00", "10:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val barrier = FocusBlock(FocusBlockId(id(9)), TaskId(id(5)), range("10:00", "13:00"), Flexibility.HARD, PinState.UNPINNED)
-        val result = DeterministicPlannerV2().fullReplan(snapshot(
+        val result = DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(hardTask, owner, task(5, Duration.ZERO)),
             focusBlocks = listOf(flexible, barrier),
         ))
@@ -239,7 +264,7 @@ class PlannerConformanceMatrixTest {
             task(1, Duration.ZERO),
         ).forEach { ineligible ->
             val soft = FocusBlock(FocusBlockId(id(6)), ineligible.id, range("09:00", "10:00"), Flexibility.SOFT, PinState.UNPINNED)
-            val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
+            val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
                 tasks = listOf(ineligible, task(2, 30.minutes)),
                 focusBlocks = listOf(soft),
             )))
@@ -251,7 +276,7 @@ class PlannerConformanceMatrixTest {
     @Test
     fun `in progress tasks are eligible for automatic planning`() {
         val inProgress = task(1, 1.hours, status = TaskStatus.IN_PROGRESS)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(inProgress))))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(inProgress))))
         assertIs<FocusBlockMutation.Create>(result.mutations.single())
     }
 
@@ -261,7 +286,7 @@ class PlannerConformanceMatrixTest {
     fun `pln-013 boundary matrix`() {
         fun createDurationFor(remaining: Duration, minimum: Duration = 30.minutes, preferred: Duration = 2.hours, maximum: Duration = 2.hours): Duration? {
             val profile = profile(minimum = minimum, preferred = preferred, maximum = maximum)
-            val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, remaining)), profile = profile)))
+            val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, remaining)), profile = profile)))
             val create = result.mutations.filterIsInstance<FocusBlockMutation.Create>().firstOrNull()
             return create?.let { it.draft.time.endExclusive - it.draft.time.start }
         }
@@ -285,7 +310,7 @@ class PlannerConformanceMatrixTest {
             preferred = 1.hours,
             maximum = 2.hours,
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), profile = profile)))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), profile = profile)))
         assertEquals(true, result.mutations.isEmpty())
         assertEquals(true, result.issues.any { it is PlannerIssue.UnscheduledEffort && it.taskId == TaskId(id(1)) && it.remaining == 1.hours })
     }
@@ -296,7 +321,7 @@ class PlannerConformanceMatrixTest {
     fun `preserve existing placement outranks a smaller movement elsewhere`() {
         val owner = task(1, 1.hours)
         val existing = FocusBlock(FocusBlockId(id(6)), owner.id, range("10:00", "11:00"), Flexibility.SOFT, PinState.UNPINNED)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(owner), focusBlocks = listOf(existing))))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(owner), focusBlocks = listOf(existing))))
         assertEquals(true, result.mutations.isEmpty(), "a legal original placement must be preserved untouched")
     }
 
@@ -305,7 +330,7 @@ class PlannerConformanceMatrixTest {
         // Free 09:00-13:00, demand 1h: candidate 09:00-10:00 (1h, rank 0) must beat any
         // 30-minute candidate; both start-comparable positions are structural.
         val profile = profile(minimum = 30.minutes, preferred = 1.hours, maximum = 2.hours)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), profile = profile)))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours)), profile = profile)))
         val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
         assertEquals(1.hours, create.draft.time.endExclusive - create.draft.time.start)
     }
@@ -314,8 +339,8 @@ class PlannerConformanceMatrixTest {
     fun `canonical identity breaks remaining ties deterministically`() {
         val first = task(1, 30.minutes)
         val second = task(2, 30.minutes)
-        val forward = DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(first, second)))
-        val reverse = DeterministicPlannerV2().fullReplan(
+        val forward = DeterministicPlanner().fullReplan(snapshot(tasks = listOf(first, second)))
+        val reverse = DeterministicPlanner().fullReplan(
             snapshot(tasks = listOf(second, first)).copy(tasks = listOf(second, first).toImmutableList()),
         )
         assertEquals(forward, reverse)
@@ -341,7 +366,7 @@ class PlannerConformanceMatrixTest {
             persistentListOf(),
             ZonedTimeRange(at("09:00"), at("11:25"), TimeZone.UTC),
         )
-        val result = DeterministicPlannerV2().localReflow(
+        val result = DeterministicPlanner().localReflow(
             snapshot(tasks = listOf(task(1, 1.hours), task(2, 30.minutes), task(5, Duration.ZERO)), focusBlocks = listOf(movable, stuck, barrier)),
             request,
         )
@@ -357,7 +382,7 @@ class PlannerConformanceMatrixTest {
             persistentListOf(),
             ZonedTimeRange(at("09:00"), at("13:00"), TimeZone.UTC),
         )
-        val result = DeterministicPlannerV2().localReflow(
+        val result = DeterministicPlanner().localReflow(
             snapshot(tasks = listOf(task(1, 1.hours), task(2, 1.hours)), focusBlocks = listOf(pinned, hard)),
             request,
         )
@@ -375,7 +400,7 @@ class PlannerConformanceMatrixTest {
             listOf(ZonedTimeRange(at("08:30"), at("09:30"), TimeZone.UTC)).toImmutableList(),
             ZonedTimeRange(at("09:00"), at("13:00"), TimeZone.UTC),
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().localReflow(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().localReflow(
             snapshot(tasks = listOf(task(1, 1.hours), task(2, 1.hours)), focusBlocks = listOf(near, unrelated)),
             request,
         ))

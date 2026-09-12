@@ -11,7 +11,7 @@ import kotlinx.collections.immutable.toImmutableList
  * reservation + task-local delta architecture from
  * docs/PLANNER_REWRITE_DECISIONS.md.
  */
-class DeterministicPlannerV2 {
+class DeterministicPlanner {
 
     fun fullReplan(snapshot: PlanningSnapshot): PlannerResult {
         val config = snapshot.profile.configuration as? PlanningProfileConfiguration.Configured

@@ -279,7 +279,7 @@ class PlannerRewriteRegressionTest {
         }
     }
 
-    private fun engine() = DeterministicPlannerV2()
+    private fun engine() = DeterministicPlanner()
 
     private fun assertNoProposedOverlap(result: PlannerResult.Success, originals: List<FocusBlock>) {
         result.mutations.forEach { mutation ->
