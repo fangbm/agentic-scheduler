@@ -97,13 +97,15 @@ class DeterministicPlanner {
             }
             val task = ready.first(); waiting.remove(task)
             val after = dependencies.filter { it.dependentTaskId == task.id }.mapNotNull { completion[it.prerequisiteTaskId] }.maxOrNull() ?: snapshot.referenceNow
-            val free = subtract(
-                baseFree,
-                mutable.filter { it.taskId != task.id && it.taskId !in processed }.map { Range(it.time.start, it.time.endExclusive) } + placed.map { it.second },
-            )
+            // PLN-014: unprocessed mutable blocks are proposals, never occupancy.
+            // Task priority therefore decides who receives a contested slot.
+            val free = subtract(baseFree, placed.map { it.second })
             var remaining = task.effort.remaining!! - (coverage[task.id] ?: Duration.ZERO)
             if (remaining < Duration.ZERO) { issues += PlannerIssue.OverallocatedPlannedEffort(task.id); remaining = Duration.ZERO }
             mutable.filter { it.taskId == task.id }.sortedBy { it.time.start }.forEach { block ->
+                // FLEXIBLE coverage may have changed immediately before a SOFT block.
+                // Recompute from the authoritative total before every authority decision.
+                remaining = task.effort.remaining!! - (coverage[task.id] ?: Duration.ZERO)
                 if (block.flexibility == Flexibility.FLEXIBLE) {
                     val proposed = preservedOrMoved(block, task, after, free, config, snapshot, fixedContext + placed)
                     if (proposed == null) {
@@ -267,13 +269,21 @@ class DeterministicPlanner {
             OverflowPolicy.ALLOW -> true; OverflowPolicy.ASK -> task.id in snapshot.askOverflowAuthorizedTaskIds; OverflowPolicy.NEVER -> false
         } } ?: true
         val candidates = free.mapNotNull { intersect(it, Range(after, snapshot.horizon.endExclusive)) }.flatMap { interval ->
-            val before = cutoff?.let { intersect(interval, Range(Instant.DISTANT_PAST, it)) }
-            val selected = before ?: if (overflow) interval else null
-            if (selected != null) {
-                val duration = chunk(remaining, selected.endExclusive - selected.start, config) ?: return@flatMap emptyList()
-                val result = Range(selected.start, selected.start + duration)
-                if (cutoff == null || result.endExclusive <= cutoff || overflow) listOf(result) else emptyList()
-            } else emptyList()
+            val starts = buildList {
+                add(interval.start)
+                cutoff?.takeIf { it in interval.start..interval.endExclusive }?.let(::add)
+                context.forEach { (_, range) ->
+                    range.endExclusive.takeIf { it in interval.start..interval.endExclusive }?.let(::add)
+                }
+            }.distinct()
+            starts.flatMap { start ->
+                val segment = Range(start, interval.endExclusive)
+                val before = cutoff?.let { intersect(segment, Range(Instant.DISTANT_PAST, it)) }
+                val choices = listOfNotNull(before, if (overflow) intersect(segment, Range(cutoff ?: segment.start, segment.endExclusive)) else null)
+                choices.mapNotNull { selected ->
+                    chunk(remaining, selected.endExclusive - selected.start, config)?.let { duration -> Range(selected.start, selected.start + duration) }
+                }
+            }
         }
         return candidates.sortedWith(compareBy<Range>(
             { cutoff != null && it.endExclusive > cutoff },
