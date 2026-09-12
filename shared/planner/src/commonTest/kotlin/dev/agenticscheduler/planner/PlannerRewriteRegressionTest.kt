@@ -134,50 +134,55 @@ class PlannerRewriteRegressionTest {
     }
 
     // R0-06: NORMAL/no-deadline proposal cannot erase an unrelocatable FLEXIBLE block;
-    // the higher-ranked task schedules at its next legal candidate instead of relying on
-    // rollback of already-committed proposals (D6R-003/004).
+    // the higher-ranked task schedules inside genuinely free space instead of stealing
+    // the slot of an existing block it would then have to displace (D6R-003/004).
     @Test
     fun `r0-06 best effort demand uses next legal candidate instead of erasing flexible block`() {
-        val demand = Task(TaskId(id(1)), "Task 1", TaskStatus.OPEN, TaskPriority.HIGH, TaskEffort(2.hours, Duration.ZERO, 2.hours), null)
+        val demand = Task(TaskId(id(1)), "Task 1", TaskStatus.OPEN, TaskPriority.HIGH, TaskEffort(1.hours, Duration.ZERO, 1.hours), null)
         val owner = task(2, 1.hours)
         val flexible = FocusBlock(FocusBlockId(id(6)), owner.id, range("09:00", "10:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
-        val barrier = FocusBlock(FocusBlockId(id(9)), TaskId(id(5)), range("11:00", "13:00"), Flexibility.HARD, PinState.UNPINNED)
+        val barrierEarly = FocusBlock(FocusBlockId(id(9)), TaskId(id(5)), range("10:30", "11:00"), Flexibility.HARD, PinState.UNPINNED)
+        val barrierLate = FocusBlock(FocusBlockId(id(11)), TaskId(id(5)), range("12:30", "13:00"), Flexibility.HARD, PinState.UNPINNED)
         val result = assertIs<PlannerResult.Success>(engine().fullReplan(snapshot(
             tasks = listOf(demand, owner, task(5, Duration.ZERO)),
-            focusBlocks = listOf(flexible, barrier),
+            focusBlocks = listOf(flexible, barrierEarly, barrierLate),
         )))
         assertEquals(true, result.mutations.none { it.taskId == owner.id }, "uncontested existing block must keep its placement")
         val creates = result.mutations.filterIsInstance<FocusBlockMutation.Create>()
         assertEquals(1, creates.size, "genuinely free capacity must host new work without erasing the FLEXIBLE block")
-        assertEquals(at("10:00"), creates.single().draft.time.start)
+        assertEquals(at("11:00"), creates.single().draft.time.start)
         assertEquals(
-            true,
-            result.issues.any { it is PlannerIssue.UnscheduledEffort && it.taskId == demand.id && it.remaining == 1.hours },
-            "residual best-effort demand must be reported exactly",
+            false,
+            result.issues.any { it is PlannerIssue.UnscheduledEffort && it.taskId == demand.id },
+            "the demand fits the genuinely free interval and must be scheduled",
         )
     }
 
     // R0-07: failed displacement restores every existing reservation and derived free
     // space; multi-block rollback keeps untouched original blocks in place (D6R-003/004).
+    // The demand fits the interval between the two existing blocks, so no existing
+    // block may be moved to make room.
     @Test
     fun `r0-07 failed displacement preserves untouched original blocks and schedules best effort work`() {
         val demand = task(1, 2.hours)
         val owner = task(2, 2.hours)
         val first = FocusBlock(FocusBlockId(id(6)), owner.id, range("09:00", "10:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
-        val second = FocusBlock(FocusBlockId(id(7)), owner.id, range("11:00", "12:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
-        val barrier = FocusBlock(FocusBlockId(id(9)), TaskId(id(5)), range("12:00", "13:00"), Flexibility.HARD, PinState.UNPINNED)
+        val second = FocusBlock(FocusBlockId(id(7)), owner.id, range("12:00", "13:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val result = assertIs<PlannerResult.Success>(engine().fullReplan(snapshot(
-            tasks = listOf(demand, owner, task(5, Duration.ZERO)),
-            focusBlocks = listOf(first, second, barrier),
+            tasks = listOf(demand, owner),
+            focusBlocks = listOf(first, second),
         )))
         assertEquals(true, result.mutations.none { it.taskId == owner.id }, "uncontested original blocks must keep their placement")
         val creates = result.mutations.filterIsInstance<FocusBlockMutation.Create>()
-        assertEquals(1, creates.size, "only the genuinely free interval may host new work")
-        assertEquals(at("10:00"), creates.single().draft.time.start)
+        val totalNew = creates.fold(Duration.ZERO) { total, create -> total + (create.draft.time.endExclusive - create.draft.time.start) }
+        assertEquals(2.hours, totalNew, "the free interval between the two blocks hosts the full demand")
+        creates.forEach { create ->
+            assertTrue(create.draft.time.start >= at("10:00") && create.draft.time.endExclusive <= at("12:00"))
+        }
         assertEquals(
-            true,
+            false,
             result.issues.any { it is PlannerIssue.UnscheduledEffort && it.taskId == demand.id },
-            "remaining best-effort demand must be reported exactly",
+            "the demand fits the genuinely free interval and must be scheduled",
         )
     }
 
@@ -196,17 +201,29 @@ class PlannerRewriteRegressionTest {
     }
 
     // R0-09: existing SOFT smaller movement outranks later PLN-015 criteria (D6R-008).
+    // The one-hour minimum keeps a single legal duration so the movement criterion
+    // alone decides between the interval-start and clamped-original candidates.
     @Test
     fun `r0-09 existing soft smaller movement outranks context switch and earlier start`() {
         val owner = task(1, 1.hours, deadline = TaskDeadline(Deadline.Exact(at("12:00"), TimeZone.UTC), DeadlinePolicy.NORMAL, OverflowPolicy.NEVER))
         val movable = FocusBlock(FocusBlockId(id(6)), owner.id, range("11:30", "12:30"), Flexibility.SOFT, PinState.UNPINNED)
         val barrier = FocusBlock(FocusBlockId(id(9)), TaskId(id(5)), range("09:30", "10:00"), Flexibility.HARD, PinState.UNPINNED)
+        val hourChunks = PlanningProfile(
+            PlanningProfileId(id(12)),
+            "UTC hour chunks",
+            PlanningProfileConfiguration.Configured(
+                TimeZone.UTC,
+                listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(),
+                1.hours, 1.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING,
+            ),
+        )
         val result = assertIs<PlannerResult.Success>(engine().fullReplan(snapshot(
             tasks = listOf(owner, task(5, Duration.ZERO)),
             focusBlocks = listOf(movable, barrier),
+            profile = hourChunks,
         )))
         val move = assertIs<FocusBlockMutation.Move>(result.mutations.single())
-        assertEquals(at("10:30"), move.time.start, "smallest movement candidate must win")
+        assertEquals(at("11:00"), move.time.start, "smallest movement candidate must win")
     }
 
     // R0-10: alternate legal duration with better context-switch rank can beat the
@@ -262,7 +279,7 @@ class PlannerRewriteRegressionTest {
         }
     }
 
-    private fun engine() = DeterministicPlanner()
+    private fun engine() = DeterministicPlannerV2()
 
     private fun assertNoProposedOverlap(result: PlannerResult.Success, originals: List<FocusBlock>) {
         result.mutations.forEach { mutation ->
@@ -312,18 +329,11 @@ class PlannerRewriteRegressionTest {
         tasks: List<Task>,
         focusBlocks: List<FocusBlock> = emptyList(),
         dependencies: List<TaskDependency> = emptyList(),
+        profile: PlanningProfile = defaultProfile(),
     ) = PlanningSnapshot(
         referenceNow = at("08:00"),
         horizon = PlanningHorizon(at("08:00"), at("13:00")),
-        profile = PlanningProfile(
-            PlanningProfileId(id(9)),
-            "UTC",
-            PlanningProfileConfiguration.Configured(
-                TimeZone.UTC,
-                listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(),
-                30.minutes, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING,
-            ),
-        ),
+        profile = profile,
         tasks = tasks.toImmutableList(),
         dependencies = dependencies.toImmutableList(),
         focusBlocks = focusBlocks.toImmutableList(),
@@ -332,6 +342,16 @@ class PlannerRewriteRegressionTest {
         exams = persistentListOf(),
         constraints = persistentListOf(),
         askOverflowAuthorizedTaskIds = persistentListOf(),
+    )
+
+    private fun defaultProfile() = PlanningProfile(
+        PlanningProfileId(id(9)),
+        "UTC",
+        PlanningProfileConfiguration.Configured(
+            TimeZone.UTC,
+            listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(),
+            30.minutes, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING,
+        ),
     )
 
     private fun id(number: Int) = "018f6e68-7d0c-7000-8000-${number.toString().padStart(12, '0')}"

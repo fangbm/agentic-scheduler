@@ -32,8 +32,8 @@ import kotlin.time.Instant
 class DeterministicPlannerTest {
     @Test fun `full replan creates canonical chunks without hidden clock input`() {
         val snapshot = snapshot(tasks = listOf(task(1, 2.hours)))
-        val first = DeterministicPlanner().fullReplan(snapshot)
-        val second = DeterministicPlanner().fullReplan(snapshot)
+        val first = DeterministicPlannerV2().fullReplan(snapshot)
+        val second = DeterministicPlannerV2().fullReplan(snapshot)
         assertEquals(first, second)
         val success = assertIs<PlannerResult.Success>(first)
         val create = assertIs<FocusBlockMutation.Create>(success.mutations.single())
@@ -49,7 +49,7 @@ class DeterministicPlannerTest {
             dev.agenticscheduler.domain.planning.DeadlinePolicy.HARD,
             dev.agenticscheduler.domain.planning.OverflowPolicy.ALLOW,
         )
-        val result = DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 2.hours, deadline))))
+        val result = DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 2.hours, deadline))))
         assertIs<PlannerResult.Infeasible>(result)
     }
 
@@ -57,7 +57,7 @@ class DeterministicPlannerTest {
         val fixedTask = task(1, kotlin.time.Duration.ZERO)
         val plannedTask = task(2, 2.hours)
         val hard = FocusBlock(FocusBlockId(id(4)), fixedTask.id, ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC), Flexibility.HARD, PinState.UNPINNED)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(fixedTask, plannedTask), listOf(hard))))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(listOf(fixedTask, plannedTask), listOf(hard))))
         val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
         assertEquals(Instant.parse("2026-01-05T10:00:00Z"), create.draft.time.start)
     }
@@ -66,7 +66,7 @@ class DeterministicPlannerTest {
         val original = FocusBlock(FocusBlockId(id(4)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val snapshot = snapshot(tasks = listOf(task(1, 1.hours)), focusBlocks = listOf(original))
         val request = LocalReflowRequest(persistentListOf(original.id), persistentListOf(), ZonedTimeRange(Instant.parse("2026-01-05T08:00:00Z"), Instant.parse("2026-01-05T12:00:00Z"), TimeZone.UTC))
-        val success = assertIs<PlannerResult.Success>(DeterministicPlanner().localReflow(snapshot, request))
+        val success = assertIs<PlannerResult.Success>(DeterministicPlannerV2().localReflow(snapshot, request))
         val move = assertIs<FocusBlockMutation.Move>(success.mutations.single())
         assertEquals(original.id, move.id)
         assertEquals(original.time, move.time)
@@ -74,7 +74,7 @@ class DeterministicPlannerTest {
 
     @Test fun `full replan moves future flexible block instead of treating it as fixed occupancy`() {
         val existing = FocusBlock(FocusBlockId(id(6)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T08:30:00Z"), Instant.parse("2026-01-05T09:30:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(existing))))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(existing))))
         val move = assertIs<FocusBlockMutation.Move>(result.mutations.single())
         assertEquals(existing.id, move.id)
         assertEquals(Instant.parse("2026-01-05T09:00:00Z"), move.time.start)
@@ -83,7 +83,7 @@ class DeterministicPlannerTest {
     @Test fun `dependent stays blocked until prerequisite is fully planned`() {
         val prerequisite = task(1, 5.hours)
         val dependent = task(2, 1.hours)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
             tasks = listOf(prerequisite, dependent),
             dependencies = listOf(TaskDependency(TaskDependencyId(id(7)), prerequisite.id, dependent.id)),
         )))
@@ -97,7 +97,7 @@ class DeterministicPlannerTest {
             ZonedTimeRange(Instant.parse("2026-01-05T14:00:00Z"), Instant.parse("2026-01-05T15:00:00Z"), TimeZone.UTC),
             Flexibility.FLEXIBLE, PinState.UNPINNED,
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(outside))))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(outside))))
         assertEquals(emptyList(), result.mutations)
     }
 
@@ -109,7 +109,7 @@ class DeterministicPlannerTest {
             ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC),
             Flexibility.HARD, PinState.UNPINNED,
         )
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
             tasks = listOf(cancelled, dependent), focusBlocks = listOf(fixed),
             dependencies = listOf(TaskDependency(TaskDependencyId(id(7)), cancelled.id, dependent.id)),
         )))
@@ -129,7 +129,7 @@ class DeterministicPlannerTest {
         val snapshot = base.copy(constraints = listOf(PlanningConstraint.UnavailableWindow(
             ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T11:00:00Z"), TimeZone.UTC), ConstraintSource.USER,
         )).toImmutableList())
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().localReflow(snapshot, LocalReflowRequest(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().localReflow(snapshot, LocalReflowRequest(
             listOf(first.id, second.id).toImmutableList(), persistentListOf(),
             ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T13:00:00Z"), TimeZone.UTC),
         )))
@@ -144,7 +144,7 @@ class DeterministicPlannerTest {
             Task(TaskId(id(1)), "Unknown", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null),
             task(2, kotlin.time.Duration.ZERO),
         ).forEachIndexed { index, prerequisite ->
-            val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+            val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
                 tasks = listOf(prerequisite, dependent.copy(id = TaskId(id(4 + index))),),
                 dependencies = listOf(TaskDependency(TaskDependencyId(id(7 + index)), prerequisite.id, TaskId(id(4 + index)))),
             )))
@@ -154,12 +154,12 @@ class DeterministicPlannerTest {
 
     @Test fun `soft blocks may move resize and cleanup delete`() {
         val movable = FocusBlock(FocusBlockId(id(10)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T08:30:00Z"), Instant.parse("2026-01-05T09:30:00Z"), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
-        val moved = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(movable))))
+        val moved = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(movable))))
         assertIs<FocusBlockMutation.Move>(moved.mutations.single())
         val resizable = movable.copy(time = ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T11:00:00Z"), TimeZone.UTC))
-        val resized = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(resizable))))
+        val resized = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(resizable))))
         assertIs<FocusBlockMutation.Resize>(resized.mutations.single())
-        val deleted = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, kotlin.time.Duration.ZERO, status = TaskStatus.COMPLETED)), listOf(movable))))
+        val deleted = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(listOf(task(1, kotlin.time.Duration.ZERO, status = TaskStatus.COMPLETED)), listOf(movable))))
         assertIs<FocusBlockMutation.Delete>(deleted.mutations.single())
     }
 
@@ -168,11 +168,11 @@ class DeterministicPlannerTest {
             dev.agenticscheduler.domain.planning.Deadline.Exact(Instant.parse("2026-01-05T09:00:00Z"), TimeZone.UTC),
             dev.agenticscheduler.domain.planning.DeadlinePolicy.NORMAL, policy,
         )
-        val never = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.NEVER))))) )
+        val never = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(1, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.NEVER))))) )
         assertEquals(false, never.mutations.any { it is FocusBlockMutation.Create })
-        val ask = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(2, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.ASK))))) )
+        val ask = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(2, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.ASK))))) )
         assertEquals(true, ask.issues.any { it is PlannerIssue.OverflowApprovalRequired })
-        val allow = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(3, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.ALLOW))))) )
+        val allow = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(tasks = listOf(task(3, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.ALLOW))))) )
         assertIs<FocusBlockMutation.Create>(allow.mutations.single())
     }
 
@@ -181,7 +181,7 @@ class DeterministicPlannerTest {
         val second = task(2, 1.hours)
         val forward = snapshot(tasks = listOf(first, second))
         val reverse = forward.copy(tasks = listOf(second, first).toImmutableList())
-        assertEquals(DeterministicPlanner().fullReplan(forward), DeterministicPlanner().fullReplan(reverse))
+        assertEquals(DeterministicPlannerV2().fullReplan(forward), DeterministicPlannerV2().fullReplan(reverse))
     }
 
     @Test fun `context switch delta outranks earlier start`() {
@@ -193,7 +193,7 @@ class DeterministicPlannerTest {
                 WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(12, 0), LocalTime(13, 0)),
             ).toImmutableList(), 30.minutes, 1.hours, 1.hours, AllDayEventPolicy.NON_BLOCKING,
         ))
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Success>(DeterministicPlannerV2().fullReplan(snapshot(
             tasks = listOf(task(1, kotlin.time.Duration.ZERO), task(2, 1.hours)), focusBlocks = listOf(fixed), profile = profile,
         )))
         val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
