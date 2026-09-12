@@ -514,7 +514,7 @@ Do not use generic null/false or natural-language strings as the only result tru
 
 # 22. Production UUIDv7 generator
 
-Implement PLN-019 and the now-resolved implementation portion of OD-004.
+Reuse the D5-02 implementation of PLN-019 and the now-resolved implementation portion of OD-004. Do not introduce a second UUID generator.
 
 Required boundary:
 

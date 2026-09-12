@@ -617,7 +617,7 @@ D5-01 MUST NOT choose SQLCipher or another encryption solution on its own.
 
 D5-01 is read-oriented.
 
-A later `D5-02` may introduce creation/editing only after resolving the production UUIDv7 generator implementation under OD-004 and freezing any required product-semantic input/default behavior.
+D5-02 subsequently introduced explicit Event/Task creation and editing after OD-004 / PLN-019 froze the UUIDv7 generator and its form defaults. D5-01 remains read-oriented.
 
 In particular D5-01 does not create:
 

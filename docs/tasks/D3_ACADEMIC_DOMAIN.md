@@ -1,9 +1,10 @@
 # D3 — Academic Domain Task Spec
 
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Milestone: D3  
 > Scope owner: `:shared:domain`  
 > Required reading: `AGENTS.md`, `docs/READ_FIRST.md`, `docs/DOMAIN_INVARIANTS.md`, `docs/ACADEMIC_INVARIANTS.md`, `docs/ACADEMIC_DECISIONS.md`, `docs/OPEN_DECISIONS.md`, `docs/IMPLEMENTATION_CONTRACT.md`, `docs/MODULE_OWNERSHIP.md`, `docs/UBIQUITOUS_LANGUAGE.md`.
+> Final mainline implementation revision: `a3c3e4b` (`feat: migrate D3 retained state to immutable collections`)
 
 This file is the authoritative coding contract for D3.
 
@@ -1452,39 +1453,39 @@ The existing unrelated Android host-test warning is not a D3 blocker as long as 
 D3 Gate passes only if all are true:
 
 ```text
-[ ] exact eight new typed UUIDv7 ID families implemented
-[ ] AcademicYear implemented exactly
-[ ] AcademicWeekNumber implemented exactly
-[ ] AcademicWeek exactly-seven-day invariant implemented
-[ ] Semester canonical fields + week invariants + immutable collection ownership implemented
-[ ] SemesterAcademicYear validator implemented
-[ ] Course exact fields implemented
-[ ] TeachingWeekSet canonical factory/equality implemented
-[ ] AcademicPeriodNumber / AcademicPeriod implemented
-[ ] PeriodTemplate canonical fields + invariants + immutable collection ownership implemented
-[ ] CourseTimeSpec has exactly ClockTime / PeriodBased D3 variants
-[ ] CourseScheduleRule exact fields implemented
-[ ] CourseOccurrenceKey stable identity implemented
-[ ] RoomOverride has exactly Unchanged / Set / Clear
-[ ] CourseOccurrenceException exact semantics implemented
-[ ] AcademicHoliday exact behavior model implemented
-[ ] CourseSession exact derived state model implemented
-[ ] CourseSession resolver returns Success or non-empty Invalid issues
-[ ] every resolver issue case implemented/tested
-[ ] explicit exception > holiday > base rule precedence implemented
-[ ] strict DST transition rejection (nonexistent + ambiguous) implemented/tested
-[ ] resolver output deterministic and input-order independent
-[ ] CourseSession has no independent generated ID
-[ ] CourseSession is not made an authoritative mutable source
-[ ] ExamSchedule exactly Unscheduled / DateOnly / Exact
-[ ] Exam exact D3 fields implemented
-[ ] Exam validator implemented/tested
-[ ] no Planner defaults attached to academic entities
-[ ] no DB/repository/import/UI/Sync/Agent/server code introduced
-[ ] no new third-party dependency
-[ ] required common tests pass
-[ ] repository-wide build passes
-[ ] CI green
+[x] exact eight new typed UUIDv7 ID families implemented
+[x] AcademicYear implemented exactly
+[x] AcademicWeekNumber implemented exactly
+[x] AcademicWeek exactly-seven-day invariant implemented
+[x] Semester canonical fields + week invariants + immutable collection ownership implemented
+[x] SemesterAcademicYear validator implemented
+[x] Course exact fields implemented
+[x] TeachingWeekSet canonical factory/equality implemented
+[x] AcademicPeriodNumber / AcademicPeriod implemented
+[x] PeriodTemplate canonical fields + invariants + immutable collection ownership implemented
+[x] CourseTimeSpec has exactly ClockTime / PeriodBased D3 variants
+[x] CourseScheduleRule exact fields implemented
+[x] CourseOccurrenceKey stable identity implemented
+[x] RoomOverride has exactly Unchanged / Set / Clear
+[x] CourseOccurrenceException exact semantics implemented
+[x] AcademicHoliday exact behavior model implemented
+[x] CourseSession exact derived state model implemented
+[x] CourseSession resolver returns Success or non-empty Invalid issues
+[x] every resolver issue case implemented/tested
+[x] explicit exception > holiday > base rule precedence implemented
+[x] strict DST transition rejection (nonexistent + ambiguous) implemented/tested
+[x] resolver output deterministic and input-order independent
+[x] CourseSession has no independent generated ID
+[x] CourseSession is not made an authoritative mutable source
+[x] ExamSchedule exactly Unscheduled / DateOnly / Exact
+[x] Exam exact D3 fields implemented
+[x] Exam validator implemented/tested
+[x] no Planner defaults attached to academic entities
+[x] no DB/repository/import/UI/Sync/Agent/server code introduced
+[x] only the explicitly authorized kotlinx-collections-immutable 0.5.2 dependency was added
+[x] required common tests pass
+[x] repository-wide build passes
+[x] CI green
 ```
 
 A successful compile without the semantic/resolver requirements is not a D3 pass.

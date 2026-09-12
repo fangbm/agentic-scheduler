@@ -126,6 +126,7 @@ Decision:
 - no third-party UUID dependency is introduced;
 - tests use deterministic injected clock/random sources.
 Source: docs/PLANNER_DECISIONS.md PLN-019
+        + docs/tasks/D5_02_CREATION_EDITING.md
         + docs/tasks/D6_DETERMINISTIC_PLANNER.md
 Impact: CONTRACT_AFFECTING
 ```

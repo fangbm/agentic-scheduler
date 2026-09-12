@@ -1,9 +1,10 @@
 # D2 — Core Domain Model Task Spec
 
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Milestone: D2  
 > Scope owner: `:shared:domain`  
 > Required reading: `AGENTS.md`, `docs/READ_FIRST.md`, `docs/DOMAIN_INVARIANTS.md`, `docs/OPEN_DECISIONS.md`, `docs/IMPLEMENTATION_CONTRACT.md`, `docs/MODULE_OWNERSHIP.md`, `docs/UBIQUITOUS_LANGUAGE.md`.
+> Final implementation revision: `c3183f3` (`feat: implement D2 core domain model`)
 
 This is the authoritative implementation contract for D2. It intentionally removes high-impact choices from the Coding Agent.
 
@@ -973,31 +974,31 @@ Warnings unrelated to D2 may be documented, but new D2 warnings should be fixed 
 D2 Gate passes only when all are true:
 
 ```text
-[ ] kotlinx-datetime 0.8.0 resolves from Version Catalog
-[ ] shared:domain remains KMP and dependency-clean
-[ ] exact six typed ID families implemented
-[ ] UUIDv7 validation implemented and tested
-[ ] TimePlacement has exactly Zoned/AllDay/Floating D2 variants
-[ ] half-open range invariants enforced
-[ ] same-kind overlap semantics tested
-[ ] Flexibility implemented exactly HARD/FLEXIBLE/SOFT
-[ ] PinState implemented exactly PINNED/UNPINNED
-[ ] Deadline / TaskDeadline / policies implemented
-[ ] TaskStatus implemented exactly OPEN/IN_PROGRESS/COMPLETED/CANCELLED
-[ ] TaskPriority implemented exactly LOW/NORMAL/HIGH
-[ ] TaskEffort semantics/invariants implemented
-[ ] Event implemented with exact D2 fields
-[ ] Task implemented with exact D2 fields
-[ ] FocusBlock implemented with exact D2 fields
-[ ] WorkLog implemented with exact D2 fields
-[ ] TaskDependency + DAG-add validation implemented
-[ ] PlanningProfile minimal scaffold implemented
-[ ] no product-semantic constructor defaults invented
-[ ] no current-time/random/system-timezone hidden reads
-[ ] no DB/network/UI/AI/Sync/crypto code added to Domain
-[ ] required common tests pass
-[ ] repository-wide build passes
-[ ] CI green
+[x] kotlinx-datetime 0.8.0 resolves from Version Catalog
+[x] shared:domain remains KMP and dependency-clean
+[x] exact six typed ID families implemented
+[x] UUIDv7 validation implemented and tested
+[x] TimePlacement has exactly Zoned/AllDay/Floating D2 variants
+[x] half-open range invariants enforced
+[x] same-kind overlap semantics tested
+[x] Flexibility implemented exactly HARD/FLEXIBLE/SOFT
+[x] PinState implemented exactly PINNED/UNPINNED
+[x] Deadline / TaskDeadline / policies implemented
+[x] TaskStatus implemented exactly OPEN/IN_PROGRESS/COMPLETED/CANCELLED
+[x] TaskPriority implemented exactly LOW/NORMAL/HIGH
+[x] TaskEffort semantics/invariants implemented
+[x] Event implemented with exact D2 fields
+[x] Task implemented with exact D2 fields
+[x] FocusBlock implemented with exact D2 fields
+[x] WorkLog implemented with exact D2 fields
+[x] TaskDependency + DAG-add validation implemented
+[x] PlanningProfile minimal scaffold implemented
+[x] no product-semantic constructor defaults invented
+[x] no current-time/random/system-timezone hidden reads
+[x] no DB/network/UI/AI/Sync/crypto code added to Domain
+[x] required common tests pass
+[x] repository-wide build passes
+[x] CI green
 ```
 
 A passing build without these semantic requirements is **not** a D2 pass.

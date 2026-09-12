@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 ready; D6-00 decisions frozen  
+> Baseline: D5-01 complete; D5-02 implemented (verification pending); D6-00 decisions frozen
 > Date: 2026-09-11
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
@@ -12,7 +12,7 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 
 ```text
 D5-01 Calendar / Application read surface      COMPLETE
-D5-02 Event/Task creation + editing            READY (parallel follow-on)
+D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDING
  ↓
 D6  Deterministic Planner + PlanBranch         READY
  ↓
@@ -23,7 +23,7 @@ D8  E2EE Multi-device Sync + Thin Server
 D9  Agent Runtime + Typed Tools
 ```
 
-D5-02 may be implemented in parallel with D6 because it is limited to Event/Task create-edit flows and does not own Planner semantics. The shared UUIDv7 generator/application boundary is an explicit integration touchpoint and must be reconciled before merge.
+D5-02 is implemented and remains isolated from D6 because it is limited to Event/Task create-edit flows and does not own Planner semantics. Its UUIDv7 generator is the shared application implementation D6 must reuse rather than duplicate.
 
 The main milestone order remains deliberate:
 
@@ -45,7 +45,7 @@ The Agent comes after deterministic Tools/Planner/history semantics exist. It mu
 
 D5-01 Calendar projection / Agenda-Day baseline is complete.
 
-D5-02 explicit Event/Task creation/editing is now implementation-ready. The production UUIDv7 implementation previously deferred under OD-004 is frozen by D6-00 / PLN-019 and is reused by D5-02.
+D5-02 explicit Event/Task creation/editing is implemented at `b10bec0`; build, platform-smoke, and CI verification remain pending. The production UUIDv7 implementation is frozen by D6-00 / PLN-019 and implemented by D5-02 for later D6 reuse.
 
 D5-02 scope is intentionally narrow:
 

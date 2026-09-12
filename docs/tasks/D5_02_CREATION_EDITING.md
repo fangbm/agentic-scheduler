@@ -2,9 +2,10 @@
 
 > Task ID: **D5-02**  
 > Milestone: **D5 follow-on — local creation/editing**  
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **IMPLEMENTED / STATIC REVIEWED / VERIFICATION PENDING**
 > Date: 2026-09-11  
 > Prerequisites: D5-01 complete; OD-004 production UUIDv7 generation resolved by `docs/PLANNER_DECISIONS.md` PLN-019
+> Implementation revision: `b10bec0` (`fix(d5): make editing tests JUnit compatible`)
 
 ---
 
@@ -41,7 +42,7 @@ docs/tasks/D5_CALENDAR_SURFACE.md
 this Task Spec
 ```
 
-If D6 implementation has already landed, also inspect the established production UUIDv7 generator abstraction and reuse it rather than creating a second generator path.
+Reuse the established `UuidV7Generator` application implementation; D6 must reuse it rather than creating a second generator path.
 
 ---
 
@@ -568,6 +569,8 @@ Wear remains read-only and still builds
 ---
 
 # 21. Acceptance gate
+
+Implementation is complete and static review confirms the scoped application, persistence, and platform composition paths. Build, platform-smoke, and CI verification were intentionally not run in this audit and remain pending; the gate below remains the required verification record.
 
 D5-02 PASS requires:
 

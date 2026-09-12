@@ -1,10 +1,11 @@
 # D3 — Immutable Collections Amendment and Migration Plan
 
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **IMPLEMENTED / INTEGRATED / COMPLETE**
 > Milestone: D3 amendment  
 > Scope owner: `:shared:domain`  
 > Decision source: `docs/IMMUTABLE_COLLECTIONS_DECISION.md`  
 > Supersedes conflicting collection/dependency wording in `docs/tasks/D3_ACADEMIC_DOMAIN.md`.
+> Implementation revision: `a3c3e4b` (`feat: migrate D3 retained state to immutable collections`)
 
 This task is a narrow correction to D3's collection ownership implementation. It does not reopen Academic semantics, resolver behavior, IDs, time handling, DST policy, exception precedence, or persistence boundaries.
 
@@ -350,30 +351,28 @@ Implement in this order to keep the diff reviewable:
 The amendment passes only if:
 
 ```text
-[ ] exact dependency 0.5.2 is pinned centrally
-[ ] shared:domain declares the dependency for D3
-[ ] project-wide future use is documented as pre-authorized
-[ ] Semester stored weeks use ImmutableList
-[ ] Semester is a data class with generated value semantics
-[ ] no caller-owned mutable alias can mutate Semester
-[ ] PeriodTemplate stored periods use ImmutableList
-[ ] PeriodTemplate is a data class with generated value semantics
-[ ] no caller-owned mutable alias can mutate PeriodTemplate
-[ ] TeachingWeekSet stored weeks are immutable and canonical
-[ ] TeachingWeekSet factory invariant cannot be bypassed
-[ ] resolver Success/Invalid stored lists are immutable
-[ ] existing D3 semantic invariants remain unchanged
-[ ] D2 public contract remains unchanged
-[ ] no future Planner/Sync implementation is pulled into D3
-[ ] `./gradlew :shared:domain:build --no-daemon` passes
-[ ] `./gradlew build --no-daemon` passes
-[ ] CI is green
+[x] exact dependency 0.5.2 is pinned centrally
+[x] shared:domain declares the dependency for D3
+[x] project-wide future use is documented as pre-authorized
+[x] Semester stored weeks use ImmutableList
+[x] Semester is a data class with generated value semantics
+[x] no caller-owned mutable alias can mutate Semester
+[x] PeriodTemplate stored periods use ImmutableList
+[x] PeriodTemplate is a data class with generated value semantics
+[x] no caller-owned mutable alias can mutate PeriodTemplate
+[x] TeachingWeekSet stored weeks are immutable and canonical
+[x] TeachingWeekSet factory invariant cannot be bypassed
+[x] resolver Success/Invalid stored lists are immutable
+[x] existing D3 semantic invariants remain unchanged
+[x] D2 public contract remains unchanged
+[x] no future Planner/Sync implementation is pulled into D3
+[x] `./gradlew :shared:domain:build --no-daemon` passes
+[x] `./gradlew build --no-daemon` passes
+[x] CI is green
 ```
 
 ---
 
-# 14. Follow-up after implementation
+# 14. Completion record
 
-Once the code migration is proven green, fold this amendment into `docs/tasks/D3_ACADEMIC_DOMAIN.md` so there is again one canonical D3 task spec rather than two permanently divergent documents.
-
-The fold-in must update the dependency section, canonical collection field types, tests, and D3 gate together. Do not leave the old "no new third-party dependency" sentence in the canonical D3 document after implementation.
+The migration is complete. `docs/tasks/D3_ACADEMIC_DOMAIN.md` now contains the canonical dependency, collection-field, test, and gate wording; this amendment remains as the historical decision and migration record.
