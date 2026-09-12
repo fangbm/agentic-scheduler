@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented (verification pending); D6 fix-and-recheck
+> Baseline: D5-01 complete; D5-02 implemented (verification pending); D6 Planner core rewrite ready
 > Date: 2026-09-12
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
@@ -14,7 +14,7 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 D5-01 Calendar / Application read surface      COMPLETE
 D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDING
  ↓
-D6  Deterministic Planner + PlanBranch         FIX-AND-RECHECK
+D6  Deterministic Planner + PlanBranch         CORE REWRITE READY
  ↓
 D7  Mutation Journal / ChangeLog / Undo / DVV-HLC
  ↓
@@ -71,25 +71,45 @@ docs/tasks/D5_02_CREATION_EDITING.md
 
 # D6 — Deterministic Planner
 
-D6-00 is complete. D6 implementation is present but remains `FIX-AND-RECHECK`.
+D6-00 remains complete. The first D6 implementation established the outer module/persistence/PlanBranch contracts, but Planner-core correctness review exposed a structural state-model problem: real occupancy, movable reservations, tentative proposals, coverage/completion, and rollback were maintained in several independently mutated collections.
 
-Split:
+The project therefore authorizes a focused Planner-core rewrite instead of continuing local patches.
+
+Current split:
 
 ```text
-D6-00  Planner semantic decisions             COMPLETE
-D6-01  deterministic Planner engine           FIX-AND-RECHECK
-D6-02  PlanBranch preview/rebase/apply        FIX-AND-RECHECK
+D6-00   Planner semantic decisions                    COMPLETE
+D6-00A  Planner rewrite clarifications                COMPLETE / FROZEN
+D6-R1   deterministic Planner core rewrite            READY FOR IMPLEMENTATION
+D6-02   PlanBranch / UUIDv7 / persistence outer work  RETAIN / REVERIFY AFTER R1
 ```
 
 Authoritative sources:
 
 ```text
 docs/PLANNER_DECISIONS.md
+docs/PLANNER_REWRITE_DECISIONS.md
 docs/tasks/D6_DETERMINISTIC_PLANNER.md
+docs/tasks/D6_PLANNER_CORE_REWRITE.md
 docs/OPEN_DECISIONS.md  // OD-020 / OD-021 / OD-004 resolved
 ```
 
-The frozen D6 contract covers:
+The rewrite is intentionally narrow. It replaces Planner-core internals and tests while retaining the already-stable D6 outer layers unless a failing conformance test proves otherwise:
+
+```text
+retain PlanningProfile + Room v2/migration
+retain application UUIDv7 generator
+retain PlanningSnapshot public contract
+retain FocusBlock mutation/result vocabulary
+retain PlanBranch stale/rebase/apply transaction boundary
+rewrite Full Replan state model
+rewrite finite candidate generation / ranking
+rewrite reservation displacement / rollback
+unify coverage / completion / dependency truth
+reverify Local Reflow against shared legality
+```
+
+The frozen D6 contract still covers:
 
 ```text
 PlanningProfile real rule set
@@ -112,12 +132,27 @@ atomic Apply
 production UUIDv7 generation
 ```
 
+D6-00A additionally freezes:
+
+```text
+existing FocusBlocks remain semantic reservations until explicitly replaced
+ineligible/unknown/dependency-blocked Task blocks do not disappear from occupancy
+Task planning is transactional via accepted state + TaskPlanDelta
+FLEXIBLE displacement requires same-ID/same-duration relocation in the same tentative transaction
+HARD deadline satisfaction counts only coverage completed by cutoff
+finite structural candidate starts; no epsilon/grid
+all legal PLN-013 durations participate in PLN-015 comparison
+rollback restores the complete accepted planning state
+```
+
 Inherited rule remains:
 
 ```text
 HARD + UNPINNED still cannot be moved automatically by Planner.
 PINNED is additional user protection, not the only source of immovability.
 ```
+
+D7 implementation should not treat D6 as closed until D6-R1 is merged, the full conformance matrix is green, and the original D6 task is explicitly changed to `COMPLETE`.
 
 ---
 
