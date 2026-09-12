@@ -2,7 +2,7 @@
 
 > Task ID: **D6-R1**  
 > Milestone: **D6 — Planner**  
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **IMPLEMENTED — local verification green; remote CI and D6 status flip pending push**  
 > Date: 2026-09-12  
 > Base task: `docs/tasks/D6_DETERMINISTIC_PLANNER.md`  
 > Rewrite decisions: `docs/PLANNER_REWRITE_DECISIONS.md`
@@ -598,3 +598,64 @@ A clean branch history can be:
 ```
 
 Do not mark D6 complete in commit 9. Verify repository-wide CI first, then close the docs in a separate commit.
+
+---
+
+# 21. Implementation record (2026-09-12)
+
+Branch `rewrite/d6-planner-core`, commits `d9a8e66`..`290de63` following the recommended sequence.
+
+## Delivered
+
+```text
+Interval / TimeResolution          pure half-open interval math, DST-safe resolution,
+                                   availability union, occupancy conversion, cutoffs
+Reservation / PlanningState        one accepted semantic state; snapshot normalization
+                                   with narrow authorized cleanup (D6R-001/002)
+EffortTruth                        coverage, planned completion, dependency readiness,
+                                   HARD before-cutoff satisfaction (D6R-005/006)
+CandidateGeneration                finite structural starts x PLN-013 durations (D6R-007)
+CandidateComparison                exact PLN-015 order + decision-trace explanations (D6R-008)
+FullReplanEngine                   task-local Tentative -> TaskPlanDelta transaction,
+                                   rank-gated displacement with proven relocation (D6R-003/004)
+LocalReflowEngine                  bounded move-only repair on shared legality (D6R-009)
+DeterministicPlanner               canonical facade; legacy engine deleted in 290de63
+```
+
+## Verification
+
+```text
+:shared:planner            47 tests green (13 legacy D6 + 12 R0 + 22 conformance/matrix)
+:shared:application        21 tests green (PlanBranch create/stale/rebase/atomic apply)
+:shared:domain             42 tests green
+full repository build      BUILD SUCCESSFUL (320 tasks, includes apps)
+```
+
+R0 outcome on the legacy engine: R0-01..R0-09 and R0-11 failed for the documented
+semantic reasons (ghost occupancy, rollback-by-retraction, missing clamped-original
+candidates, after-cutoff satisfaction). R0-10 and R0-12 already passed because their
+failure classes were closed by the pre-rewrite patches `a81b421` / `ef297e3`; both are
+retained as conformance guards. The legacy suite's overflow fragmentation failure
+(`normal deadline overflow honors never ask and allow`) is fixed by the rewrite.
+
+## Explicit stable semantics recorded under D6R-008's field allowance
+
+```text
+authorized lateness (criterion 2)  = max(0, candidate.start + demand - cutoff): how late
+                                   the Task's demand would complete if the rest landed
+                                   contiguously after the candidate. Same-start candidates
+                                   covering the same demand therefore tie here and the
+                                   chunk-duration rank decides instead of fragmenting.
+preserve existing placement (3)   = 3-tier rank: 0 exact original placement, 1 no
+                                   displacement required, 2 displacement required.
+availability                       = coalesced union of weekly windows; availability is a
+                                   set of time, so adjacent windows form one legal region.
+displacement eligibility           = strict PLN-008 service-order rank: a reservation of a
+                                   not-yet-planned higher-ranked Task is never displaced.
+search views                       = only the reservation being replaced by its own step is
+                                   excluded from occupancy; all other reservations, including
+                                   the Task's own pending subjects, stay real occupancy.
+```
+
+The original D6 task remains `FIX-AND-RECHECK` until remote CI is green on push, per the
+completion gate in section 18.

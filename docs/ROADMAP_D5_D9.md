@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented; D6 Planner core rewrite ready; D7-D9 specs frozen
+> Baseline: D5-01 complete; D5-02 implemented; D6-R1 Planner core rewrite implemented (CI green on branch); D7-D9 specs frozen
 > Date: 2026-09-12
 
 ---
@@ -12,7 +12,7 @@
 D5-01 Calendar / Application read surface      COMPLETE
 D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDING
  ↓
-D6     Deterministic Planner + PlanBranch      CORE REWRITE READY
+D6     Deterministic Planner + PlanBranch      CORE REWRITE PASSING (CI green; merge pending)
  ↓
 D6.5   Prototype Integration / Dogfood Gate    READY AFTER D6
  ↓
@@ -57,8 +57,8 @@ Current split:
 ```text
 D6-00   Planner semantic decisions                    COMPLETE
 D6-00A  Planner rewrite clarifications                COMPLETE / FROZEN
-D6-R1   deterministic Planner core rewrite            READY FOR IMPLEMENTATION
-D6-02   PlanBranch / UUIDv7 / persistence outer work  RETAIN / REVERIFY AFTER R1
+D6-R1   deterministic Planner core rewrite            IMPLEMENTED / VERIFICATION GREEN (CI green; merge pending)
+D6-02   PlanBranch / UUIDv7 / persistence outer work  RETAINED / REVERIFIED AGAINST REWRITTEN CORE
 ```
 
 Authoritative sources:
