@@ -142,7 +142,7 @@ Direct calls to random UUID generation from domain business logic are forbidden.
 
 ID generation belongs to an application/infrastructure boundary through an injectable abstraction such as `IdGenerator`.
 
-The production UUIDv7 generator is frozen by PLN-019 and implemented in the application layer by D5-02. Future creator tasks reuse that generator rather than introducing another path.
+The production UUIDv7 generator is frozen by PLN-019 and implemented in `:shared:application`; D5-02 and future creator tasks reuse that generator rather than introducing another path.
 
 ---
 

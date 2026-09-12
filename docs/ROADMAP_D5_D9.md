@@ -1,8 +1,8 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented (verification pending); D6-00 decisions frozen
-> Date: 2026-09-11
+> Baseline: D5-01 complete; D5-02 implemented (verification pending); D6 fix-and-recheck
+> Date: 2026-09-12
 
 This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
 
@@ -14,7 +14,7 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 D5-01 Calendar / Application read surface      COMPLETE
 D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDING
  ↓
-D6  Deterministic Planner + PlanBranch         READY
+D6  Deterministic Planner + PlanBranch         FIX-AND-RECHECK
  ↓
 D7  Mutation Journal / ChangeLog / Undo / DVV-HLC
  ↓
@@ -23,7 +23,7 @@ D8  E2EE Multi-device Sync + Thin Server
 D9  Agent Runtime + Typed Tools
 ```
 
-D5-02 is implemented and remains isolated from D6 because it is limited to Event/Task create-edit flows and does not own Planner semantics. Its UUIDv7 generator is the shared application implementation D6 must reuse rather than duplicate.
+D5-02 is implemented and remains isolated from D6 because it is limited to Event/Task create-edit flows and does not own Planner semantics. It reuses the canonical application UUIDv7 generator shared with D6 rather than introducing a second path.
 
 The main milestone order remains deliberate:
 
@@ -45,7 +45,7 @@ The Agent comes after deterministic Tools/Planner/history semantics exist. It mu
 
 D5-01 Calendar projection / Agenda-Day baseline is complete.
 
-D5-02 explicit Event/Task creation/editing is implemented at `b10bec0`; build, platform-smoke, and CI verification remain pending. The production UUIDv7 implementation is frozen by D6-00 / PLN-019 and implemented by D5-02 for later D6 reuse.
+D5-02 explicit Event/Task creation/editing is implemented at `b10bec0`; build, platform-smoke, and CI verification remain pending. It reuses the canonical `:shared:application` UUIDv7 implementation frozen by D6-00 / PLN-019.
 
 D5-02 scope is intentionally narrow:
 
@@ -71,14 +71,14 @@ docs/tasks/D5_02_CREATION_EDITING.md
 
 # D6 — Deterministic Planner
 
-D6-00 is complete and D6 implementation is authorized.
+D6-00 is complete. D6 implementation is present but remains `FIX-AND-RECHECK`.
 
 Split:
 
 ```text
 D6-00  Planner semantic decisions             COMPLETE
-D6-01  deterministic Planner engine           READY
-D6-02  PlanBranch preview/rebase/apply        READY
+D6-01  deterministic Planner engine           FIX-AND-RECHECK
+D6-02  PlanBranch preview/rebase/apply        FIX-AND-RECHECK
 ```
 
 Authoritative sources:

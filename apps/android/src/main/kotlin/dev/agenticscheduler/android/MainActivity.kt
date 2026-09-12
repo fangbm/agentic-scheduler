@@ -37,7 +37,7 @@ import dev.agenticscheduler.application.editing.TaskDeadlineInput
 import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
-import dev.agenticscheduler.application.editing.UuidV7Generator
+import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.database.openAndroidDatabase
@@ -57,7 +57,6 @@ import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
-import java.security.SecureRandom
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
@@ -74,10 +73,7 @@ class MainActivity : ComponentActivity() {
     private val events by lazy { RoomEventRepository(database) }
     private val tasks by lazy { RoomTaskRepository(database) }
     private val transactionRunner by lazy { RoomApplicationTransactionRunner(database) }
-    private val ids by lazy {
-        val secureRandom = SecureRandom()
-        UuidV7Generator(Clock.System, secureRandom::nextBytes)
-    }
+    private val ids by lazy { productionUuidV7Generator() }
     private val calendarQueryService: CalendarQueryService by lazy {
         RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(database))
     }

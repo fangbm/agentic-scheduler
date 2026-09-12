@@ -36,7 +36,7 @@ import dev.agenticscheduler.application.editing.TaskDeadlineInput
 import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
-import dev.agenticscheduler.application.editing.UuidV7Generator
+import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.database.openDesktopDatabase
@@ -57,7 +57,6 @@ import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
 import java.io.File
-import java.security.SecureRandom
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
@@ -75,8 +74,7 @@ fun main() = application {
     val events = RoomEventRepository(database)
     val tasks = RoomTaskRepository(database)
     val transactions = RoomApplicationTransactionRunner(database)
-    val secureRandom = SecureRandom()
-    val ids = UuidV7Generator(Clock.System, secureRandom::nextBytes)
+    val ids = productionUuidV7Generator()
     val calendar = RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(database))
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {

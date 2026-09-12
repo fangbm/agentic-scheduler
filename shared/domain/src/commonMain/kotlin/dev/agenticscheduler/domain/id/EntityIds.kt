@@ -39,6 +39,11 @@ value class PlanningProfileId(val value: String) {
 }
 
 @JvmInline
+value class PlanBranchId(val value: String) {
+    init { requireValidUuidV7(value) }
+}
+
+@JvmInline
 value class AcademicYearId(val value: String) {
     init { requireValidUuidV7(value) }
 }

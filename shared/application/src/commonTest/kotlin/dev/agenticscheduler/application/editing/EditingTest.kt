@@ -1,5 +1,8 @@
 package dev.agenticscheduler.application.editing
 
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
+import dev.agenticscheduler.application.id.RandomBytes
+import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
@@ -36,15 +39,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import kotlin.time.Clock
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
-import kotlin.time.Instant
 
 class EditingTest {
     @Test
     fun `UUIDv7 generator uses the frozen timestamp version and variant layout`() {
-        val value = UuidV7Generator(fixedClock) { bytes -> bytes.indices.forEach { bytes[it] = (it + 1).toByte() } }.generate()
+        val value = RfcUuidV7Generator(
+            EpochMillisecondsClock { fixedEpochMilliseconds },
+            RandomBytes { size -> ByteArray(size) { (it + 1).toByte() } },
+        ).next()
 
         assertTrue(value.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")))
         assertTrue(value.startsWith("018f6e68-7d0c-7"))
@@ -230,12 +234,13 @@ class EditingTest {
         pinState = PinState.UNPINNED,
     )
 
-    private fun generator() = UuidV7Generator(fixedClock) { bytes -> bytes.indices.forEach { bytes[it] = (it + 1).toByte() } }
+    private fun generator() = RfcUuidV7Generator(
+        EpochMillisecondsClock { fixedEpochMilliseconds },
+        RandomBytes { size -> ByteArray(size) { (it + 1).toByte() } },
+    )
 }
 
-private val fixedClock = object : Clock {
-    override fun now(): Instant = Instant.fromEpochMilliseconds(0x018F6E687D0C)
-}
+private const val fixedEpochMilliseconds = 0x018F6E687D0C
 
 private class CountingTransactions : ApplicationTransactionRunner {
     var writes = 0

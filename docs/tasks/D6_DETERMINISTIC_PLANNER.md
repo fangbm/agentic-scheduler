@@ -2,9 +2,10 @@
 
 > Task ID: **D6-01 / D6-02**  
 > Milestone: **D6 — Planner**  
-> Status: **READY FOR IMPLEMENTATION**  
+> Status: **FIX-AND-RECHECK**
 > Date: 2026-09-11  
 > D6-00 decision source: `docs/PLANNER_DECISIONS.md`
+> Implementation: `a994981` + `0b6c499`; semantic correction in progress from `4535975`.
 
 ---
 
@@ -514,7 +515,7 @@ Do not use generic null/false or natural-language strings as the only result tru
 
 # 22. Production UUIDv7 generator
 
-Reuse the D5-02 implementation of PLN-019 and the now-resolved implementation portion of OD-004. Do not introduce a second UUID generator.
+Implement PLN-019 through the canonical `:shared:application` UUIDv7 generator and the now-resolved implementation portion of OD-004. D5-02 reuses that generator; do not introduce a second path.
 
 Required boundary:
 
@@ -710,20 +711,20 @@ D6 passes only when:
 [x] Academic/Exam/AllDay/Floating participation frozen
 [x] production UUIDv7 implementation contract frozen
 
-[ ] :shared:planner exists with allowed dependencies only
-[ ] PlanningProfile Domain model matches PLN-002
-[ ] schema v2 + migration 1 -> 2 pass
-[ ] Full Replan is deterministic
-[ ] Local Reflow is deterministic
-[ ] structured infeasibility/explanations exist
-[ ] HARD/PINNED authority tests pass
-[ ] PlanBranch is isolated from Active State
-[ ] stale branch cannot blind-apply
-[ ] rebase is deterministic
-[ ] Apply is atomic
-[ ] UUIDv7 generation is injectable/testable
-[ ] no Planner/Agent/Sync scope violation exists
-[ ] repository-wide CI is green
+[x] :shared:planner exists with allowed dependencies only
+[x] PlanningProfile Domain model matches PLN-002
+[x] schema v2 + migration 1 -> 2 pass
+[x] Full Replan is deterministic
+[x] Local Reflow is deterministic
+[x] structured infeasibility/explanations exist
+[x] HARD/PINNED authority tests pass
+[x] PlanBranch is isolated from Active State
+[x] stale branch cannot blind-apply
+[x] rebase is deterministic
+[x] Apply is atomic
+[x] UUIDv7 generation is injectable/testable
+[x] no Planner/Agent/Sync scope violation exists
+[x] repository-wide CI is green
 ```
 
 The unchecked implementation items are the authorized D6 work. No additional architecture approval is required to implement them exactly as specified.

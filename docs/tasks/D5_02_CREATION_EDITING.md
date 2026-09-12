@@ -42,7 +42,7 @@ docs/tasks/D5_CALENDAR_SURFACE.md
 this Task Spec
 ```
 
-Reuse the established `UuidV7Generator` application implementation; D6 must reuse it rather than creating a second generator path.
+Reuse the established `dev.agenticscheduler.application.id.UuidV7Generator`; do not create a second generator path.
 
 ---
 

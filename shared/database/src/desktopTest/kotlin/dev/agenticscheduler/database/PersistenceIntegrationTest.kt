@@ -8,7 +8,9 @@ import dev.agenticscheduler.application.editing.EditingResult
 import dev.agenticscheduler.application.editing.EventEditingService
 import dev.agenticscheduler.application.editing.EventTimeInput
 import dev.agenticscheduler.application.editing.TaskEditingService
-import dev.agenticscheduler.application.editing.UuidV7Generator
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
+import dev.agenticscheduler.application.id.RandomBytes
+import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
@@ -62,7 +64,6 @@ import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.DayOfWeek
 import kotlin.time.Instant
-import kotlin.time.Clock
 import kotlinx.collections.immutable.toImmutableList
 import java.nio.file.Files
 import androidx.room3.testing.MigrationTestHelper
@@ -167,9 +168,10 @@ class PersistenceIntegrationTest {
         val path = Files.createTempFile("agentic-scheduler-d5-edit-", ".db")
         Files.delete(path)
         var randomSeed = 0
-        val ids = UuidV7Generator(
-            object : Clock { override fun now(): Instant = Instant.parse("2026-09-10T00:00:00Z") },
-        ) { bytes -> bytes.indices.forEach { index -> bytes[index] = (randomSeed + index).toByte() }; randomSeed += 1 }
+        val ids = RfcUuidV7Generator(
+            EpochMillisecondsClock { Instant.parse("2026-09-10T00:00:00Z").toEpochMilliseconds() },
+            RandomBytes { size -> ByteArray(size) { index -> (randomSeed + index).toByte() }.also { randomSeed += 1 } },
+        )
         val firstDatabase = openDesktopDatabase(path.toString())
         val events = RoomEventRepository(firstDatabase)
         val tasks = RoomTaskRepository(firstDatabase)
@@ -207,7 +209,7 @@ class PersistenceIntegrationTest {
         val focus = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(40)), exactTask.id, exactRange, Flexibility.FLEXIBLE, PinState.UNPINNED)
         val workLog = dev.agenticscheduler.domain.task.WorkLog(WorkLogId(id(41)), exactTask.id, exactRange)
         val dependency = dev.agenticscheduler.domain.task.TaskDependency(TaskDependencyId(id(42)), exactTask.id, dateTask.id)
-        val profile = dev.agenticscheduler.domain.planning.PlanningProfile(PlanningProfileId(id(43)), "Default")
+        val profile = dev.agenticscheduler.domain.planning.PlanningProfile(PlanningProfileId(id(43)), "Default", dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured)
         assertEquals(focus, focus.toRecord().toDomain()); assertEquals(workLog, workLog.toRecord().toDomain()); assertEquals(dependency, dependency.toRecord().toDomain()); assertEquals(profile, profile.toRecord().toDomain())
         val year = AcademicYear(AcademicYearId(id(44)), "2026-27", LocalDate(2026, 9, 1), LocalDate(2027, 1, 1))
         val semester = Semester(SemesterId(id(45)), year.id, "Autumn", LocalDate(2026, 9, 1), LocalDate(2026, 12, 1), TimeZone.of("Asia/Shanghai"), listOf(AcademicWeek(AcademicWeekNumber(1), LocalDate(2026, 9, 7), LocalDate(2026, 9, 14))).toImmutableList())
@@ -255,7 +257,7 @@ class PersistenceIntegrationTest {
         val focus = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(62)), firstTask.id, range, Flexibility.FLEXIBLE, PinState.UNPINNED)
         val log = dev.agenticscheduler.domain.task.WorkLog(WorkLogId(id(63)), firstTask.id, range)
         val dependency = dev.agenticscheduler.domain.task.TaskDependency(TaskDependencyId(id(64)), firstTask.id, secondTask.id)
-        val profile = dev.agenticscheduler.domain.planning.PlanningProfile(PlanningProfileId(id(65)), "Default")
+        val profile = dev.agenticscheduler.domain.planning.PlanningProfile(PlanningProfileId(id(65)), "Default", dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured)
         tasks.upsertTask(firstTask); tasks.upsertTask(secondTask); tasks.upsertFocusBlock(focus); tasks.upsertWorkLog(log); tasks.upsertDependency(dependency); profiles.upsert(profile)
         assertEquals("PT0S", database.taskDao().get(firstTask.id.value)?.effortCompletedIso)
         assertEquals(firstTask, tasks.getTask(firstTask.id)); assertEquals(focus, tasks.getFocusBlock(focus.id)); assertEquals(log, tasks.getWorkLog(log.id)); assertEquals(dependency, tasks.getDependency(dependency.id)); assertEquals(profile, profiles.get(profile.id))
@@ -302,7 +304,34 @@ class PersistenceIntegrationTest {
         assertFails { task(91).toRecord().copy(effortCompletedIso = "1h").toDomain() }
     }
 
-    @Test fun `exported v1 schema opens through Room migration harness`() = runBlocking {
+    @Test fun `configured planning profile and availability windows survive SQLite round trip`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val repository = RoomPlanningProfileRepository(database)
+        val profile = dev.agenticscheduler.domain.planning.PlanningProfile(
+            PlanningProfileId(id(94)), "Configured",
+            dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Configured(
+                TimeZone.of("Asia/Shanghai"), listOf(
+                    dev.agenticscheduler.domain.planning.WeeklyAvailabilityWindow(DayOfWeek.TUESDAY, kotlinx.datetime.LocalTime(9, 0), kotlinx.datetime.LocalTime(11, 0)),
+                    dev.agenticscheduler.domain.planning.WeeklyAvailabilityWindow(DayOfWeek.MONDAY, kotlinx.datetime.LocalTime(8, 0), kotlinx.datetime.LocalTime(10, 0)),
+                ).toImmutableList(), kotlin.time.Duration.parseIsoString("PT30M"), kotlin.time.Duration.parseIsoString("PT45M"), kotlin.time.Duration.parseIsoString("PT1H"),
+                dev.agenticscheduler.domain.planning.AllDayEventPolicy.BLOCK_WHOLE_LOCAL_DAY,
+            ),
+        )
+        repository.upsert(profile)
+        assertEquals(profile, repository.get(profile.id))
+        assertEquals(2, database.planningProfileDao().windows(profile.id.value).size)
+        database.close()
+    }
+
+    @Test fun `focus block delete is an active state operation`() = runBlocking {
+        val database = openInMemoryDesktopDatabase(); val tasks = RoomTaskRepository(database)
+        val source = task(95); tasks.upsertTask(source)
+        val focus = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(96)), source.id, ZonedTimeRange(Instant.fromEpochSeconds(1), Instant.fromEpochSeconds(2), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
+        tasks.upsertFocusBlock(focus); tasks.deleteFocusBlock(focus.id)
+        assertEquals(null, tasks.getFocusBlock(focus.id)); database.close()
+    }
+
+    @Test fun `exported v1 schema migrates through Room schema v2`() = runBlocking {
         migrationHelper.createDatabase(1)
         migrationHelper.runMigrationsAndValidate(1, emptyList()); Unit
     }

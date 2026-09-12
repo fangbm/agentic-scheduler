@@ -248,7 +248,7 @@ D5-01 does not create new Domain entities from UI input.
 
 This deliberately kept D5-01 separate from production UUIDv7 generation.
 
-D5-02 subsequently froze and implemented its explicit Event/Task creation-editing path under OD-004 / PLN-019. It does not alter the D5-01 read-surface boundary.
+D5-02 subsequently implemented its explicit Event/Task creation-editing path using the canonical application UUIDv7 generator frozen by OD-004 / PLN-019. It does not alter the D5-01 read-surface boundary.
 
 ---
 

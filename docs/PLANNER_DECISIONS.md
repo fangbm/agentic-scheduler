@@ -634,7 +634,7 @@ No partial Apply is legal.
 
 # PLN-019 — Production UUIDv7 generation (OD-004 implementation resolution)
 
-D6 creates FocusBlocks/PlanBranches and reuses the production UUIDv7 generator established by D5-02. PLN-019 resolves the shared OD-004 contract; D6 must not introduce a second generator path.
+D6 establishes the canonical application UUIDv7 generator for FocusBlocks/PlanBranches. PLN-019 resolves the shared OD-004 contract; D5-02 and future creator tasks reuse it rather than introducing a second path.
 
 No third-party UUID dependency is introduced.
 

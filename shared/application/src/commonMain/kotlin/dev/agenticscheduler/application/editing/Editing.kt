@@ -1,5 +1,6 @@
 package dev.agenticscheduler.application.editing
 
+import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
@@ -134,7 +135,7 @@ class EventEditingService(
     suspend fun create(input: CreateEventInput): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
-        val event = Event(EventId(ids.generate()), input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
+        val event = Event(EventId(ids.next()), input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
         return transactions.inWriteTransaction {
             events.upsert(event)
             EditingResult.Success(event)
@@ -165,7 +166,7 @@ class TaskEditingService(
         val built = validateTask(input.title, input.estimated, Duration.ZERO, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
         val valid = built as TaskInput.Valid
-        val task = Task(TaskId(ids.generate()), input.title, TaskStatus.OPEN, input.priority, valid.effort, valid.deadline)
+        val task = Task(TaskId(ids.next()), input.title, TaskStatus.OPEN, input.priority, valid.effort, valid.deadline)
         return transactions.inWriteTransaction {
             tasks.upsertTask(task)
             EditingResult.Success(task)

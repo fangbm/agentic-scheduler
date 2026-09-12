@@ -2,13 +2,14 @@
 
 A local-first Kotlin Multiplatform scheduler. End-to-end encrypted synchronization is planned for D8; it is not implemented yet.
 
-The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, and implemented D5-02 Event/Task creation-editing flow. D5-02 build, platform-smoke, and CI verification remain pending. D6 Planner is implementation-ready but not implemented; later History/Sync, E2EE, Agent, and server milestones remain governed by their own scope fences and decisions.
+The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, and implemented D5-02 Event/Task creation-editing flow. D5-02 build, platform-smoke, and CI verification remain pending. D6 is implemented but remains `FIX-AND-RECHECK`; later History/Sync, E2EE, Agent, and server milestones remain governed by their own scope fences and decisions.
 
 ## Modules
 
 - `shared:domain`: pure Kotlin Multiplatform domain boundary, shared by Android, Desktop, and Wear OS.
 - `shared:application`: application-facing repository/transaction contracts plus shared Calendar projection and Event/Task editing orchestration.
 - `shared:database`: Room 3 / SQLite KMP persistence implementation, including the exported v1 schema, records, mappers, repositories, and platform database builders.
+- `shared:planner`: pure deterministic Planner and PlanBranch logic.
 - `apps:android`: Android Compose shell.
 - `apps:desktop`: Compose Desktop shell.
 - `apps:wear`: Compose for Wear OS shell.
@@ -22,7 +23,7 @@ D1 is the architectural bootstrap baseline, not the current feature ceiling. Do 
 - [`docs/tasks/D5_CALENDAR_SURFACE.md`](docs/tasks/D5_CALENDAR_SURFACE.md) — completed D5-01 Calendar projection + Agenda/Day task.
 - [`docs/tasks/D5_02_CREATION_EDITING.md`](docs/tasks/D5_02_CREATION_EDITING.md) — implemented D5-02 Event/Task creation-editing task; verification pending.
 - [`docs/ROADMAP_D5_D9.md`](docs/ROADMAP_D5_D9.md) — reviewed sequencing and decision gates for D5–D9.
-- [`docs/tasks/D6_DETERMINISTIC_PLANNER.md`](docs/tasks/D6_DETERMINISTIC_PLANNER.md) — implementation-ready deterministic Planner and PlanBranch task.
+- [`docs/tasks/D6_DETERMINISTIC_PLANNER.md`](docs/tasks/D6_DETERMINISTIC_PLANNER.md) — implemented deterministic Planner and PlanBranch task in `FIX-AND-RECHECK`.
 - [`docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md`](docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md) — draft mutation/history/causality foundation.
 - [`docs/tasks/D8_E2EE_SYNC_TRANSPORT.md`](docs/tasks/D8_E2EE_SYNC_TRANSPORT.md) — security/protocol-blocked encrypted Sync draft.
 - [`docs/tasks/D9_AGENT_RUNTIME.md`](docs/tasks/D9_AGENT_RUNTIME.md) — context/permission/provider-blocked Agent draft.
