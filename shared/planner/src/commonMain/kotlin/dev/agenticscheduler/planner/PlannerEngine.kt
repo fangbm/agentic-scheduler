@@ -111,10 +111,23 @@ class DeterministicPlanner {
                     if (proposed == null) {
                         // Existing state remains real occupancy; never delete/resize FLEXIBLE.
                         val original = Range(block.time.start, block.time.endExclusive)
-                        if (placed.any { (_, proposedRange) -> intersect(original, proposedRange) != null }) {
+                        val displaced = placed.filter { (_, proposedRange) -> intersect(original, proposedRange) != null }
+                        if (displaced.any { (id, _) -> byId.getValue(id).deadline?.policy == DeadlinePolicy.HARD }) {
                             // A higher-ranked proposal displaced this immutable-duration block and
                             // no legal relocation exists. Retaining it would create a new overlap.
                             return PlannerResult.Infeasible(listOf(PlannerIssue.NoLegalAvailability(task.id)).toImmutableList())
+                        }
+                        // NORMAL/no-deadline work is best-effort. Restore the immutable-duration
+                        // block and retract conflicting lower-authority proposals rather than
+                        // manufacturing overlap or globally failing the run.
+                        displaced.map { it.first }.distinct().forEach { displacedTaskId ->
+                            val duration = placed.filter { it.first == displacedTaskId }
+                                .fold(Duration.ZERO) { total, value -> total + (value.second.endExclusive - value.second.start) }
+                            placed.removeAll { it.first == displacedTaskId }
+                            mutations.removeAll { it.taskId == displacedTaskId }
+                            coverage[displacedTaskId] = Duration.ZERO
+                            completion.remove(displacedTaskId)
+                            issues += PlannerIssue.UnscheduledEffort(displacedTaskId, duration)
                         }
                         placed += task.id to original
                         // It remains occupancy for the rest of this run. Without consuming it,
@@ -268,7 +281,9 @@ class DeterministicPlanner {
         config: PlanningProfileConfiguration.Configured,
         snapshot: PlanningSnapshot,
         context: List<Pair<dev.agenticscheduler.domain.id.TaskId, Range>>,
+        original: Range? = null,
     ): Range? {
+        if (after >= snapshot.horizon.endExclusive) return null
         val cutoff = task.deadline?.deadline?.effective(config.timeZone)
         val overflow = task.deadline?.let { it.policy != DeadlinePolicy.HARD && when (it.overflowPolicy) {
             OverflowPolicy.ALLOW -> true; OverflowPolicy.ASK -> task.id in snapshot.askOverflowAuthorizedTaskIds; OverflowPolicy.NEVER -> false
@@ -288,14 +303,15 @@ class DeterministicPlanner {
                     intersect(segment, Range(maxOf(cutoff, segment.start), segment.endExclusive))
                 } else null
                 val choices = if (cutoff == null) listOf(segment) else listOfNotNull(before, overflowRange)
-                choices.mapNotNull { selected ->
-                    chunk(remaining, selected.endExclusive - selected.start, config)?.let { duration -> Range(selected.start, selected.start + duration) }
+                choices.flatMap { selected ->
+                    chunkCandidates(remaining, selected.endExclusive - selected.start, config).map { duration -> Range(selected.start, selected.start + duration) }
                 }
             }
         }
         return candidates.sortedWith(compareBy<Range>(
             { cutoff != null && it.endExclusive > cutoff },
             { cutoff?.let { boundary -> if (it.endExclusive > boundary) (it.endExclusive - boundary).inWholeMilliseconds else 0L } ?: 0L },
+            { original?.let { prior -> abs((it.start - prior.start).inWholeMilliseconds) } ?: 0L },
             { contextSwitchDelta(task.id, it, context) },
             { abs(((it.endExclusive - it.start) - config.preferredFocusBlock).inWholeMilliseconds) },
             { -(it.endExclusive - it.start).inWholeMilliseconds },
@@ -340,7 +356,7 @@ class DeterministicPlanner {
     ): Range? {
         val original = Range(block.time.start, block.time.endExclusive)
         if (original.start >= after && free.any { it.start <= original.start && it.endExclusive >= original.endExclusive } && original.endExclusive - original.start <= remaining && original.isDeadlineLegalFor(task, config, snapshot)) return original
-        return candidate(task, remaining, after, free, config, snapshot, context)
+        return candidate(task, remaining, after, free, config, snapshot, context, original)
     }
 
     private fun plannedCompletion(task: Task, proposed: List<Range>, snapshot: PlanningSnapshot, cleanup: List<FocusBlock>): Instant {
@@ -357,13 +373,16 @@ class DeterministicPlanner {
     }
 
     private fun chunk(remaining: Duration, capacity: Duration, config: PlanningProfileConfiguration.Configured): Duration? {
+        return chunkCandidates(remaining, capacity, config).firstOrNull()
+    }
+    private fun chunkCandidates(remaining: Duration, capacity: Duration, config: PlanningProfileConfiguration.Configured): List<Duration> {
         val upper = minOf(remaining, capacity, config.maximumFocusBlock)
-        if (remaining < config.minimumFocusBlock) return if (upper == remaining) remaining else null
-        if (upper < config.minimumFocusBlock) return null
+        if (remaining < config.minimumFocusBlock) return if (upper == remaining) listOf(remaining) else emptyList()
+        if (upper < config.minimumFocusBlock) return emptyList()
         return listOf(upper, minOf(config.preferredFocusBlock, upper), remaining, remaining - config.minimumFocusBlock, config.minimumFocusBlock)
             .distinct().filter { it >= config.minimumFocusBlock && it <= upper }
             .filter { remaining - it == Duration.ZERO || remaining - it >= config.minimumFocusBlock }
-            .sortedWith(compareBy<Duration>({ abs((it - config.preferredFocusBlock).inWholeMilliseconds) }, { -it.inWholeMilliseconds })).firstOrNull()
+            .sortedWith(compareBy<Duration>({ abs((it - config.preferredFocusBlock).inWholeMilliseconds) }, { -it.inWholeMilliseconds }))
     }
 
     private fun Task.eligible(): Boolean {
