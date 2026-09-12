@@ -22,10 +22,15 @@ import dev.agenticscheduler.planner.FocusBlockDraft
 import dev.agenticscheduler.planner.FocusBlockMutation
 import dev.agenticscheduler.planner.PlanningHorizon
 import dev.agenticscheduler.planner.PlanningSnapshot
+import dev.agenticscheduler.planner.PlannerExplanation
+import dev.agenticscheduler.planner.PlannerIssue
+import dev.agenticscheduler.planner.PlannerResult
+import dev.agenticscheduler.planner.PlacementCriterion
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.runBlocking
@@ -33,11 +38,24 @@ import kotlinx.datetime.TimeZone
 import kotlin.time.Instant
 
 class PlanBranchTest {
+    @Test fun `branch retains decision evidence separately from planner issues`() {
+        val snapshot = snapshot()
+        val mutation = FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC)))
+        val explanation = PlannerExplanation(mutation.taskId, mutation, persistentListOf(PlacementCriterion.EARLIER_START))
+        val issue = PlannerIssue.UnscheduledEffort(mutation.taskId, kotlin.time.Duration.ZERO)
+        val branch = PlanBranchFactory(generator()).fromApplicableResult(
+            PlanningRequest.FullReplan, snapshot,
+            PlannerResult.Success(persistentListOf(mutation), persistentListOf(issue), persistentListOf(explanation)),
+        )
+        assertEquals(persistentListOf(issue), branch.issues)
+        assertEquals(persistentListOf(explanation), branch.explanations)
+    }
+
     @Test fun `branch preview is isolated and apply materializes only future draft`() = runBlocking {
         val snapshot = snapshot()
         val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(1)), PlanningRequest.FullReplan, snapshot,
-            persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC)))), persistentListOf())
+            persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC)))), persistentListOf(), persistentListOf())
         val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot.copy(referenceNow = Instant.parse("2026-01-02T09:30:00Z")) }
         assertEquals(0, repository.blocks.size)
         assertEquals(PlanBranchStatus.APPLIED, assertIs<PlanBranchApplyResult.Applied>(applier.apply(branch, Instant.parse("2026-01-02T09:30:00Z"))).branch.status)
@@ -46,7 +64,7 @@ class PlanBranchTest {
 
     @Test fun `structurally changed current facts refuse stale apply`() = runBlocking {
         val snapshot = snapshot(); val repository = InMemoryTasks()
-        val branch = PlanBranch(PlanBranchId(id(3)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf())
+        val branch = PlanBranch(PlanBranchId(id(3)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
         val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot.copy(profile = PlanningProfile(PlanningProfileId(id(9)), "changed", PlanningProfileConfiguration.Unconfigured)) }
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
     }
@@ -54,10 +72,31 @@ class PlanBranchTest {
     @Test fun `apply rejects a proposal that reaches apply now`() = runBlocking {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(4)), PlanningRequest.FullReplan, snapshot,
-            persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T10:00:00Z"), TimeZone.UTC)))), persistentListOf())
+            persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T10:00:00Z"), TimeZone.UTC)))), persistentListOf(), persistentListOf())
         val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot }
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
         assertEquals(0, repository.blocks.size)
+    }
+
+    @Test fun `apply refuses to move or delete a target that has already started`() = runBlocking {
+        val started = FocusBlock(
+            FocusBlockId(id(8)), TaskId(id(2)),
+            ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC),
+            dev.agenticscheduler.domain.planning.Flexibility.SOFT,
+            dev.agenticscheduler.domain.planning.PinState.UNPINNED,
+        )
+        val snapshot = snapshot(started)
+        val repository = InMemoryTasks().also { it.blocks[started.id] = started }
+        val branch = PlanBranch(
+            PlanBranchId(id(7)), PlanningRequest.FullReplan, snapshot,
+            persistentListOf(FocusBlockMutation.Delete(started.id, started.taskId)), persistentListOf(), persistentListOf(),
+        )
+        val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { snapshot }
+        assertEquals(
+            PlanBranchStatus.STALE,
+            assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T10:05:00Z"))).branch.status,
+        )
+        assertEquals(started, repository.blocks[started.id])
     }
 
     @Test fun `transaction rollback leaves no partial branch mutations`() = runBlocking {
@@ -65,14 +104,14 @@ class PlanBranchTest {
         val branch = PlanBranch(PlanBranchId(id(5)), PlanningRequest.FullReplan, snapshot, persistentListOf(
             FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC))),
             FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T11:00:00Z"), Instant.parse("2026-01-02T12:00:00Z"), TimeZone.UTC))),
-        ), persistentListOf())
+        ), persistentListOf(), persistentListOf())
         var failed = false
         try { PlanBranchApplier(RollingBackTransactions(repository), repository, generator()) { snapshot }.apply(branch, Instant.parse("2026-01-02T09:00:00Z")) } catch (_: IllegalStateException) { failed = true }
         assertEquals(true, failed)
         assertEquals(0, repository.blocks.size)
     }
 
-    private fun snapshot() = PlanningSnapshot(Instant.parse("2026-01-02T09:00:00Z"), PlanningHorizon(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T12:00:00Z")), PlanningProfile(PlanningProfileId(id(9)), "profile", PlanningProfileConfiguration.Unconfigured), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf())
+    private fun snapshot(vararg focusBlocks: FocusBlock) = PlanningSnapshot(Instant.parse("2026-01-02T09:00:00Z"), PlanningHorizon(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T12:00:00Z")), PlanningProfile(PlanningProfileId(id(9)), "profile", PlanningProfileConfiguration.Unconfigured), persistentListOf(), persistentListOf(), focusBlocks.toList().toImmutableList(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf())
     private fun generator() = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
     private fun id(number: Int) = "018f6e68-7d0c-7000-8000-${number.toString().padStart(12, '0')}"
 }

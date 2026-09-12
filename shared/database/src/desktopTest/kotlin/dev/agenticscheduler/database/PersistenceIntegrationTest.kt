@@ -332,8 +332,21 @@ class PersistenceIntegrationTest {
     }
 
     @Test fun `exported v1 schema migrates through Room schema v2`() = runBlocking {
-        migrationHelper.createDatabase(1)
-        migrationHelper.runMigrationsAndValidate(1, emptyList()); Unit
+        val legacy = migrationHelper.createDatabase(1)
+        legacy.prepare("INSERT INTO planning_profiles (id, name) VALUES (?, ?)").use { statement ->
+            statement.bindText(1, id(97))
+            statement.bindText(2, "Legacy profile")
+            statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(2, emptyList())
+        migrated.prepare("SELECT name, configuration_state FROM planning_profiles WHERE id = ?").use { statement ->
+            statement.bindText(1, id(97))
+            assertEquals(true, statement.step())
+            assertEquals("Legacy profile", statement.getText(0))
+            assertEquals("UNCONFIGURED", statement.getText(1))
+        }
+        migrated.close()
     }
 
     private fun task(number: Int) = Task(TaskId(id(number)), "task $number", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null)
