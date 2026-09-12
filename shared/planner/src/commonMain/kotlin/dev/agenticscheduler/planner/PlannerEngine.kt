@@ -111,6 +111,11 @@ class DeterministicPlanner {
                     if (proposed == null) {
                         // Existing state remains real occupancy; never delete/resize FLEXIBLE.
                         val original = Range(block.time.start, block.time.endExclusive)
+                        if (placed.any { (_, proposedRange) -> intersect(original, proposedRange) != null }) {
+                            // A higher-ranked proposal displaced this immutable-duration block and
+                            // no legal relocation exists. Retaining it would create a new overlap.
+                            return PlannerResult.Infeasible(listOf(PlannerIssue.NoLegalAvailability(task.id)).toImmutableList())
+                        }
                         placed += task.id to original
                         // It remains occupancy for the rest of this run. Without consuming it,
                         // a later Create could overlap the retained real FocusBlock.
@@ -271,7 +276,7 @@ class DeterministicPlanner {
         val candidates = free.mapNotNull { intersect(it, Range(after, snapshot.horizon.endExclusive)) }.flatMap { interval ->
             val starts = buildList {
                 add(interval.start)
-                cutoff?.takeIf { it in interval.start..interval.endExclusive }?.let(::add)
+                cutoff?.takeIf { it >= interval.start && it < interval.endExclusive }?.let(::add)
                 context.forEach { (_, range) ->
                     range.endExclusive.takeIf { it in interval.start..interval.endExclusive }?.let(::add)
                 }
@@ -279,7 +284,10 @@ class DeterministicPlanner {
             starts.flatMap { start ->
                 val segment = Range(start, interval.endExclusive)
                 val before = cutoff?.let { intersect(segment, Range(Instant.DISTANT_PAST, it)) }
-                val choices = listOfNotNull(before, if (overflow) intersect(segment, Range(cutoff ?: segment.start, segment.endExclusive)) else null)
+                val overflowRange = if (overflow && cutoff != null && cutoff < segment.endExclusive) {
+                    intersect(segment, Range(maxOf(cutoff, segment.start), segment.endExclusive))
+                } else null
+                val choices = if (cutoff == null) listOf(segment) else listOfNotNull(before, overflowRange)
                 choices.mapNotNull { selected ->
                     chunk(remaining, selected.endExclusive - selected.start, config)?.let { duration -> Range(selected.start, selected.start + duration) }
                 }
