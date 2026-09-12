@@ -138,12 +138,77 @@ class DeterministicPlannerTest {
         assertEquals(Instant.parse("2026-01-05T12:00:00Z"), moves.getValue(second.id).time.start)
     }
 
-    private fun snapshot(tasks: List<Task>, focusBlocks: List<FocusBlock> = emptyList(), dependencies: List<TaskDependency> = emptyList()) = PlanningSnapshot(
+    @Test fun `unknown and zero effort prerequisites remain blocked until explicitly completed`() {
+        val dependent = task(3, 1.hours)
+        listOf(
+            Task(TaskId(id(1)), "Unknown", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null),
+            task(2, kotlin.time.Duration.ZERO),
+        ).forEachIndexed { index, prerequisite ->
+            val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+                tasks = listOf(prerequisite, dependent.copy(id = TaskId(id(4 + index))),),
+                dependencies = listOf(TaskDependency(TaskDependencyId(id(7 + index)), prerequisite.id, TaskId(id(4 + index)))),
+            )))
+            assertEquals(true, result.issues.any { it is PlannerIssue.DependencyBlocked && it.taskId == TaskId(id(4 + index)) })
+        }
+    }
+
+    @Test fun `soft blocks may move resize and cleanup delete`() {
+        val movable = FocusBlock(FocusBlockId(id(10)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T08:30:00Z"), Instant.parse("2026-01-05T09:30:00Z"), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
+        val moved = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(movable))))
+        assertIs<FocusBlockMutation.Move>(moved.mutations.single())
+        val resizable = movable.copy(time = ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T11:00:00Z"), TimeZone.UTC))
+        val resized = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(resizable))))
+        assertIs<FocusBlockMutation.Resize>(resized.mutations.single())
+        val deleted = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, kotlin.time.Duration.ZERO, status = TaskStatus.COMPLETED)), listOf(movable))))
+        assertIs<FocusBlockMutation.Delete>(deleted.mutations.single())
+    }
+
+    @Test fun `normal deadline overflow honors never ask and allow`() {
+        fun deadline(policy: dev.agenticscheduler.domain.planning.OverflowPolicy) = dev.agenticscheduler.domain.planning.TaskDeadline(
+            dev.agenticscheduler.domain.planning.Deadline.Exact(Instant.parse("2026-01-05T09:00:00Z"), TimeZone.UTC),
+            dev.agenticscheduler.domain.planning.DeadlinePolicy.NORMAL, policy,
+        )
+        val never = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(1, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.NEVER))))) )
+        assertEquals(false, never.mutations.any { it is FocusBlockMutation.Create })
+        val ask = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(2, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.ASK))))) )
+        assertEquals(true, ask.issues.any { it is PlannerIssue.OverflowApprovalRequired })
+        val allow = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(tasks = listOf(task(3, 1.hours, deadline(dev.agenticscheduler.domain.planning.OverflowPolicy.ALLOW))))) )
+        assertIs<FocusBlockMutation.Create>(allow.mutations.single())
+    }
+
+    @Test fun `full replan is invariant under input permutation`() {
+        val first = task(1, 1.hours)
+        val second = task(2, 1.hours)
+        val forward = snapshot(tasks = listOf(first, second))
+        val reverse = forward.copy(tasks = listOf(second, first).toImmutableList())
+        assertEquals(DeterministicPlanner().fullReplan(forward), DeterministicPlanner().fullReplan(reverse))
+    }
+
+    @Test fun `context switch delta outranks earlier start`() {
+        val fixed = FocusBlock(FocusBlockId(id(11)), TaskId(id(1)), ZonedTimeRange(Instant.parse("2026-01-05T10:00:00Z"), Instant.parse("2026-01-05T11:00:00Z"), TimeZone.UTC), Flexibility.HARD, PinState.UNPINNED)
+        val profile = PlanningProfile(PlanningProfileId(id(9)), "UTC", PlanningProfileConfiguration.Configured(
+            TimeZone.UTC,
+            listOf(
+                WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(10, 0)),
+                WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(12, 0), LocalTime(13, 0)),
+            ).toImmutableList(), 30.minutes, 1.hours, 1.hours, AllDayEventPolicy.NON_BLOCKING,
+        ))
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+            tasks = listOf(task(1, kotlin.time.Duration.ZERO), task(2, 1.hours)), focusBlocks = listOf(fixed), profile = profile,
+        )))
+        val create = assertIs<FocusBlockMutation.Create>(result.mutations.single())
+        assertEquals(Instant.parse("2026-01-05T12:00:00Z"), create.draft.time.start)
+        assertEquals(true, result.explanations.single().criteria.contains(PlacementCriterion.MINIMAL_CONTEXT_SWITCHES))
+    }
+
+    private fun snapshot(tasks: List<Task>, focusBlocks: List<FocusBlock> = emptyList(), dependencies: List<TaskDependency> = emptyList(), profile: PlanningProfile = defaultProfile()) = PlanningSnapshot(
         referenceNow = Instant.parse("2026-01-05T08:00:00Z"),
         horizon = PlanningHorizon(Instant.parse("2026-01-05T08:00:00Z"), Instant.parse("2026-01-05T13:00:00Z")),
-        profile = PlanningProfile(PlanningProfileId(id(9)), "UTC", PlanningProfileConfiguration.Configured(TimeZone.UTC, listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(), 30.minutes, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING)),
+        profile = profile,
         tasks = tasks.toImmutableList(), dependencies = dependencies.toImmutableList(), focusBlocks = focusBlocks.toImmutableList(), events = persistentListOf(), courseSessions = persistentListOf(), exams = persistentListOf(), constraints = persistentListOf(), askOverflowAuthorizedTaskIds = persistentListOf(),
     )
+
+    private fun defaultProfile() = PlanningProfile(PlanningProfileId(id(9)), "UTC", PlanningProfileConfiguration.Configured(TimeZone.UTC, listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(), 30.minutes, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING))
 
     private fun task(number: Int, remaining: kotlin.time.Duration, deadline: dev.agenticscheduler.domain.planning.TaskDeadline? = null, status: TaskStatus = TaskStatus.OPEN) = Task(TaskId(id(number)), "Task $number", status, TaskPriority.NORMAL, TaskEffort(remaining, kotlin.time.Duration.ZERO, remaining), deadline)
     private fun id(number: Int) = "018f6e68-7d0c-7000-8000-${number.toString().padStart(12, '0')}"
