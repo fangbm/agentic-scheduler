@@ -280,6 +280,7 @@ private class FakeTaskRepository : TaskRepository {
     override fun observeFocusBlocks(): Flow<ImmutableList<FocusBlock>> = focusFlow
     override suspend fun getFocusBlock(id: FocusBlockId): FocusBlock? = null
     override suspend fun upsertFocusBlock(focusBlock: FocusBlock) = Unit
+    override suspend fun deleteFocusBlock(id: FocusBlockId) = Unit
     override fun observeWorkLogs(): Flow<ImmutableList<WorkLog>> = workLogFlow
     override suspend fun getWorkLog(id: WorkLogId): WorkLog? = null
     override suspend fun upsertWorkLog(workLog: WorkLog) = Unit
