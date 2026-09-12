@@ -91,13 +91,60 @@ class DeterministicPlannerTest {
         assertEquals(false, result.mutations.any { it.taskId == dependent.id })
     }
 
+    @Test fun `outside horizon flexible coverage is counted but never mutated`() {
+        val outside = FocusBlock(
+            FocusBlockId(id(8)), TaskId(id(1)),
+            ZonedTimeRange(Instant.parse("2026-01-05T14:00:00Z"), Instant.parse("2026-01-05T15:00:00Z"), TimeZone.UTC),
+            Flexibility.FLEXIBLE, PinState.UNPINNED,
+        )
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(listOf(task(1, 1.hours)), listOf(outside))))
+        assertEquals(emptyList(), result.mutations)
+    }
+
+    @Test fun `cancelled prerequisite remains blocked even when fixed future coverage exists`() {
+        val cancelled = task(1, 1.hours, status = TaskStatus.CANCELLED)
+        val dependent = task(2, 1.hours)
+        val fixed = FocusBlock(
+            FocusBlockId(id(8)), cancelled.id,
+            ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC),
+            Flexibility.HARD, PinState.UNPINNED,
+        )
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+            tasks = listOf(cancelled, dependent), focusBlocks = listOf(fixed),
+            dependencies = listOf(TaskDependency(TaskDependencyId(id(7)), cancelled.id, dependent.id)),
+        )))
+        assertEquals(true, result.issues.any { it is PlannerIssue.DependencyBlocked && it.taskId == dependent.id })
+        assertEquals(false, result.mutations.any { it.taskId == dependent.id })
+    }
+
+    @Test fun `local reflow uses provisional prerequisite completion`() {
+        val prerequisite = task(1, 1.hours)
+        val dependent = task(2, 1.hours)
+        val first = FocusBlock(FocusBlockId(id(4)), prerequisite.id, ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T10:00:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val second = FocusBlock(FocusBlockId(id(5)), dependent.id, ZonedTimeRange(Instant.parse("2026-01-05T10:00:00Z"), Instant.parse("2026-01-05T11:00:00Z"), TimeZone.UTC), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val base = snapshot(
+            tasks = listOf(prerequisite, dependent), focusBlocks = listOf(first, second),
+            dependencies = listOf(TaskDependency(TaskDependencyId(id(7)), prerequisite.id, dependent.id)),
+        )
+        val snapshot = base.copy(constraints = listOf(PlanningConstraint.UnavailableWindow(
+            ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T11:00:00Z"), TimeZone.UTC), ConstraintSource.USER,
+        )).toImmutableList())
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().localReflow(snapshot, LocalReflowRequest(
+            listOf(first.id, second.id).toImmutableList(), persistentListOf(),
+            ZonedTimeRange(Instant.parse("2026-01-05T09:00:00Z"), Instant.parse("2026-01-05T13:00:00Z"), TimeZone.UTC),
+        )))
+        val moves = result.mutations.filterIsInstance<FocusBlockMutation.Move>().associateBy { it.id }
+        assertEquals(Instant.parse("2026-01-05T11:00:00Z"), moves.getValue(first.id).time.start)
+        assertEquals(Instant.parse("2026-01-05T12:00:00Z"), moves.getValue(second.id).time.start)
+    }
+
     private fun snapshot(tasks: List<Task>, focusBlocks: List<FocusBlock> = emptyList(), dependencies: List<TaskDependency> = emptyList()) = PlanningSnapshot(
         referenceNow = Instant.parse("2026-01-05T08:00:00Z"),
         horizon = PlanningHorizon(Instant.parse("2026-01-05T08:00:00Z"), Instant.parse("2026-01-05T13:00:00Z")),
-        profile = PlanningProfile(PlanningProfileId(id(9)), "UTC", PlanningProfileConfiguration.Configured(TimeZone.UTC, listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(12, 0))).toImmutableList(), 30.minutes, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING)),
+        profile = PlanningProfile(PlanningProfileId(id(9)), "UTC", PlanningProfileConfiguration.Configured(TimeZone.UTC, listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(), 30.minutes, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING)),
         tasks = tasks.toImmutableList(), dependencies = dependencies.toImmutableList(), focusBlocks = focusBlocks.toImmutableList(), events = persistentListOf(), courseSessions = persistentListOf(), exams = persistentListOf(), constraints = persistentListOf(), askOverflowAuthorizedTaskIds = persistentListOf(),
     )
 
-    private fun task(number: Int, remaining: kotlin.time.Duration, deadline: dev.agenticscheduler.domain.planning.TaskDeadline? = null) = Task(TaskId(id(number)), "Task $number", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(remaining, kotlin.time.Duration.ZERO, remaining), deadline)
+    private fun task(number: Int, remaining: kotlin.time.Duration, deadline: dev.agenticscheduler.domain.planning.TaskDeadline? = null, status: TaskStatus = TaskStatus.OPEN) = Task(TaskId(id(number)), "Task $number", status, TaskPriority.NORMAL, TaskEffort(remaining, kotlin.time.Duration.ZERO, remaining), deadline)
     private fun id(number: Int) = "018f6e68-7d0c-7000-8000-${number.toString().padStart(12, '0')}"
 }

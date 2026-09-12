@@ -11,6 +11,7 @@ import dev.agenticscheduler.domain.task.FocusBlock
 import dev.agenticscheduler.planner.FocusBlockMutation
 import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlannerIssue
+import dev.agenticscheduler.planner.PlannerExplanation
 import dev.agenticscheduler.planner.PlannerResult
 import dev.agenticscheduler.planner.PlanningSnapshot
 import kotlin.time.Instant
@@ -31,7 +32,9 @@ data class PlanBranch(
     /** Normalized facts read by the planner. referenceNow is not a structural source fact. */
     val baseFacts: PlanningSnapshot,
     val mutations: ImmutableList<FocusBlockMutation>,
-    val explanations: ImmutableList<PlannerIssue>,
+    /** Non-fatal planner diagnostics are separate from placement decision evidence. */
+    val issues: ImmutableList<PlannerIssue>,
+    val explanations: ImmutableList<PlannerExplanation>,
     val status: PlanBranchStatus = PlanBranchStatus.DRAFT,
 ) {
     fun discard(): PlanBranch = copy(status = PlanBranchStatus.DISCARDED)
@@ -48,7 +51,8 @@ class PlanBranchFactory(private val uuidV7: UuidV7Generator) {
         originalRequest = request,
         baseFacts = snapshot,
         mutations = result.mutations,
-        explanations = result.issues,
+        issues = result.issues,
+        explanations = result.explanations,
     )
 }
 
@@ -117,6 +121,12 @@ class PlanBranchApplier(
         }) return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         val existing = targetIds.associateWith { tasks.getFocusBlock(it) }
         if (existing.values.any { it == null }) return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+        // A PlanBranch only authorizes changes to blocks that are still future at
+        // the instant of Apply. Checking only the proposed destination would let a
+        // started block be deleted or moved away after the preview was created.
+        if (existing.values.filterNotNull().any { it.time.start <= applyNow }) {
+            return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+        }
         branch.mutations.forEach { mutation -> when (mutation) {
             is FocusBlockMutation.Create -> tasks.upsertFocusBlock(FocusBlock(
                 id = FocusBlockId(uuidV7.next()), taskId = mutation.draft.taskId, time = mutation.draft.time,
