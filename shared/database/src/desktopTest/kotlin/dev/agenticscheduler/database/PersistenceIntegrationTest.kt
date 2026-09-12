@@ -291,7 +291,7 @@ class PersistenceIntegrationTest {
             statement.step()
         }
         legacy.close()
-        val migrated = migrationHelper.runMigrationsAndValidate(1, emptyList())
+        val migrated = migrationHelper.runMigrationsAndValidate(2, emptyList())
         migrated.prepare("SELECT name, configuration_state FROM planning_profiles WHERE id = ?").use { statement ->
             statement.bindText(1, id(97))
             assertEquals(true, statement.step())

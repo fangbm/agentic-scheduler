@@ -179,14 +179,13 @@ class DeterministicPlanner {
         val search = Range(searchStart, searchEnd)
         val free = subtract(available.mapNotNull { intersect(it, search) }, occupied)
         val moves = mutableListOf<FocusBlockMutation>()
-        val affectedIds = affected.map { it.id }.toSet()
         val provisional = mutableMapOf<dev.agenticscheduler.domain.id.FocusBlockId, Range>()
         affected.forEach { block ->
             val duration = block.time.endExclusive - block.time.start
             val task = snapshot.tasks.firstOrNull { it.id == block.taskId }
             val dependencyCompletion = task?.let { currentTask ->
                 dependencyEnd(currentTask, snapshot) { prerequisite ->
-                    prerequisiteCompletion(prerequisite, snapshot, affectedIds, provisional)
+                    prerequisiteCompletion(prerequisite, snapshot, provisional)
                 }
             }
             val placement = free.mapNotNull { interval ->
@@ -195,7 +194,7 @@ class DeterministicPlanner {
                     val start = maxOf(block.time.start.coerceIn(interval.start, latest), dependencyCompletion ?: interval.start)
                     if (start > latest) null else Range(start, start + duration).takeIf { candidate ->
                         task == null || candidate.isLegalFor(task, config, snapshot) { prerequisite ->
-                            prerequisiteCompletion(prerequisite, snapshot, affectedIds, provisional)
+                            prerequisiteCompletion(prerequisite, snapshot, provisional)
                         }
                     }
                 }
@@ -388,7 +387,6 @@ class DeterministicPlanner {
     private fun prerequisiteCompletion(
         task: Task,
         snapshot: PlanningSnapshot,
-        affectedIds: Set<dev.agenticscheduler.domain.id.FocusBlockId> = emptySet(),
         provisional: Map<dev.agenticscheduler.domain.id.FocusBlockId, Range> = emptyMap(),
     ): Instant? {
         val required = task.effort.remaining ?: return null
