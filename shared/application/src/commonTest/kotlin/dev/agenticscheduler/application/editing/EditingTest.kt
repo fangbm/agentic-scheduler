@@ -30,6 +30,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
 import kotlinx.datetime.TimeZone
+import kotlinx.datetime.toLocalDateTime
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -63,6 +64,21 @@ class EditingTest {
         )))).value)
         assertEquals(1, transactions.writes)
         assertEquals(created, repository.get(created.id))
+        assertIs<ZonedTimeRange>(created.time)
+
+        val zoned = assertIs<Event>(assertIs<EditingResult.Success<*>>(service.update(UpdateEventInput(
+            created.id,
+            "Zoned edited",
+            EventTimeInput.Zoned(
+                LocalDateTime(2026, 9, 10, 10, 0),
+                LocalDateTime(2026, 9, 10, 11, 0),
+                TimeZone.UTC,
+            ),
+            Flexibility.HARD,
+            PinState.UNPINNED,
+        ))).value)
+        assertEquals(created.id, zoned.id)
+        assertIs<ZonedTimeRange>(zoned.time)
 
         val allDay = assertIs<Event>(assertIs<EditingResult.Success<*>>(service.update(UpdateEventInput(
             created.id,
@@ -126,6 +142,7 @@ class EditingTest {
             deadline = null,
         ))).value)
         assertEquals(TaskStatus.OPEN, created.status)
+        assertEquals(TaskPriority.NORMAL, created.priority)
         assertEquals(Duration.ZERO, created.effort.completed)
         assertEquals(2.hours, created.effort.estimated)
         assertNull(created.effort.remaining)
@@ -164,7 +181,9 @@ class EditingTest {
                 OverflowPolicy.ASK,
             ),
         ))).value)
-        assertIs<dev.agenticscheduler.domain.planning.Deadline.Exact>(exactDeadline.deadline!!.deadline)
+        val exact = assertIs<dev.agenticscheduler.domain.planning.Deadline.Exact>(exactDeadline.deadline!!.deadline)
+        assertEquals(LocalDateTime(2026, 9, 16, 12, 0), exact.at.toLocalDateTime(exact.timeZone))
+        assertEquals(TimeZone.UTC, exact.timeZone)
         }
     }
 
