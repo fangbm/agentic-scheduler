@@ -1,10 +1,8 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D9
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented (verification pending); D6 Planner core rewrite ready
+> Baseline: D5-01 complete; D5-02 implemented; D6 Planner core rewrite ready; D7-D9 specs frozen
 > Date: 2026-09-12
-
-This roadmap records intended sequencing only. It does not authorize a milestone whose required decisions remain `PENDING`.
 
 ---
 
@@ -14,66 +12,45 @@ This roadmap records intended sequencing only. It does not authorize a milestone
 D5-01 Calendar / Application read surface      COMPLETE
 D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDING
  ↓
-D6  Deterministic Planner + PlanBranch         CORE REWRITE READY
+D6     Deterministic Planner + PlanBranch      CORE REWRITE READY
  ↓
-D7  Mutation Journal / ChangeLog / Undo / DVV-HLC
+D6.5   Prototype Integration / Dogfood Gate    READY AFTER D6
  ↓
-D8  E2EE Multi-device Sync + Thin Server
+D7     Mutation Journal / History / Undo       SPEC FROZEN — READY AFTER D6
  ↓
-D9  Agent Runtime + Typed Tools
+D8     E2EE Multi-device Sync + Thin Server    SPEC FROZEN — READY AFTER D7
+ ↓
+D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
+D9-02  Agent history sync amendment            AFTER D9-01
+D9-03  Wear Agent/provider provisioning        AFTER D9-01
 ```
 
-D5-02 is implemented and remains isolated from D6 because it is limited to Event/Task create-edit flows and does not own Planner semantics. It reuses the canonical application UUIDv7 generator shared with D6 rather than introducing a second path.
-
-The main milestone order remains deliberate:
+Main product dependency chain remains:
 
 ```text
 Domain semantics
 → persistence
-→ observable calendar surface
+→ observable calendar
 → deterministic planning
+→ dogfood prototype
 → auditable mutations/history
 → encrypted synchronization
 → LLM orchestration
 ```
 
-The Agent comes after deterministic Tools/Planner/history semantics exist. It must orchestrate established capabilities rather than define their truth.
+Documentation may be frozen ahead of implementation; implementation order remains gated by completed predecessor contracts.
 
 ---
 
-# D5 — Calendar / Application Surface
+# D5
 
-D5-01 Calendar projection / Agenda-Day baseline is complete.
+D5-01 Calendar projection/Agenda-Day is complete.
 
-D5-02 explicit Event/Task creation/editing is implemented at `b10bec0`; build, platform-smoke, and CI verification remain pending. It reuses the canonical `:shared:application` UUIDv7 implementation frozen by D6-00 / PLN-019.
-
-D5-02 scope is intentionally narrow:
-
-```text
-Android/Desktop Event create + edit
-Android/Desktop Task create + edit
-Wear remains read-only
-no delete
-no Planner invocation
-no ChangeLog/SyncOperation/AgentAction
-no academic timetable authoring
-```
-
-Authoritative D5 sources:
-
-```text
-docs/CALENDAR_DECISIONS.md
-docs/tasks/D5_CALENDAR_SURFACE.md
-docs/tasks/D5_02_CREATION_EDITING.md
-```
+D5-02 Event/Task creation/editing is present on current main. Its remaining work is verification/polish, not a separate feature merge.
 
 ---
 
-# D6 — Deterministic Planner
-
-D6-00 remains complete. The first D6 implementation established the outer module/persistence/PlanBranch contracts, but Planner-core correctness review exposed a structural state-model problem: real occupancy, movable reservations, tentative proposals, coverage/completion, and rollback were maintained in several independently mutated collections.
-
-The project therefore authorizes a focused Planner-core rewrite instead of continuing local patches.
+# D6
 
 Current split:
 
@@ -91,196 +68,182 @@ docs/PLANNER_DECISIONS.md
 docs/PLANNER_REWRITE_DECISIONS.md
 docs/tasks/D6_DETERMINISTIC_PLANNER.md
 docs/tasks/D6_PLANNER_CORE_REWRITE.md
-docs/OPEN_DECISIONS.md  // OD-020 / OD-021 / OD-004 resolved
 ```
 
-The rewrite is intentionally narrow. It replaces Planner-core internals and tests while retaining the already-stable D6 outer layers unless a failing conformance test proves otherwise:
-
-```text
-retain PlanningProfile + Room v2/migration
-retain application UUIDv7 generator
-retain PlanningSnapshot public contract
-retain FocusBlock mutation/result vocabulary
-retain PlanBranch stale/rebase/apply transaction boundary
-rewrite Full Replan state model
-rewrite finite candidate generation / ranking
-rewrite reservation displacement / rollback
-unify coverage / completion / dependency truth
-reverify Local Reflow against shared legality
-```
-
-The frozen D6 contract still covers:
-
-```text
-PlanningProfile real rule set
-Constraint model
-Task eligibility
-TaskPriority planning influence
-TaskDependency scheduling semantics
-DeadlinePolicy / OverflowPolicy semantics
-DateOnly deadline resolution
-unknown remaining-effort behavior
-working/availability windows
-chunking/min/preferred/max FocusBlock rules
-Academic/Exam participation
-AllDay/Floating planning participation
-OD-020 lexicographic deterministic decision model
-OD-021 Local Reflow deterministic search/tie-break
-:shared:planner module authorization
-session-scoped PlanBranch lifecycle
-atomic Apply
-production UUIDv7 generation
-```
-
-D6-00A additionally freezes:
-
-```text
-existing FocusBlocks remain semantic reservations until explicitly replaced
-ineligible/unknown/dependency-blocked Task blocks do not disappear from occupancy
-Task planning is transactional via accepted state + TaskPlanDelta
-FLEXIBLE displacement requires same-ID/same-duration relocation in the same tentative transaction
-HARD deadline satisfaction counts only coverage completed by cutoff
-finite structural candidate starts; no epsilon/grid
-all legal PLN-013 durations participate in PLN-015 comparison
-rollback restores the complete accepted planning state
-```
-
-Inherited rule remains:
-
-```text
-HARD + UNPINNED still cannot be moved automatically by Planner.
-PINNED is additional user protection, not the only source of immovability.
-```
-
-D7 implementation should not treat D6 as closed until D6-R1 is merged, the full conformance matrix is green, and the original D6 task is explicitly changed to `COMPLETE`.
+D7 implementation must not treat D6 as complete until D6-R1 conformance + repository CI pass and the original D6 task is explicitly closed.
 
 ---
 
-# D7 — Mutation / History / Causality Foundation
+# D6.5 — Prototype / Dogfood Gate
 
-Recommended split:
+After D6 closes, add a deliberately thin integration layer before disappearing into later infrastructure work.
+
+Minimum prototype:
 
 ```text
-D7-01  typed mutation groups + ChangeLog
-D7-02  explicit Undo support matrix
-D7-03  DVV/HLC + internal SyncOperation journal
+PlanningProfile settings UI
+FocusBlock rendering
+Full Replan button
+PlanBranch preview
+Apply / Cancel
+basic Planner issue/infeasible display
+one Local Reflow entry point
 ```
 
-D7 freezes local semantic mutation/history behavior before network transport exists.
+D5 already provides Event/Task create/edit and Agenda/Day.
 
-Production wire serialization remains D8 scope unless OD-030 is intentionally resolved earlier.
+D6.5 owns no new Planner semantics. Its goal is to make the deterministic core usable with real personal data and start dogfooding before D7-D9.
 
-Do not create generic tombstone/delete behavior before synchronized delete semantics are explicitly frozen. D6's FocusBlock delete authorization is local active-state behavior only and does not resolve synchronized deletion/tombstone semantics.
+---
+
+# D7 — Mutation / History / Causality
+
+Decision source:
+
+```text
+docs/HISTORY_SYNC_DECISIONS.md
+```
+
+Status:
+
+```text
+D7-00 decisions                      FROZEN
+D7-01 mutation coordinator/ChangeLog READY AFTER D6
+D7-02 Undo                           READY AFTER D6
+D7-03 DVV/HLC/:shared:sync journal   READY AFTER D6
+```
+
+Core frozen outcomes:
+
+```text
+one logical transaction = one MutationId
+ordered typed entity mutation group
+Active State + ChangeLog + SyncOperation + causal state atomic
+explicit limited Undo compensation
+FocusBlock-only delete/tombstone v1
+DVV causal truth; HLC ordering metadata only
+:shared:sync approved
+```
+
+D7 has no network/server/E2EE.
 
 ---
 
 # D8 — E2EE Multi-device Sync
 
-D8 remains `BLOCKED_BY_DECISION` until the required security/protocol/auth choices exist.
-
-Minimum blockers:
+Decision source:
 
 ```text
-OD-030 wire encoding/versioning
-OD-031 semantic merge matrix
-OD-040 content encryption
-OD-041 device pairing/key approval
-server/account authentication model
-device authentication/session model
-sync-space/workspace identity + key scope
-server module boundary
-exact Ktor/PostgreSQL dependency versions
+docs/SYNC_SECURITY_DECISIONS.md
 ```
 
-Server remains transport/storage infrastructure and does not own plaintext merge semantics.
+Status:
 
-OD-012 local database encryption at rest remains a separate production-user-data gate; E2EE does not replace it.
+```text
+D8-00 protocol/security decisions  FROZEN
+D8-01 client SyncEngine/merge      READY AFTER D7
+D8-02 E2EE/key lifecycle           READY AFTER D7
+D8-03 thin server/Wear transport   READY AFTER D7
+```
+
+Frozen baseline includes:
+
+```text
+one visible Personal SyncSpace v1
+JSON wire v1 via kotlinx.serialization 1.11.0
+Tink 1.23.0 AES-256-GCM content encryption
+Tink HPKE X25519/HKDF-SHA256/AES-256-GCM pairing
+existing-device approval + 8-digit SAS or Recovery Secret
+revocation rotates AMK + SyncSpace key epoch
+client semantic merge + explicit SyncConflict; no LWW
+Ktor 3.5.2 thin server + PostgreSQL pgjdbc 42.7.13 + HikariCP 7.1.0
+server stores opaque encrypted envelopes only
+```
+
+OD-032 tombstone physical compaction remains pending because compaction is disabled.
+
+OD-012 local database encryption remains a separate production-sensitive-data gate.
 
 ---
 
 # D9 — Agent Runtime
 
-Recommended split:
+Decision source:
 
 ```text
-D9-00  context/permission/provider decisions
-D9-01  shared Agent core + Android/Desktop integration
-D9-02  synchronized AgentThread/history protocol amendment
-D9-03  Wear Agent/provider provisioning after OD-042
+docs/AGENT_DECISIONS.md
 ```
 
-Minimum D9-01 blockers:
+Status:
 
 ```text
-OD-050 context budgeting
-OD-051 compaction lifecycle
-OD-053 AgentThread retention/deletion
-Tool permission/autonomy baseline
-provider adapter transport/dependency
-provider credential secure-storage policy
+D9-00 decisions                        FROZEN
+D9-01 Android/Desktop Agent core       READY AFTER D8
+D9-02 synchronized Agent history       AFTER D9-01
+D9-03 Wear Agent/provider provisioning AFTER D9-01
 ```
 
-OD-052 semantic embedding retrieval may remain deferred for v1.
+Frozen D9-01 baseline:
 
-OD-054 is required before external/MCP Tool compatibility is promised, not for purely internal Tool evolution.
+```text
+:shared:agent
+LLM -> typed Tool only
+reads/previews direct by default; writes require confirmation
+permission policy is device-local and Agent-inaccessible
+first provider = strict OpenAI-compatible tool-calling subset over Ktor
+provider/model settings device-local; secrets in PlatformSecretStore
+provider-independent truth/context authority
+explicit deterministic context budget
+persistent non-authoritative compaction summaries
+no automatic raw-thread purge
+AgentAction audit linked to MutationIds
+no embeddings/MCP requirement for first alpha
+```
+
+D9-02 explicitly amends D8; D8 does not pre-invent AgentThread merge behavior.
 
 ---
 
 # Cross-milestone schema rule
 
-Future Task Specs MUST NOT pre-write a migration such as:
+Future implementation Task Specs use:
 
 ```text
-v1 → v2
+current schema N -> N+1
 ```
 
-unless the immediately preceding frozen milestone guarantees that exact source version.
+and substitute an exact number only when the immediately preceding merged schema is known.
 
-D6 is now the exception by construction: D5-01 and D5-02 own no schema change and the D6 decision contract explicitly freezes migration `v1 -> v2` in `PLANNER_DECISIONS.md`.
-
-For later milestones use:
-
-```text
-current schema N → N+1
-```
-
-and replace `N` only when the implementation task is approved.
+No milestone may overwrite another milestone's migration or use destructive fallback.
 
 ---
 
 # Cross-milestone new-concept rule
 
-Every new durable/synchronizable concept must define before production use:
+Every new durable/synchronizable concept defines before production use:
 
 ```text
-typed identity where applicable
-primary owner
+typed identity
+owner/module
 persistence mapping
-local-only vs synchronized status
+local-only vs synchronized
 merge policy before joining Sync
-retention/deletion semantics where applicable
+retention/deletion semantics
 canonical vocabulary
 ```
 
-This especially applies to:
+D6 keeps request Constraints and PlanBranch session/local-only.
 
-```text
-Constraint
-PlanBranch
-ChangeLog
-SyncOperation
-SyncConflict
-AgentThread
-AgentMessage
-AgentAction
-```
+D7 makes mutation history durable.
 
-D6 explicitly keeps request Constraints and PlanBranch local/session-scoped and non-synchronized.
+D8 owns encrypted transport and merge.
+
+D9 owns conversation/Agent orchestration and only later amends D8 for Agent records.
 
 ---
 
 # Production data security reminder
 
-OD-012 remains `PENDING` after D4.
+OD-012 remains PENDING.
 
-D5–D7 may be implemented and tested against the D4 plaintext local database baseline, but no milestone may describe the product as ready for production-sensitive user data until local-at-rest protection is explicitly resolved.
+D5-D9 may be developed/tested on the current local persistence baseline, but the project must not claim production-sensitive local-data readiness until local database at-rest protection is explicitly resolved.

@@ -1,478 +1,316 @@
 # Agentic Scheduler — D9 Agent Runtime & Typed Tool Surface
 
-> Task ID: **D9 draft**  
+> Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **BLOCKED_BY_DECISION**  
-> Date: 2026-09-11
+> Status: **SPEC FROZEN — D9-01 READY AFTER D8**  
+> Date: 2026-09-12  
+> Decision source: `docs/AGENT_DECISIONS.md`
 
 ---
 
 # 1. Goal
 
-Add LLM orchestration only after deterministic Domain, Planner, history, and Sync capabilities exist.
+Add LLM orchestration over deterministic capabilities that already exist. The Agent does not become a second business-logic engine.
 
-D9 intends to establish:
-
-```text
-AgentThread / AgentMessage persistence
-+ ContextAssembler
-+ Provider adapter abstraction
-+ typed read/write Tools
-+ Permission Engine
-+ Preview / PlanBranch routing
-+ ToolResult
-+ AgentAction
-+ history retrieval
-```
-
----
-
-# 2. Hard invariant
-
-There is no legal path:
-
-```text
-LLM → database
-LLM → DAO
-LLM → generic repository.write
-LLM → server mutation
-```
-
-Legal mutation path:
-
-```text
-LLM proposal
-→ typed Tool
-→ schema validation
-→ Domain/Planner validation
-→ Permission Engine
-→ Preview/PlanBranch when required
-→ application transaction
-→ ToolResult + AgentAction + ChangeLog + SyncOperation
-```
-
-Provider prose never outranks transaction truth.
-
----
-
-# 3. Recommended split
-
-```text
-D9-00  context/permission/provider decisions
-D9-01  shared Agent core + Android/Desktop integration
-D9-02  E2EE synchronization amendment for AgentThread/history
-D9-03  Wear Agent/provider provisioning
-```
-
----
-
-# 4. Proposed module
-
-D9-01 should explicitly create:
+D9-01 output:
 
 ```text
 :shared:agent
+AgentThread/Message/ToolCall/ToolResult persistence
+ContextAssembler + deterministic budget/compaction
+provider adapter abstraction + first OpenAI-compatible HTTP adapter
+internal typed read/write Tools
+local Permission Engine + confirmation previews
+AgentAction audit
+Android/Desktop Agent surface / universal command entry
 ```
 
-Proposed dependencies:
-
-```text
-:shared:agent → :shared:domain
-:shared:agent → :shared:application
-:shared:agent → :shared:planner
-```
-
-Agent code must not import Room records/DAOs.
-
-The module creation is not authorized until D9-00 approves it.
+D9-02 adds synchronized Agent history. D9-03 adds Wear provider provisioning/capability integration.
 
 ---
 
-# 5. Required D9-00 decisions
-
-Existing open decisions:
+# 2. Required reading
 
 ```text
-OD-050  Context window budgeting
-OD-051  Context compaction lifecycle
-OD-053  AgentThread retention/deletion policy
+docs/AGENT_DECISIONS.md
+docs/HISTORY_SYNC_DECISIONS.md
+docs/SYNC_SECURITY_DECISIONS.md
+docs/OPEN_DECISIONS.md
+docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md
+docs/tasks/D8_E2EE_SYNC_TRANSPORT.md
+docs/tasks/D6_DETERMINISTIC_PLANNER.md
+docs/IMPLEMENTATION_CONTRACT.md
+this Task Spec
 ```
 
-Additional D9-00 decisions must freeze:
-
-```text
-Tool permission/autonomy baseline
-permission-setting persistence
-first Provider adapter transport/dependency
-Provider credential secure-storage policy
-Provider/model selection ownership
-```
-
-OD-052 semantic embedding retrieval may remain deferred for v1.
-
-OD-054 may remain pending while Tools are internal-only and no MCP/external compatibility promise exists.
+D9-01 implementation begins only after D8 is COMPLETE. Agent prototyping may use fake Providers earlier but must not merge production write paths ahead of the gate.
 
 ---
 
-# 6. Agent persistence concepts
+# 3. Split
 
-Keep these distinct:
+```text
+D9-01  local shared Agent core + Android/Desktop universal command
+D9-02  AgentThread/history E2EE sync protocol amendment
+D9-03  Wear Agent + ProviderCredentialEnvelope + capability probes
+```
+
+D9-02/03 are not required for the first Android/Desktop Agent alpha.
+
+---
+
+# 4. Hard boundary
+
+Implement AGT-001/AGT-002 literally.
+
+There is no legal escape hatch where a model response can directly mutate a repository because a typed Tool is inconvenient.
+
+Every write Tool must terminate at an already-defined deterministic application operation. If the underlying operation does not exist, the Tool is unavailable.
+
+---
+
+# 5. Agent persistence
+
+Bump current Room schema `N -> N+1` and persist distinct tables/records for:
 
 ```text
 AgentThread
 AgentMessage
-ToolCall record
-ToolResult record
+AgentToolCall
+AgentToolResult
 ContextSummary
 AgentAction
+AgentPermissionPolicy
+ProviderConfig (non-secret metadata + SecretRef)
 ```
 
-Do not collapse them into one generic chat-message table.
+Provider remote conversation/session IDs are disposable adapter metadata and cannot become AgentThread identity.
 
-Provider conversation/session IDs may be retained only as disposable adapter metadata.
-
-Adding Agent persistence bumps the then-current local schema:
-
-```text
-N → N+1
-```
-
-with explicit migrations/tests.
+No destructive migration fallback.
 
 ---
 
-# 7. Retention/deletion
+# 6. Universal command surface
 
-D9 must not silently mean "store all conversation forever".
-
-OD-053 must define production behavior for:
+Android/Desktop expose one Agent-first command surface capable of:
 
 ```text
-thread deletion
-message/history retention
-user-visible controls
-what compaction does not delete
-synchronized deletion behavior if applicable
+ordinary conversational request
+read/query request
+Tool-backed create/update request
+Planner preview request
+history/Undo request
 ```
 
-Compaction is not deletion.
+The UI must render structured Tool/permission/confirmation truth rather than only assistant prose.
 
-Authoritative ChangeLog/state history must not be erased merely to fit a model context window.
+Minimum visible states:
+
+```text
+thinking/streaming
+Tool proposed/running/succeeded/failed
+confirmation required
+PlanBranch preview
+permission denied
+stale/conflict/infeasible
+provider/network unavailable
+```
+
+No new project-wide MVI/DI/navigation framework is required; existing minimal Compose/manual composition remains allowed.
 
 ---
 
-# 8. Context authority
+# 7. Permission Engine
 
-Factual authority remains:
+Implement AGT-003 exactly.
 
-```text
-1. Current Domain State
-2. ToolResult / ChangeLog
-3. structured Agent state
-4. raw conversation
-5. ContextSummary
-```
+On first use, show the user the effective capability policy. The default must remain conservative: reads/previews direct, writes confirmation, bulk/destructive/external denied.
 
-A summary can be stale or wrong and must not override current structured facts.
+Permission settings are device-local and Agent-inaccessible.
+
+A confirmation preview captures normalized tool inputs/before-after facts. Confirmation executes against current state and must revalidate; it cannot blind-apply stale preview facts.
+
+Planner confirmation uses D6 PlanBranch stale/apply semantics directly.
 
 ---
 
-# 9. ContextAssembler
+# 8. Tools
 
-ContextAssembler is application infrastructure, not free-form provider prompt glue.
+Implement the AGT-004/AGT-005 v1 set.
 
-Potential approved inputs include:
+Start with read/preview Tools, then add writes.
+
+Every Tool has unit tests with a fake application service and at least:
 
 ```text
-current user command
-ContextAnchor
-thread metadata
-recent AgentMessages
-recent ToolResults
-relevant Domain snapshot
-relevant ChangeLog/AgentAction facts
-ContextSummary
-retrieved history
+valid success
+invalid input
+NotFound where relevant
+permission denied
+confirmation required/direct modes
+transaction failure
+redacted InfrastructureFailure
 ```
 
-It sends the minimum approved context rather than the whole local database by default.
-
-Provider-specific adapters must not define different truth precedence rules.
+No arbitrary JSON `execute` Tool.
 
 ---
 
-# 10. OD-050 budget gate
+# 9. Provider adapter
 
-Before production ContextAssembler, freeze deterministic budget/priority classes for:
+Implement AGT-006/AGT-007.
+
+The first adapter is an explicit internal compatibility profile, not a universal standard. Provider capability probe must disable Tool writes when structured tool calling is not supported.
+
+Streaming assistant text and Tool-call deltas must assemble deterministically into stored AgentMessage/AgentToolCall records.
+
+Network/provider errors are structured and do not fabricate Tool success.
+
+Provider API keys/tokens are resolved from `PlatformSecretStore` only at request time and redacted from diagnostics.
+
+---
+
+# 10. ContextAssembler
+
+Implement AGT-008 through AGT-010.
+
+Context selection is deterministic from:
 
 ```text
-system/tool schemas
-current command
-ContextAnchor
-current Domain facts
-recent ToolResults
-recent AgentActions/ChangeLog
+current request + anchor
+approved Tool schemas
+relevant current Domain/Application facts
+recent ToolResults/AgentActions/ChangeLog
 recent raw messages
 ContextSummary
-retrieved history
+structured history retrieval
 ```
 
-Provider token limits may parameterize capacity, but factual authority ordering stays provider-independent.
+No semantic embedding index in D9-01.
+
+Budget and compaction tests must use fake deterministic BudgetMeter/summary provider so CI does not depend on a live LLM.
 
 ---
 
-# 11. OD-051 compaction gate
+# 11. Retention/privacy
 
-Before first persistent production compaction, freeze:
+Implement AGT-011.
 
-```text
-when compaction triggers
-immutable source-range tracking
-incremental summary update strategy
-summary version/invalidation behavior
-provider/model-change behavior
-failure behavior
-```
+Thread deletion UI must state the actual semantics. Do not promise global cryptographic erasure that the append-only encrypted sync/history architecture cannot guarantee.
 
-Compaction may remove text from hot prompt context but cannot destroy authoritative stored history.
+AgentAction/ChangeLog for committed business writes remain audit facts after raw thread deletion.
+
+OD-012 local database encryption remains a production-sensitive-data gate because raw Agent conversations may be locally sensitive.
 
 ---
 
-# 12. Tool contract
+# 12. AgentAction
 
-Every Tool defines:
+Create AgentAction before/around execution so failures are also auditable, then finalize its status after Tool execution/confirmation outcome.
 
-```text
-canonical name
-purpose
-input schema
-result schema
-read/write classification
-validation rules
-risk level
-permission behavior
-transaction behavior
-history/audit behavior
-Undo behavior when applicable
-```
+A committed write ToolResult references MutationId and AgentAction records that reference. D7 mutation origin uses `AGENT(agentActionId)`.
 
-Do not expose generic SQL/repository mutation Tools.
-
-Do not expose one arbitrary-JSON `execute` Tool when specific typed capabilities can exist.
+Do not copy provider secrets or complete system prompts into AgentAction.
 
 ---
 
-# 13. Initial read Tools
+# 13. D9-02 sync amendment
 
-D9 should build read capabilities before write capabilities.
-
-Potential v1 read surface:
+After D9-01 local behavior is stable:
 
 ```text
-calendar.list
-task.get
-task.list
-course.list
-history.timeline
-history.getMutation
-planner.preview
+extend inner SyncPayload protocol version
+add Agent typed operation discriminators
+add Agent semantic merge/tombstone rules from AGT-013
+add migration/compatibility fixtures
+verify older D8 clients quarantine unknown Agent operations safely
 ```
 
-Exact names/schemas are frozen by the future D9-01 implementation spec.
+ContextSummary, permission policy, ProviderConfig credentials/settings remain device-local.
 
-Read-only Tools must have no hidden mutation side effects.
+Thread delete tombstone is retained; OD-032 still controls physical compaction.
 
 ---
 
-# 14. Initial write Tools
+# 14. D9-03 Wear
 
-Potential write capabilities:
+Provision provider credentials only through `ProviderCredentialEnvelope`; never ordinary workspace sync.
+
+Wear runtime must handle:
 
 ```text
-event.create
-event.update
-task.create
-task.update
-planner.applyBranch
-history.undo
+no provider credential
+no network
+no STT capability
+phone relay unavailable
+permission stricter than phone
 ```
 
-A Tool is only eligible when the underlying deterministic application operation already exists and its creation/ID/default semantics are frozen.
+without corrupting AgentThread or business state.
 
-D9 does not introduce a business write merely because an LLM might want it.
+Watch-originated Tools use the same D7/D6 application truth as other clients.
 
 ---
 
-# 15. Permission Engine
-
-The model cannot grant itself permissions.
-
-No default Agent autonomy level may be invented.
-
-D9-00 must define capability categories and onboarding/configuration behavior, for example:
+# 15. Required D9-01 tests
 
 ```text
-READ
-LOW_RISK_WRITE
-SCHEDULE_MOVEMENT
-BULK_CHANGE
-DESTRUCTIVE
-EXTERNAL_SIDE_EFFECT
+Provider cannot bypass Tool registry
+free-form prose cannot write
+read Tool causes no mutation
+write defaults to confirmation
+ALLOW_DIRECT write still validates/rechecks current state
+DENY writes nothing
+confirmation stale revalidation
+PlanBranch stale apply through Agent
+Tool transaction failure truth
+AgentAction success/failure references
+provider switch same AgentThread
+capability probe disables unsupported Tool writes
+Budget priority/caps
+ContextTooLarge mandatory-content path
+summary trigger + incremental source ranges
+summary failure preserves history
+summary cannot override current Domain result
+thread delete purges conversational rows but preserves audit mutation history
+secret redaction
+schema migration N -> N+1
 ```
 
-The exact categories and defaults remain unresolved until D9-00.
+D9-02/03 add their own protocol/Wear tests from `AGENT_DECISIONS.md`.
 
 ---
 
-# 16. Preview / PlanBranch rule
+# 16. Explicit exclusions
 
-Preview/PlanBranch is mandatory whenever the approved permission/risk policy requires it.
-
-Expected preview-required classes include at least:
+D9-01 does not add:
 
 ```text
-Planner schedule movement
-multi-entity/bulk change
-high-risk/destructive action
-```
-
-A low-risk direct write may skip preview only when the user-owned permission policy explicitly allows it.
-
----
-
-# 17. Provider adapter
-
-D9-00 must choose whether the first adapter uses:
-
-```text
-a Provider SDK
-or
-a generic HTTP/Ktor client
-```
-
-and pin exact dependencies.
-
-Provider adapter owns API mapping/streaming mechanics, not business rules.
-
-Provider session IDs are optional optimization/cache handles only.
-
-Switching Provider must not reset application-owned AgentThread continuity.
-
----
-
-# 18. Provider credentials
-
-Before real Provider use, freeze:
-
-```text
-credential storage owner per platform
-secret retrieval boundary
-logging/redaction rules
-configuration flow
-revocation/rotation behavior
-```
-
-Provider credentials must never appear in ordinary Domain/Sync payloads or logs.
-
----
-
-# 19. AgentAction
-
-AgentAction records what the Agent attempted and what actually happened.
-
-It should reference as applicable:
-
-```text
-AgentThread
-user request / source message
-Tool calls
-ToolResults
-MutationId(s)
-permission/preview outcome
-Planner DecisionReason references
-```
-
-AgentAction does not replace ChangeLog.
-
-Failed Tool execution must remain a failed structured fact even if the model generated success language.
-
----
-
-# 20. D9-02 Agent synchronization amendment
-
-If AgentThread/AgentMessage/AgentAction later join multi-device Sync, D9-02 must explicitly amend:
-
-```text
-wire protocol schema/version
-OD-031 merge matrix
-E2EE payload definitions
-retention/delete synchronization behavior
-compatibility/migration tests
-```
-
-D8 must not be assumed to have pre-defined merge semantics for future Agent records.
-
----
-
-# 21. D9-03 Wear gate
-
-Wear Agent/provider provisioning is intentionally separated from D9-01.
-
-Before D9-03:
-
-```text
-OD-042 ProviderCredentialEnvelope crypto resolved
-Wear secure credential storage frozen
-STT capability probe behavior frozen
-Provider/network capability behavior tested
-```
-
-Network availability is not proof that on-device STT exists.
-
-A Watch-originated request still uses the same typed Tool/Domain/Planner semantics as other clients.
-
----
-
-# 22. Required tests once READY
-
-At minimum:
-
-```text
-fake Provider cannot bypass Tool layer
-read Tools cause no writes
-denied permission causes no mutation
-preview-required action cannot direct-commit
-ToolResult reflects transaction failure truthfully
-AgentAction references committed mutation
-ContextSummary cannot override current Domain state
-Provider switch preserves AgentThread continuity
-ContextAssembler sends only approved minimum context
-credential fixtures/logs contain no secrets
-retention/delete behavior tests
-protocol-amendment tests if D9-02 is included
-Wear unavailable-capability behavior for D9-03
+semantic embedding/vector DB
+MCP/external Tool compatibility promise
+generic web/browser automation Tool
+Event/Task deletion
+external calendar writes
+provider-owned conversation as source of truth
+server-side Agent execution
+secret synchronization through ordinary SyncOperation
+project-wide MVI/DI framework
 ```
 
 ---
 
-# 23. READY gate
+# 17. Completion gate
 
-D9-01 remains `BLOCKED_BY_DECISION` until:
+D9-01 PASS requires AGT-017 plus:
 
 ```text
-[ ] OD-050 resolved
-[ ] OD-051 resolved
-[ ] OD-053 resolved
-[ ] Tool permission/autonomy baseline frozen
-[ ] permission persistence frozen
-[ ] first Provider adapter transport/dependency frozen
-[ ] Provider credential secure-storage policy frozen
-[ ] :shared:agent boundary approved
-[ ] initial Tool schemas frozen
+[ ] D8 COMPLETE before production integration
+[ ] :shared:agent dependency direction verified
+[ ] Android/Desktop universal command surfaces usable
+[ ] all write Tools map to existing deterministic application commands
+[ ] local permission settings cannot be modified by model
+[ ] Provider credentials only exist behind SecretRef/secure store
+[ ] repository-wide CI green
 ```
 
-OD-052 may remain deferred for D9 v1.
-
-OD-054 may remain pending while Tools remain internal-only.
-
-D9-03 additionally requires OD-042.
+D9-02 and D9-03 are separately closable subtasks after D9-01.
