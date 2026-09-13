@@ -866,6 +866,51 @@ full repository build successful.
 
 ---
 
+# 27. Sixth review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `e8c50f8`):
+
+```text
+P1 subject exclusion  The relocation provisional state now excludes the planning
+                      Task's own subject reservation that the candidate replaces
+                      (arrangeDisplacements/relocationOptions take the subject).
+                      Without it, a legal swap (HARD block 11-12 -> 10-11 while a
+                      displaced FLEXIBLE 10-11 -> 11-12) was judged infeasible
+                      because the old subject still occupied the relocation space.
+P1 dependency-resolvable DFS
+                      The displacement DFS no longer iterates the displaced
+                      reservations in fixed range order: every remaining
+                      reservation is tried as the next placement, so a displaced
+                      dependency chain (D depends on P) is deferred until P's
+                      replacement makes D's dependency floor resolvable. The base
+                      case re-validates every replacement's dependency floor
+                      against the COMPLETE post-arrangement state before accepting
+                      the arrangement, so a later relocation cannot invalidate an
+                      earlier one unnoticed.
+```
+
+New regressions in `PlannerReviewRound6Test`:
+
+```text
+existing HARD subject can swap with a displaced FLEXIBLE block (A 11-12 -> 10-11,
+  B 10-11 -> 11-12; the swap is provable, not falsely infeasible)
+displaced dependency chain is arrangement-order independent (P 10-11 -> 11-12,
+  D 09-10 -> 12-13, D after P's new completion; fixed-order DFS fails here)
+selected Task cannot displace its own prerequisite past its own start
+  (A 09:00-10:30 rejected because the displaced prerequisite's completion moves
+  to 11:00; the run reports the HARD shortfall instead of entering an illegal
+  state or crashing on the final invariant)
+```
+
+The provenance-survival regression (current-delta relocation surviving the
+invalidated owner's rollback) remains pinned by the round-3 closure test, which
+asserts the owner's kept replacement ([10:00,11:00]) as the final position.
+
+Updated verification totals: planner 66, application 21, domain 42, database 15 tests green;
+full repository build successful.
+
+---
+
 # 22. Review round record (2026-09-13)
 
 Post-review corrections on the same branch (commit `8e6e511`, rebased onto `ba3d326`):
