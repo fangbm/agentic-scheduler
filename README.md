@@ -2,7 +2,7 @@
 
 A local-first Kotlin Multiplatform scheduler. End-to-end encrypted synchronization is planned for D8; it is not implemented yet.
 
-The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, and implemented D5-02 Event/Task creation-editing flow. D5-02 build, platform-smoke, and CI verification remain pending. D6 outer foundations are implemented, while the deterministic Planner core is now explicitly scheduled for a focused rewrite before D6 can close; later History/Sync, E2EE, Agent, and server milestones remain governed by their own scope fences and decisions.
+The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, and completed D6 deterministic Planner/PlanBranch work. D6.5 Prototype Integration / Dogfood is the next product gate; later History/Undo, E2EE Sync, Agent Runtime, and final product UI/UX remain governed by their own scope fences and decisions.
 
 ## Modules
 
@@ -22,14 +22,14 @@ D1 is the architectural bootstrap baseline, not the current feature ceiling. Do 
 - [`docs/CALENDAR_DECISIONS.md`](docs/CALENDAR_DECISIONS.md) — frozen decisions for the first Calendar/Agenda surface.
 - [`docs/tasks/D5_CALENDAR_SURFACE.md`](docs/tasks/D5_CALENDAR_SURFACE.md) — completed D5-01 Calendar projection + Agenda/Day task.
 - [`docs/tasks/D5_02_CREATION_EDITING.md`](docs/tasks/D5_02_CREATION_EDITING.md) — implemented D5-02 Event/Task creation-editing task; verification pending.
-- [`docs/ROADMAP_D5_D9.md`](docs/ROADMAP_D5_D9.md) — reviewed sequencing and decision gates for D5–D9.
+- [`docs/ROADMAP_D5_D9.md`](docs/ROADMAP_D5_D9.md) — reviewed sequencing and decision gates for D5–D10, including D6.5 dogfood scope and D10 final product UI/UX.
 - [`docs/PLANNER_DECISIONS.md`](docs/PLANNER_DECISIONS.md) — frozen D6 Planner product/semantic contract.
 - [`docs/PLANNER_REWRITE_DECISIONS.md`](docs/PLANNER_REWRITE_DECISIONS.md) — frozen D6-00A clarifications for reservation state, rollback, finite candidates, and HARD cutoff coverage.
-- [`docs/tasks/D6_DETERMINISTIC_PLANNER.md`](docs/tasks/D6_DETERMINISTIC_PLANNER.md) — original D6 deterministic Planner + PlanBranch task; remains the outer/public contract and is not complete yet.
-- [`docs/tasks/D6_PLANNER_CORE_REWRITE.md`](docs/tasks/D6_PLANNER_CORE_REWRITE.md) — implementation-ready focused rewrite plan for the D6 Planner core.
-- [`docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md`](docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md) — draft mutation/history/causality foundation.
-- [`docs/tasks/D8_E2EE_SYNC_TRANSPORT.md`](docs/tasks/D8_E2EE_SYNC_TRANSPORT.md) — security/protocol-blocked encrypted Sync draft.
-- [`docs/tasks/D9_AGENT_RUNTIME.md`](docs/tasks/D9_AGENT_RUNTIME.md) — context/permission/provider-blocked Agent draft.
+- [`docs/tasks/D6_DETERMINISTIC_PLANNER.md`](docs/tasks/D6_DETERMINISTIC_PLANNER.md) — D6 deterministic Planner + PlanBranch outer/public contract.
+- [`docs/tasks/D6_PLANNER_CORE_REWRITE.md`](docs/tasks/D6_PLANNER_CORE_REWRITE.md) — completed focused rewrite and review record for the D6 Planner core.
+- [`docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md`](docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md) — frozen mutation/history/causality foundation for D7 implementation.
+- [`docs/tasks/D8_E2EE_SYNC_TRANSPORT.md`](docs/tasks/D8_E2EE_SYNC_TRANSPORT.md) — frozen encrypted Sync/transport task for D8.
+- [`docs/tasks/D9_AGENT_RUNTIME.md`](docs/tasks/D9_AGENT_RUNTIME.md) — frozen Agent runtime task for D9.
 
 ## Development guardrails
 
