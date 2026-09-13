@@ -71,30 +71,35 @@ class PlannerReviewRound2Test {
         )
     }
 
-    // review-r2-2 + review-r2-4: the relocation search enumerates every structural
-    // start of the free interval (including the displaced reservation's own start
-    // boundary), so the blocked FLEXIBLE block relocates to the earlier legal
-    // position [09:00,10:00) even though the closest position [11:00,12:00)
-    // violates its deadline.
+    // review-r2-2, REVERSED per review round 3: a dependency-blocked Task's
+    // FLEXIBLE block has no legal relocation at all (its dependency boundary is
+    // unknown), so the higher-ranked demand stays unscheduled and the block keeps
+    // its original placement (D6R-002/PLN-009).
     @Test
-    fun `flexible relocation finds the earlier legal position when the closest violates the deadline`() {
+    fun `relocation of a dependency blocked task is illegal and the block keeps its placement`() {
         val prerequisite = Task(TaskId(id(4)), "Task 4", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, Duration.ZERO, null), null)
         val blocked = task(3, 1.hours, deadline = TaskDeadline(Deadline.Exact(at("10:15"), TimeZone.UTC), DeadlinePolicy.NORMAL, OverflowPolicy.NEVER))
         val blockedBlock = FocusBlock(FocusBlockId(id(6)), blocked.id, range("10:00", "11:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val demand = task(1, 90.minutes, deadline = TaskDeadline(Deadline.Exact(at("11:30"), TimeZone.UTC), DeadlinePolicy.HARD, OverflowPolicy.NEVER), priority = TaskPriority.HIGH)
         val profile = profile(minimum = 90.minutes, preferred = 90.minutes, maximum = 2.hours)
-        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+        val result = assertIs<PlannerResult.Infeasible>(DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(demand, blocked, prerequisite),
             focusBlocks = listOf(blockedBlock),
             dependencies = listOf(TaskDependency(TaskDependencyId(id(8)), prerequisite.id, blocked.id)),
             profile = profile,
         )))
-        val create = assertIs<FocusBlockMutation.Create>(result.mutations.filterIsInstance<FocusBlockMutation.Create>().single())
-        assertEquals(range("10:00", "11:30"), create.draft.time, "the HARD demand takes the displaced block's slot")
-        val forBlocked = result.mutations.filter { it.taskId == blocked.id }
-        assertEquals(1, forBlocked.size)
-        val move = assertIs<FocusBlockMutation.Move>(forBlocked.single())
-        assertEquals(range("09:00", "10:00"), move.time, "the blocked block relocates to the earlier deadline-legal position, same ID")
+        // The demand itself is HARD and uncoverable -> Infeasible (D6R-006); the
+        // blocked Task's block keeps its original reservation either way.
+        assertEquals(
+            true,
+            result.issues.any { it is PlannerIssue.HardDeadlineShortfall && it.taskId == demand.id },
+            "the HARD demand cannot be covered before its cutoff",
+        )
+        assertEquals(
+            true,
+            result.issues.any { it is PlannerIssue.DependencyBlocked && it.taskId == blocked.id },
+            "the blocked Task is reported",
+        )
     }
 
     // review-r2-3: when no same-duration relocation exists, a SOFT block is resized

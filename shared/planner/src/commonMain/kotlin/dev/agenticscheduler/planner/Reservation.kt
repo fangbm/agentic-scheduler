@@ -78,6 +78,8 @@ internal data class TaskPlanDelta(
     val addedReservations: List<Reservation>,
     val entries: List<MutationWithCriteria>,
     val issues: List<PlannerIssue>,
+    /** Other Tasks whose reservations this delta displaced or removed (D6R-004). */
+    val displacedTaskIds: Set<TaskId> = emptySet(),
 )
 
 /**
@@ -95,6 +97,22 @@ internal data class PlanningState(
         reservations = reservations.filter { it !in delta.removedReservations } + delta.addedReservations,
         entries = entries + delta.entries,
         issues = issues + delta.issues,
+    )
+
+    /**
+     * Invalidates the accepted contribution of [taskId] (D6R-003 closure): its
+     * replaced, resized, or proposed reservations are removed; untouched original
+     * input reservations and reservations another delta explicitly placed there
+     * (kept) survive for the Task's re-planning.
+     */
+    fun invalidateTask(taskId: TaskId, kept: List<Reservation>): PlanningState = PlanningState(
+        reservations = reservations.filter { reservation ->
+            reservation.taskId != taskId ||
+                kept.contains(reservation) ||
+                reservation.originalRange == reservation.range
+        },
+        entries = entries,
+        issues = issues,
     )
 }
 

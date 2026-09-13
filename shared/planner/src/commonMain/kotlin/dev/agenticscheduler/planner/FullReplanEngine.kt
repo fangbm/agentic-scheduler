@@ -63,8 +63,15 @@ internal class FullReplanEngine(
         val normalized = SnapshotNormalization.normalize(snapshot, config)
         tasksById = normalized.tasksById
         var state = normalized.state
+        // Issues are attributed per Task so that the D6R-003 closure can replace a
+        // re-planned Task's stale issues with its fresh ones.
+        val issuesByTask = LinkedHashMap<dev.agenticscheduler.domain.id.TaskId, List<PlannerIssue>>()
+        normalized.state.issues.forEach { issue ->
+            val owner = plannerIssueTaskId(issue) ?: return@forEach
+            issuesByTask[owner] = (issuesByTask[owner] ?: emptyList()) + issue
+        }
         val waiting = normalized.eligibleTasks.sortedWith(::compareTaskServiceOrder).toMutableList()
-        var hardShortfall = false
+        val hasAcceptedDelta = mutableSetOf<dev.agenticscheduler.domain.id.TaskId>()
 
         while (waiting.isNotEmpty()) {
             val selected = waiting.firstOrNull { task ->
@@ -78,12 +85,7 @@ internal class FullReplanEngine(
                         task, snapshot.dependencies, tasksById, state.reservations, snapshot.referenceNow,
                     )
                     if (blocker != null) {
-                        state = state.plus(
-                            TaskPlanDelta(
-                                task.id, emptyList(), emptyList(), emptyList(),
-                                listOf(PlannerIssue.DependencyBlocked(task.id, blocker.id)),
-                            ),
-                        )
+                        issuesByTask[task.id] = listOf(PlannerIssue.DependencyBlocked(task.id, blocker.id))
                     }
                 }
                 break
@@ -91,15 +93,66 @@ internal class FullReplanEngine(
             waiting.remove(selected)
             val outcome = planTask(state, selected)
             state = state.plus(outcome.delta)
-            if (outcome.hardShortfall) hardShortfall = true
+            issuesByTask[selected.id] = outcome.delta.issues
+            hasAcceptedDelta += selected.id
+
+            // D6R-003 closure: a cross-task displacement changes the owner's
+            // coverage and planned completion. Its accepted work — and that of
+            // every already-planned transitive dependent — is invalidated and
+            // re-planned against the new accepted truth.
+            val seeds = outcome.delta.displacedTaskIds.filter { it in hasAcceptedDelta }.toSet()
+            if (seeds.isNotEmpty()) {
+                val invalid = processedDependentClosure(seeds, hasAcceptedDelta)
+                invalid.forEach { invalidated ->
+                    state = state.invalidateTask(invalidated, outcome.delta.addedReservations)
+                    issuesByTask.remove(invalidated)
+                    hasAcceptedDelta -= invalidated
+                    waiting.removeIf { it.id == invalidated }
+                }
+                waiting.addAll(invalid.mapNotNull { tasksById[it] })
+                waiting.sortWith(::compareTaskServiceOrder)
+            }
         }
 
-        return finalize(state, hardShortfall)
+        return finalize(state, issuesByTask)
+    }
+
+    /** Processes tasks reachable as transitive dependents of the displaced seeds. */
+    private fun processedDependentClosure(
+        seeds: Set<dev.agenticscheduler.domain.id.TaskId>,
+        hasAcceptedDelta: Set<dev.agenticscheduler.domain.id.TaskId>,
+    ): Set<dev.agenticscheduler.domain.id.TaskId> {
+        val result = seeds.toMutableSet()
+        val frontier = ArrayDeque(seeds)
+        while (frontier.isNotEmpty()) {
+            val current = frontier.removeFirst()
+            snapshot.dependencies.filter { it.prerequisiteTaskId == current }.forEach { dependency ->
+                val dependent = dependency.dependentTaskId
+                if (dependent !in result && dependent in hasAcceptedDelta) {
+                    result += dependent
+                    frontier.addLast(dependent)
+                }
+            }
+        }
+        return result
+    }
+
+    private fun plannerIssueTaskId(issue: PlannerIssue): dev.agenticscheduler.domain.id.TaskId? = when (issue) {
+        is PlannerIssue.UnknownRemainingEffort -> issue.taskId
+        is PlannerIssue.NoLegalAvailability -> issue.taskId
+        is PlannerIssue.DependencyBlocked -> issue.taskId
+        is PlannerIssue.OverflowApprovalRequired -> issue.taskId
+        is PlannerIssue.HardDeadlineShortfall -> issue.taskId
+        is PlannerIssue.UnscheduledEffort -> issue.taskId
+        is PlannerIssue.OverallocatedPlannedEffort -> issue.taskId
+        is PlannerIssue.ImmovableConflict, is PlannerIssue.InvalidSnapshot,
+        is PlannerIssue.TimeResolutionFailure, PlannerIssue.ProfileUnconfigured,
+        -> null
     }
 
     // ------------------------------------------------------------------ task transaction
 
-    private data class PlanOutcome(val delta: TaskPlanDelta, val hardShortfall: Boolean)
+    private data class PlanOutcome(val delta: TaskPlanDelta)
 
     private inner class Tentative(val base: PlanningState) {
         val working = base.reservations.toMutableList()
@@ -129,13 +182,20 @@ internal class FullReplanEngine(
             if (new != null) working += new
         }
 
-        fun delta(taskId: dev.agenticscheduler.domain.id.TaskId): TaskPlanDelta = TaskPlanDelta(
-            taskId = taskId,
-            removedReservations = base.reservations.filter { it !in working },
-            addedReservations = working.filter { it !in base.reservations },
-            entries = entries.toList(),
-            issues = issues.toList(),
-        )
+        fun delta(taskId: dev.agenticscheduler.domain.id.TaskId): TaskPlanDelta {
+            val removed = base.reservations.filter { it !in working }
+            return TaskPlanDelta(
+                taskId = taskId,
+                removedReservations = removed,
+                addedReservations = working.filter { it !in base.reservations },
+                entries = entries.toList(),
+                issues = issues.toList(),
+                // Other Tasks whose accepted reservations this delta displaced or
+                // removed: their coverage/completion truth changed, so their
+                // accepted work must be invalidated and re-planned (D6R-003).
+                displacedTaskIds = removed.map { it.taskId }.filter { it != taskId }.toSet(),
+            )
+        }
     }
 
     private fun planTask(base: PlanningState, task: Task): PlanOutcome {
@@ -211,8 +271,9 @@ internal class FullReplanEngine(
             }
         }
 
-        // D6R-006: HARD satisfaction counts only coverage completed by the cutoff.
-        var hardShortfall = false
+        // D6R-006 local check: HARD satisfaction counts only coverage completed by
+        // the cutoff. finalize() revalidates every eligible HARD Task against the
+        // final accepted state (authoritative, also covers blocked Tasks).
         if (task.deadline?.policy == DeadlinePolicy.HARD) {
             val satisfied = EffortTruth.coverageCompletedByCutoff(
                 tentative.working, task.id, snapshot.referenceNow, cutoff!!,
@@ -221,11 +282,10 @@ internal class FullReplanEngine(
                 if (tentative.issues.none { it is PlannerIssue.HardDeadlineShortfall }) {
                     tentative.issues += PlannerIssue.HardDeadlineShortfall(task.id, remaining - satisfied)
                 }
-                hardShortfall = true
             }
         }
 
-        return PlanOutcome(tentative.delta(task.id), hardShortfall)
+        return PlanOutcome(tentative.delta(task.id))
     }
 
     private fun planFlexibleSubject(
@@ -369,7 +429,10 @@ internal class FullReplanEngine(
         // boundaries. The displacement view removes them from occupancy, so they
         // become interior structural start points of the resulting intervals.
         val displacementBoundaries = displaceable
-            .flatMap { listOf(it.range.start, it.range.endExclusive) }
+            .flatMap { reservation ->
+                listOf(reservation.range.start, reservation.range.endExclusive) +
+                    (tasksById[reservation.taskId]?.deadline?.let { listOf(TimeResolution.effectiveCutoff(it.deadline, zone)) } ?: emptyList())
+            }
             .filter { it >= after && it < futureBounds.endExclusive }
 
         // Clean candidates on genuinely free space (criterion 3, rank 1).
@@ -486,8 +549,12 @@ internal class FullReplanEngine(
     /**
      * Builds the finite displacement arrangement required by a candidate range.
      * Every displaced FLEXIBLE reservation must receive a proven same-ID,
-     * same-duration relocation inside this transaction; displaced SOFT
-     * reservations may fall back to authorized removal (D6R-004).
+     * same-duration relocation inside this transaction; displaced SOFT/NEW
+     * reservations may fall back to authorized removal after every relocation
+     * option (including identity-preserving resize) has been exhausted.
+     * The search is a finite depth-first walk with backtracking over each
+     * reservation's relocation options in PLN-015 order, so a greedy first
+     * choice can never manufacture a false "no arrangement" answer.
      */
     private fun arrangeDisplacements(
         tentative: Tentative,
@@ -496,38 +563,63 @@ internal class FullReplanEngine(
         displaced: List<Reservation>,
     ): List<Displacement>? {
         if (displaced.isEmpty()) return emptyList()
-        val arrangement = mutableListOf<Displacement>()
-        val taken = mutableListOf(range)
         val displacedSet = displaced.toSet()
-        displaced.sortedWith(compareBy({ it.range.start }, { it.identityText() })).forEach { reservation ->
-            // FLEXIBLE: same-ID, same-duration relocation only. SOFT: same-duration
-            // first, then an identity-preserving resize for the displaced Task's own
-            // demand instead of deleting and re-creating the block (D6R-004).
-            val relocation = findRelocation(
-                tentative, reservation,
-                fixedDuration = reservation.range.endExclusive - reservation.range.start,
-                resizedDuration = null, displacedSet, taken,
-            ) ?: run {
-                if (reservation.authority != ReservationAuthority.SOFT) return@run null
-                val demand = displacedTaskRemainingDemand(tentative, reservation, displacedSet)
-                demand?.let {
-                    findRelocation(
-                        tentative, reservation, fixedDuration = null, resizedDuration = it,
-                        displacedSet, taken,
+        val ordered = displaced.sortedWith(compareBy({ it.range.start }, { it.identityText() }))
+        // D6R-007: the displaced reservations' range boundaries and their Tasks'
+        // deadline boundaries shape the arrangement - a later reservation's cutoff
+        // can be exactly the slot an earlier one must backtrack into.
+        val arrangementBoundaries = ordered.flatMap { reservation ->
+            listOf(reservation.range.start, reservation.range.endExclusive) +
+                (tasksById[reservation.taskId]?.deadline?.let { listOf(TimeResolution.effectiveCutoff(it.deadline, zone)) } ?: emptyList())
+        }.filter { it >= snapshot.referenceNow && it < futureBounds.endExclusive }
+
+        fun dfs(index: Int, taken: List<Interval>, acc: List<Displacement>): List<Displacement>? {
+            if (index == ordered.size) return acc
+            val reservation = ordered[index]
+            val fixedOnly = reservation.authority == ReservationAuthority.FLEXIBLE
+            val demand = if (fixedOnly) null else displacedTaskRemainingDemand(tentative, reservation, displacedSet)
+            // Relocation options ranked with the same PLN-015 comparator as
+            // placement candidates (deadline class, lateness, movement, chunk
+            // rank, ...) — never a hand-rolled same-duration-first shortcut.
+            val options = relocationOptions(tentative, reservation, demand, displacedSet, taken, acc, arrangementBoundaries)
+                .map { optionRange ->
+                    val duration = optionRange.endExclusive - optionRange.start
+                    val cutoff = relocationCutoff(reservation)
+                    PlacementCandidate(
+                        range = optionRange,
+                        taskId = reservation.taskId,
+                        sourceReservation = reservation,
+                        displacements = emptyList(),
+                        overflowLegalityRank = overflowRank(cutoff, optionRange),
+                        overflowLatenessMillis = latenessMillis(cutoff, optionRange, duration, null),
+                        preserveRank = if (optionRange == reservation.range) 0 else 1,
+                        movementMillis = kotlin.math.abs((optionRange.start - reservation.range.start).inWholeMilliseconds),
+                        contextSwitchDelta = contextSwitchDelta(
+                            reservation.taskId, optionRange,
+                            tentative.working.filter { it !in displacedSet } + acc.mapNotNull { it.replacement },
+                        ),
+                        preferredDistanceMillis = preferredDistanceMillis(duration),
+                        durationMillis = duration.inWholeMilliseconds,
                     )
                 }
+            for (option in options.sortedWith(CandidateComparison::compare)) {
+                val replacement = reservation.copy(range = option.range)
+                val criteria = CandidateComparison.decisionCriteria(option, options)
+                val next = dfs(index + 1, taken + option.range, acc + Displacement(reservation, replacement, criteria)) ?: continue
+                return next
             }
-            if (relocation != null) {
-                arrangement += Displacement(reservation, relocation)
-                taken += relocation.range
-            } else if (reservation.authority == ReservationAuthority.SOFT) {
-                arrangement += Displacement(reservation, null)
-            } else {
-                return null
+            if (!fixedOnly) {
+                // Authorized removal after every relocation option failed.
+                return dfs(index + 1, taken, acc + Displacement(reservation, null, listOf(PlacementCriterion.CANONICAL_IDENTITY)))
             }
+            return null
         }
-        return arrangement
+
+        return dfs(0, listOf(range), emptyList())
     }
+
+    private fun relocationCutoff(reservation: Reservation): Instant? =
+        tasksById[reservation.taskId]?.let { EffortTruth.effectiveCutoff(it, zone) }
 
     /** Remaining demand of the displaced Task excluding every reservation displaced in this arrangement. */
     private fun displacedTaskRemainingDemand(
@@ -554,39 +646,46 @@ internal class FullReplanEngine(
      * never treated as the only one: when it is illegal, an earlier legal position
      * in the same interval is still found.
      *
-     * [fixedDuration] is set for FLEXIBLE relocations (same duration mandatory).
-     * [resizedDuration] is set for identity-preserving SOFT resize relocations.
+     * A Task whose dependency completion is unresolved (blocked) has no legal
+     * relocation at all: any placement could violate the unknown dependency
+     * boundary, so the reservation keeps its original range (D6R-002/PLN-009).
+     *
+     * [resizedDuration] is set for identity-preserving SOFT/NEW resize relocations.
      */
-    private fun findRelocation(
+    private fun relocationOptions(
         tentative: Tentative,
         reservation: Reservation,
-        fixedDuration: Duration?,
         resizedDuration: Duration?,
         displacedSet: Set<Reservation>,
         taken: List<Interval>,
-    ): Reservation? {
-        val displacedTask = tasksById[reservation.taskId] ?: return null
+        arranged: List<Displacement>,
+        extraBoundaries: List<Instant>,
+    ): List<Interval> {
+        val displacedTask = tasksById[reservation.taskId] ?: return emptyList()
         val cutoff = EffortTruth.effectiveCutoff(displacedTask, zone)
         val overflow = EffortTruth.overflowAuthorized(displacedTask, askAuthorized)
+        // The dependency truth is evaluated against the POST-arrangement view:
+        // earlier relocations in the same transaction have already moved their own
+        // reservations, and this relocation must respect the boundary that results
+        // from them (D6R-003). D6R-002/PLN-009: an unresolved dependency boundary
+        // means no placement of this Task's blocks can be proven legal - never
+        // guess "now".
+        val provisional = tentative.working.filter { it !in displacedSet } + arranged.mapNotNull { it.replacement }
         val after = EffortTruth.dependencyEarliestStart(
-            displacedTask, snapshot.dependencies, tasksById, tentative.working, snapshot.referenceNow,
-        ) ?: snapshot.referenceNow
-        val cuts = fixedOccupancy +
-            tentative.working.filter { it !in displacedSet }.map { it.range } +
-            taken
+            displacedTask, snapshot.dependencies, tasksById, provisional, snapshot.referenceNow,
+        ) ?: return emptyList()
+        val cuts = fixedOccupancy + provisional.map { it.range } + taken
         val space = subtractIntervals(availability, cuts).mapNotNull { clipInterval(it, futureBounds) }
 
-        data class RelocationOption(val range: Interval, val duration: Duration, val sameDuration: Boolean)
-
-        val options = mutableListOf<RelocationOption>()
-        fun enumerate(interval: Interval, duration: Duration, sameDuration: Boolean) {
+        val options = mutableListOf<Interval>()
+        fun enumerate(interval: Interval, duration: Duration) {
             val starts = CandidateGeneration.structuralStarts(
                 CandidateGeneration.StructureInputs(
                     interval = interval,
                     after = after,
                     cutoff = cutoff,
                     originalStart = reservation.range.start,
-                    tentativeBoundaries = emptyList(),
+                    tentativeBoundaries = extraBoundaries.filter { it > interval.start && it < interval.endExclusive },
                 ),
             ) + CandidateGeneration.clampedOriginalStarts(
                 interval, cutoff, reservation.range.start, duration,
@@ -595,37 +694,26 @@ internal class FullReplanEngine(
                 if (start + duration > interval.endExclusive) return@forEach
                 val range = Interval(start, start + duration)
                 if (!PlacementLegality.isDeadlineLegal(cutoff, overflow, range)) return@forEach
-                options += RelocationOption(range, duration, sameDuration)
+                options += range
             }
         }
 
         val sameDuration = reservation.range.endExclusive - reservation.range.start
+        val fixedDuration = if (reservation.authority == ReservationAuthority.FLEXIBLE) sameDuration else null
         space.forEach { interval ->
             if (interval.endExclusive - interval.start >= sameDuration) {
-                enumerate(interval, sameDuration, sameDuration = true)
+                enumerate(interval, sameDuration)
             }
-            if (resizedDuration != null && interval.endExclusive - interval.start >= resizedDuration) {
-                // Identity-preserving SOFT resize: PLN-013 durations for the displaced
-                // Task's own demand, never enlarging the block.
+            if (fixedDuration == null && resizedDuration != null && interval.endExclusive - interval.start >= resizedDuration) {
+                // Identity-preserving SOFT/NEW resize: PLN-013 durations for the
+                // displaced Task's own demand, never enlarging the block.
                 CandidateGeneration.durationCandidates(
                     resizedDuration, interval.endExclusive - interval.start, config,
                 ).filter { it <= sameDuration }
-                    .forEach { duration -> enumerate(interval, duration, sameDuration = false) }
+                    .forEach { duration -> enumerate(interval, duration) }
             }
         }
-
-        return options
-            .sortedWith(
-                compareBy(
-                    { if (it.sameDuration) 0 else 1 },
-                    { kotlin.math.abs((it.range.start - reservation.range.start).inWholeMilliseconds) },
-                    { kotlin.math.abs((it.duration - config.preferredFocusBlock).inWholeMilliseconds) },
-                    { -it.duration.inWholeMilliseconds },
-                    { it.range.start },
-                ),
-            )
-            .firstOrNull()
-            ?.let { relocation -> reservation.copy(range = relocation.range) }
+        return options.distinct()
     }
 
     // ------------------------------------------------------------------ application
@@ -646,7 +734,7 @@ internal class FullReplanEngine(
                 tentative.replace(displacement.displaced, null)
                 tentative.entries += MutationWithCriteria(
                     FocusBlockMutation.Delete(id, displacement.displaced.taskId),
-                    listOf(PlacementCriterion.CANONICAL_IDENTITY),
+                    displacement.criteria,
                 )
             } else {
                 tentative.replace(displacement.displaced, replacement)
@@ -657,10 +745,7 @@ internal class FullReplanEngine(
                 } else {
                     FocusBlockMutation.Move(id, displacement.displaced.taskId, zoned(replacement.range))
                 }
-                tentative.entries += MutationWithCriteria(
-                    mutation,
-                    listOf(PlacementCriterion.MINIMAL_MOVEMENT, PlacementCriterion.CANONICAL_IDENTITY),
-                )
+                tentative.entries += MutationWithCriteria(mutation, displacement.criteria)
             }
         }
 
@@ -712,7 +797,9 @@ internal class FullReplanEngine(
         range.start >= after && PlacementLegality.isDeadlineLegal(cutoff, overflow, range)
 
     private fun isDisplaceable(reservation: Reservation, planningTask: Task): Boolean =
-        (reservation.authority == ReservationAuthority.FLEXIBLE || reservation.authority == ReservationAuthority.SOFT) &&
+        // Planner-created proposals carry the same public SOFT + UNPINNED authority
+        // they will have once materialized; only FIXED reservations are immune.
+        reservation.authority != ReservationAuthority.FIXED &&
             compareTaskServiceOrder(planningTask, tasksById[reservation.taskId] ?: return false) < 0
 
     private fun overlaps(first: Interval, second: Interval): Boolean =
@@ -771,13 +858,26 @@ internal class FullReplanEngine(
 
     // ------------------------------------------------------------------ output canonicalization (R9)
 
-    private fun finalize(state: PlanningState, hardShortfall: Boolean): PlannerResult {
+    private fun finalize(state: PlanningState, issuesByTask: Map<dev.agenticscheduler.domain.id.TaskId, List<PlannerIssue>>): PlannerResult {
         PlanningInvariants.check(state, snapshot)
-        val issues = state.issues
+        // D6R-006 authoritative validation over the final accepted state: every
+        // eligible HARD Task — planned or dependency-blocked — must be fully
+        // covered by its effective cutoff, counting only before-cutoff coverage.
+        val hardShortfalls = snapshot.tasks
+            .filter { SnapshotNormalization.run { it.isAutomaticPlacementEligible() } && EffortTruth.hasHardDeadline(it) }
+            .mapNotNull { task ->
+                val remaining = requireNotNull(task.effort.remaining)
+                val cutoff = EffortTruth.effectiveCutoff(task, zone)!!
+                val satisfied = EffortTruth.coverageCompletedByCutoff(
+                    state.reservations, task.id, snapshot.referenceNow, cutoff,
+                )
+                if (satisfied < remaining) PlannerIssue.HardDeadlineShortfall(task.id, remaining - satisfied) else null
+            }
+        val issues = (issuesByTask.values.flatten().filterNot { it is PlannerIssue.HardDeadlineShortfall } + hardShortfalls)
             .distinct()
             .sortedWith(IssueOrder.comparator)
             .toImmutableList()
-        if (hardShortfall || issues.any { it is PlannerIssue.HardDeadlineShortfall }) {
+        if (hardShortfalls.isNotEmpty()) {
             return PlannerResult.Infeasible(issues)
         }
         val net = netMutations(state).sortedWith(MutationOrder.comparator).toImmutableList()
@@ -887,6 +987,20 @@ internal object PlanningInvariants {
                 is FocusBlockMutation.Resize -> require(mutation.id in knownBlocks) { "Resize references unknown block: $mutation" }
                 is FocusBlockMutation.Delete -> require(mutation.id in knownBlocks) { "Delete references unknown block: $mutation" }
                 is FocusBlockMutation.Create -> Unit
+            }
+        }
+        // D6R-003: planner-touched placements must respect the dependency truth of
+        // the final accepted state. Untouched original reservations keep their
+        // real-world positions even when they predate a satisfied dependency.
+        val tasksById = snapshot.tasks.associateBy { it.id }
+        plannerTouched.forEach { reservation ->
+            val task = tasksById[reservation.taskId] ?: return@forEach
+            val floor = EffortTruth.dependencyEarliestStart(
+                task, snapshot.dependencies, tasksById, state.reservations, snapshot.referenceNow,
+            )
+            require(floor != null) { "Planner touched the reservation of a dependency-blocked Task: $reservation" }
+            require(reservation.range.start >= floor) {
+                "Planner placed $reservation before its dependency boundary $floor"
             }
         }
     }

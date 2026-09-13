@@ -144,6 +144,8 @@ internal data class PlacementCandidate(
 internal data class Displacement(
     val displaced: Reservation,
     val replacement: Reservation?,
+    /** Decision criteria of the relocation choice, derived from the actual comparison. */
+    val criteria: List<PlacementCriterion>,
 )
 
 internal data class DecisionTrace(
@@ -223,6 +225,22 @@ internal object CandidateComparison {
             decisive += PlacementCriterion.CANONICAL_IDENTITY
         }
         return DecisionTrace(winner, runnerUp, runnerUp?.let { firstDiffering(winner, it) }, decisive.toList())
+    }
+
+    /**
+     * Decision criteria for a chosen option measured against the alternatives it
+     * was compared with (D6R-008: explanations derive from the actual decision).
+     */
+    fun decisionCriteria(chosen: PlacementCandidate, alternatives: List<PlacementCandidate>): List<PlacementCriterion> {
+        val decisive = alternatives.filter { it != chosen }
+            .map { firstDiffering(chosen, it) }
+            .distinct()
+            .sortedBy { it.ordinal }
+            .toMutableList()
+        if (decisive.isEmpty() || decisive.last() != PlacementCriterion.CANONICAL_IDENTITY) {
+            decisive += PlacementCriterion.CANONICAL_IDENTITY
+        }
+        return decisive.toList()
     }
 }
 
