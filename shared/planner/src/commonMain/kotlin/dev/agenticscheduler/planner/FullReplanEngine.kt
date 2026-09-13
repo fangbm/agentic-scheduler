@@ -117,7 +117,12 @@ internal class FullReplanEngine(
             if (seeds.isNotEmpty()) {
                 val invalid = processedDependentClosure(seeds, hasAcceptedDelta) - setOf(selected.id)
                 invalid.forEach { invalidated ->
-                    state = state.invalidateTask(invalidated, originalReservationsByTask[invalidated] ?: emptyList())
+                    // Roll back only the invalidated Task's OWN accepted delta
+                    // contribution; the relocation/removal the CURRENT delta just
+                    // proved and applied to it is part of this Task's atomic
+                    // TaskPlanDelta and survives (D6R-003/004).
+                    val restored = invalidationReservations(invalidated, outcome.delta, originalReservationsByTask)
+                    state = state.invalidateTask(invalidated, restored)
                     issuesByTask.remove(invalidated)
                     hasAcceptedDelta -= invalidated
                     waiting.removeAll { it.id == invalidated }
@@ -155,6 +160,26 @@ internal class FullReplanEngine(
             }
         }
         return result
+    }
+
+    /**
+     * The reservations an invalidated Task keeps after its rollback: the current
+     * delta's proven relocation replacements survive (they are part of the
+     * planned Task's atomic TaskPlanDelta), its own earlier delta contributions
+     * roll back to the normalized originals, and untouched originals remain.
+     * Provenance is the stable reservation source identity (Existing block ID or
+     * Proposed proposal key) - no history system is involved (D6R-003/004).
+     */
+    private fun invalidationReservations(
+        taskId: dev.agenticscheduler.domain.id.TaskId,
+        delta: TaskPlanDelta,
+        originalReservationsByTask: Map<dev.agenticscheduler.domain.id.TaskId, List<Reservation>>,
+    ): List<Reservation> {
+        val touchedSources = delta.removedReservations.filter { it.taskId == taskId }.map { it.source }.toSet()
+        val keptReplacements = delta.addedReservations.filter { it.taskId == taskId && it.source in touchedSources }
+        val untouchedOriginals = (originalReservationsByTask[taskId] ?: emptyList())
+            .filter { it.source !in touchedSources }
+        return untouchedOriginals + keptReplacements
     }
 
     private fun plannerIssueTaskId(issue: PlannerIssue): dev.agenticscheduler.domain.id.TaskId? = when (issue) {
@@ -546,6 +571,18 @@ internal class FullReplanEngine(
             if (requireDisplacement && displaced.isEmpty()) return@forEach
 
             val arrangement = arrangeDisplacements(tentative, task, range, displaced) ?: return@forEach
+            // PLN-009: the candidate must respect the dependency boundary computed
+            // against the POST-arrangement state - the arrangement may have moved
+            // the planning Task's own prerequisite past the candidate, and a
+            // prerequisite pushed out of coverage makes the candidate illegal.
+            val arrangementDisplaced = arrangement.map { it.displaced }.toSet()
+            val postArrangement = tentative.working.filter { it !in arrangementDisplaced } +
+                arrangement.mapNotNull { it.replacement } +
+                Reservation(task.id, range, ReservationAuthority.NEW, ReservationSource.Proposed(ProposalKey(task.id, Int.MIN_VALUE)), null)
+            val postArrangementAfter = EffortTruth.dependencyEarliestStart(
+                task, snapshot.dependencies, tasksById, postArrangement, snapshot.referenceNow,
+            )
+            if (postArrangementAfter == null || range.start < postArrangementAfter) return@forEach
             output += PlacementCandidate(
                 range = range,
                 taskId = task.id,
@@ -601,7 +638,7 @@ internal class FullReplanEngine(
             // Relocation options ranked with the same PLN-015 comparator as
             // placement candidates (deadline class, lateness, movement, chunk
             // rank, ...) — never a hand-rolled same-duration-first shortcut.
-            val options = relocationOptions(tentative, reservation, demand, displacedSet, taken, acc, arrangementBoundaries)
+            val options = relocationOptions(tentative, reservation, demand, displacedSet, taken, acc, arrangementBoundaries, planningTask.id, range)
                 .map { optionRange ->
                     val duration = optionRange.endExclusive - optionRange.start
                     val cutoff = relocationCutoff(reservation)
@@ -689,6 +726,8 @@ internal class FullReplanEngine(
         taken: List<Interval>,
         arranged: List<Displacement>,
         extraBoundaries: List<Instant>,
+        planningTaskId: dev.agenticscheduler.domain.id.TaskId,
+        candidateRange: Interval,
     ): List<Interval> {
         val displacedTask = tasksById[reservation.taskId] ?: return emptyList()
         val cutoff = EffortTruth.effectiveCutoff(displacedTask, zone)
@@ -699,7 +738,11 @@ internal class FullReplanEngine(
         // from them (D6R-003). D6R-002/PLN-009: an unresolved dependency boundary
         // means no placement of this Task's blocks can be proven legal - never
         // guess "now".
-        val provisional = tentative.working.filter { it !in displacedSet } + arranged.mapNotNull { it.replacement }
+        val provisional = tentative.working.filter { it !in displacedSet } + arranged.mapNotNull { it.replacement } +
+            // The candidate itself counts: a displaced Task that depends on the
+            // planning Task must respect the planning Task's post-candidate
+            // completion (PLN-009).
+            listOf(Reservation(planningTaskId, candidateRange, ReservationAuthority.NEW, ReservationSource.Proposed(ProposalKey(planningTaskId, Int.MIN_VALUE)), null))
         val after = EffortTruth.dependencyEarliestStart(
             displacedTask, snapshot.dependencies, tasksById, provisional, snapshot.referenceNow,
         ) ?: return emptyList()

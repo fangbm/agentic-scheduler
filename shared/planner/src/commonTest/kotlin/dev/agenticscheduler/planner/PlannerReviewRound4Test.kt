@@ -75,38 +75,31 @@ class PlannerReviewRound4Test {
         assertEquals(range("10:00", "11:00"), gateMove.time)
     }
 
-    // R4-02 + R4-03: C's own delta moves its violating FLEXIBLE block; afterwards B's
-    // self-replan (availability repair) moves B's completion past C's placement. The
-    // closure invalidates C, restores C's ORIGINAL reservation (identity survives -
-    // never Delete + Create), and re-plans C against the new completion.
+    // R4-02 + R4-03: C's own FLEXIBLE block [09:30,10:30) is legal until B's
+    // availability repair moves B's completion from 09:30 to 11:30. The closure
+    // must invalidate C and re-plan it into [11:30,12:30) - exactly one net Move
+    // with the same FocusBlock ID, never Delete + Create.
     @Test
     fun `prerequisite self replan invalidates the dependent and preserves its flexible identity`() {
         val owner = task(2, 1.hours)
         val ownerBlock = FocusBlock(FocusBlockId(id(6)), owner.id, range("08:30", "09:30"), Flexibility.FLEXIBLE, PinState.UNPINNED)
-        val dependent = task(3, 1.hours, deadline = TaskDeadline(Deadline.Exact(at("10:30"), TimeZone.UTC), DeadlinePolicy.NORMAL, OverflowPolicy.NEVER))
-        val dependentBlock = FocusBlock(FocusBlockId(id(7)), dependent.id, range("13:00", "14:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val dependent = task(3, 1.hours, deadline = TaskDeadline(Deadline.Exact(at("12:30"), TimeZone.UTC), DeadlinePolicy.NORMAL, OverflowPolicy.NEVER))
+        val dependentBlock = FocusBlock(FocusBlockId(id(7)), dependent.id, range("09:30", "10:30"), Flexibility.FLEXIBLE, PinState.UNPINNED)
         val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
             tasks = listOf(owner, dependent),
             focusBlocks = listOf(ownerBlock, dependentBlock),
             dependencies = listOf(TaskDependency(TaskDependencyId(id(8)), owner.id, dependent.id)),
         )))
-        // C's violating block is relocated behind the moved completion - by C's own
-        // re-planned delta, keeping the original FocusBlock identity.
+        val ownerMove = assertIs<FocusBlockMutation.Move>(result.mutations.filter { it.taskId == owner.id }.single())
+        assertEquals(range("10:30", "11:30"), ownerMove.time, "the availability-violating block is repaired past C's placement")
         val forDependent = result.mutations.filter { it.taskId == dependent.id }
-        assertTrue(forDependent.all { it is FocusBlockMutation.Move }, "an existing FLEXIBLE block is moved, never deleted and re-created")
-        assertTrue(forDependent.size <= 1, "at most one net Move for the dependent's block")
+        assertEquals(1, forDependent.size, "exactly one net Move for the invalidated dependent")
+        val dependentMove = assertIs<FocusBlockMutation.Move>(forDependent.single())
+        assertEquals(dependentBlock.id, dependentMove.id, "the original FocusBlock identity survives")
+        assertEquals(range("11:30", "12:30"), dependentMove.time, "the dependent starts at/after the moved prerequisite completion")
         assertTrue(
             result.mutations.none { it is FocusBlockMutation.Delete && it.taskId == dependent.id },
             "the dependent's original FLEXIBLE identity must survive the closure",
-        )
-        val ownerMove = assertIs<FocusBlockMutation.Move>(result.mutations.filter { it.taskId == owner.id }.single())
-        assertEquals(range("10:30", "11:30"), ownerMove.time, "the availability-violating block is repaired behind C's relocated block")
-        // Dependency legality of the final state: the dependent starts at/after the
-        // moved prerequisite completion.
-        val dependentStart = (forDependent.singleOrNull() as? FocusBlockMutation.Move)?.time?.start ?: at("13:00")
-        assertTrue(
-            dependentStart >= at("10:00"),
-            "the dependent must not start before the moved prerequisite completion",
         )
     }
 
