@@ -906,7 +906,41 @@ The provenance-survival regression (current-delta relocation surviving the
 invalidated owner's rollback) remains pinned by the round-3 closure test, which
 asserts the owner's kept replacement ([10:00,11:00]) as the final position.
 
-Updated verification totals: planner 66, application 21, domain 42, database 15 tests green;
+Updated verification totals: planner 67, application 21, domain 42, database 15 tests green;
+full repository build successful.
+
+---
+
+# 28. Seventh review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `1f41783`):
+
+```text
+P1 SOFT identity-   arrangeDisplacements now searches with iterative deepening
+   preserving       over the deletion budget: budget 0 proves that no
+   arrangement      zero-deletion arrangement exists before any SOFT/NEW removal
+   search           is considered, budget 1 allows one removal, and so on. A
+                    SOFT dependent visited before its displaced prerequisite is
+                    therefore DEFERRED (its dependency floor is unresolvable
+                    until the prerequisite is arranged) instead of deleted, and
+                    the zero-deletion arrangement A 09-11, P 11-12, D 12-13
+                    (same FocusBlock ID) wins over the Delete-D arrangement the
+                    traversal order previously produced. Every deletion budget
+                    level is a deterministic DFS over all orderings and all
+                    relocation options, so the minimum-deletion arrangement is
+                    always found (D6R-004 / R7 identity preservation).
+```
+
+New regression in `PlannerReviewRound6Test`:
+
+```text
+soft dependent visited before its displaced prerequisite is moved, not deleted:
+  A HARD candidate 09-11 displaces a SOFT dependent 09-10 that depends on a
+  FLEXIBLE prerequisite 10-11; the outcome is A Create 09-11, P Move 11-12,
+  D Move 12-13 (same FocusBlock ID), and no Delete for the dependent
+```
+
+Updated verification totals: planner 67, application 21, domain 42, database 15 tests green;
 full repository build successful.
 
 ---
