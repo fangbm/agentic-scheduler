@@ -2,7 +2,7 @@
 
 > Task ID: **D6-R1**  
 > Milestone: **D6 — Planner**  
-> Status: **IMPLEMENTED — local verification green; remote CI and D6 status flip pending push**  
+> Status: **IMPLEMENTED — CI green (run #126); review round complete; D6 status flip pending merge**  
 > Date: 2026-09-12  
 > Base task: `docs/tasks/D6_DETERMINISTIC_PLANNER.md`  
 > Rewrite decisions: `docs/PLANNER_REWRITE_DECISIONS.md`
@@ -657,5 +657,44 @@ search views                       = only the reservation being replaced by its 
                                    the Task's own pending subjects, stay real occupancy.
 ```
 
-The original D6 task remains `FIX-AND-RECHECK` until remote CI is green on push, per the
+The original D6 task remains `FIX-AND-RECHECK` until this branch merges with CI green, per the
 completion gate in section 18.
+
+---
+
+# 22. Review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `8e6e511`, rebased onto `ba3d326`):
+
+```text
+P0 invalid snapshot  SnapshotValidation extracted; both planner entries validate the
+                     snapshot before any Interval or derived view is constructed, and
+                     FullReplanEngine futureBounds is lazy, so an out-of-range
+                     referenceNow returns InvalidInput instead of throwing.
+P0 net mutations     finalize() diffs the input Active State against the final accepted
+                     reservation state and emits exactly one mutation per FocusBlockId
+                     (Move after two displacements, Resize after displacement+resize,
+                     Delete for removals). The internal event log is no longer the output,
+                     so every Success is applicable by PlanBranch Apply.
+P1 reflow deps       Local Reflow now evaluates dependencies through EffortTruth over a
+                     provisional reservation view; cancelled / unknown / zero remaining /
+                     partially planned prerequisites make the reflow Infeasible.
+P1 durations         PLN-013 duration sets are enumerated per structural start from that
+                     start's own segment capacity (CandidateGeneration.durationsForSegment).
+P2 boundary          Local Reflow immovable check uses start < referenceNow, matching
+                     PLN-007 and Full Replan.
+```
+
+New regressions in `PlannerReviewRegressionTest`:
+
+```text
+referenceNow at/before horizon boundary -> InvalidInput from both entries, never throw
+Local Reflow invalid snapshot -> InvalidInput
+FLEXIBLE displaced twice -> exactly one final Move
+SOFT displaced then resized -> exactly one final Resize
+Local Reflow cancelled/unknown/zero prerequisite -> Infeasible(DependencyBlocked)
+later structural start enumerates its own segment-capped PLN-013 durations
+```
+
+Updated verification totals: planner 54, application 21, domain 42, database 15 tests green;
+full repository build successful after the rebase. CI on the pushed branch: green (run #126).
