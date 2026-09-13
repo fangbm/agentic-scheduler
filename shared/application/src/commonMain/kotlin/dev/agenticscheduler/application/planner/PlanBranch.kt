@@ -99,10 +99,11 @@ class PlanBranchApplier(
     private val transactions: ApplicationTransactionRunner,
     private val tasks: TaskRepository,
     private val uuidV7: UuidV7Generator,
-    private val currentSnapshot: suspend () -> PlanningSnapshot,
+    /** A null snapshot means the current facts cannot be resolved safely, so Apply is stale. */
+    private val currentSnapshot: suspend () -> PlanningSnapshot?,
 ) {
     suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult = transactions.inWriteTransaction {
-        if (branch.status != PlanBranchStatus.DRAFT || currentSnapshot().withoutReferenceNow() != branch.baseFacts.withoutReferenceNow()) {
+        if (branch.status != PlanBranchStatus.DRAFT || currentSnapshot()?.withoutReferenceNow() != branch.baseFacts.withoutReferenceNow()) {
             return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
         val targetIds = branch.mutations.mapNotNull { mutation -> when (mutation) {

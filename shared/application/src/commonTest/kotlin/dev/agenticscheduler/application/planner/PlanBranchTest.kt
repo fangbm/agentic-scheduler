@@ -69,6 +69,13 @@ class PlanBranchTest {
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
     }
 
+    @Test fun `unresolvable current source facts refuse stale apply`() = runBlocking {
+        val snapshot = snapshot(); val repository = InMemoryTasks()
+        val branch = PlanBranch(PlanBranchId(id(6)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
+        val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator()) { null }
+        assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
+    }
+
     @Test fun `apply rejects a proposal that reaches apply now`() = runBlocking {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(4)), PlanningRequest.FullReplan, snapshot,
