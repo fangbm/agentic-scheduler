@@ -28,16 +28,21 @@ internal class FullReplanEngine(
 ) {
     private val zone: TimeZone get() = config.timeZone
     private val askAuthorized = snapshot.askOverflowAuthorizedTaskIds.toSet()
-    private val futureBounds = Interval(
-        maxOf(snapshot.horizon.start, snapshot.referenceNow),
-        snapshot.horizon.endExclusive,
-    )
+
+    /** Lazy so that constructing the engine never touches an invalid snapshot's bounds. */
+    private val futureBounds: Interval by lazy {
+        Interval(maxOf(snapshot.horizon.start, snapshot.referenceNow), snapshot.horizon.endExclusive)
+    }
     private lateinit var tasksById: Map<dev.agenticscheduler.domain.id.TaskId, Task>
     private lateinit var availability: List<Interval>
     private lateinit var fixedOccupancy: List<Interval>
 
     fun run(): PlannerResult {
-        validateSnapshot()?.let { return PlannerResult.InvalidInput(listOf(it).toImmutableList()) }
+        // Validation must run before any Interval or derived view is built (P0: an
+        // out-of-range referenceNow must yield InvalidInput, never a throw).
+        SnapshotValidation.invalidReason(snapshot)?.let {
+            return PlannerResult.InvalidInput(listOf(it).toImmutableList())
+        }
         val resolutionIssues = mutableListOf<PlannerIssue>()
         val availability = TimeResolution.availability(config, futureBounds.start, futureBounds.endExclusive, zone, resolutionIssues)
         val fixed = TimeResolution.fixedOccupancy(
@@ -90,36 +95,6 @@ internal class FullReplanEngine(
         }
 
         return finalize(state, hardShortfall)
-    }
-
-    // ------------------------------------------------------------------ snapshot validation
-
-    private fun validateSnapshot(): PlannerIssue.InvalidSnapshot? = when {
-        snapshot.referenceNow < snapshot.horizon.start || snapshot.referenceNow >= snapshot.horizon.endExclusive ->
-            PlannerIssue.InvalidSnapshot("referenceNow must be inside the horizon")
-        snapshot.tasks.map { it.id }.distinct().size != snapshot.tasks.size ->
-            PlannerIssue.InvalidSnapshot("duplicate TaskId")
-        snapshot.dependencies.any { dependency ->
-            snapshot.tasks.none { it.id == dependency.prerequisiteTaskId } ||
-                snapshot.tasks.none { it.id == dependency.dependentTaskId }
-        } -> PlannerIssue.InvalidSnapshot("dependency references unknown Task")
-        hasDependencyCycle() -> PlannerIssue.InvalidSnapshot("dependency cycle")
-        else -> null
-    }
-
-    private fun hasDependencyCycle(): Boolean {
-        val edges = snapshot.dependencies.groupBy({ it.prerequisiteTaskId }, { it.dependentTaskId })
-        val complete = mutableSetOf<dev.agenticscheduler.domain.id.TaskId>()
-        val active = mutableSetOf<dev.agenticscheduler.domain.id.TaskId>()
-        fun visit(id: dev.agenticscheduler.domain.id.TaskId): Boolean {
-            if (id in active) return true
-            if (!complete.add(id)) return false
-            active += id
-            val found = edges[id].orEmpty().any(::visit)
-            active -= id
-            return found
-        }
-        return snapshot.tasks.any { visit(it.id) }
     }
 
     // ------------------------------------------------------------------ task transaction
@@ -432,9 +407,10 @@ internal class FullReplanEngine(
         requireDisplacement: Boolean,
         output: MutableList<PlacementCandidate>,
     ) {
-        val durations = fixedDuration?.let { listOf(it) }
-            ?: CandidateGeneration.durationCandidates(demand, interval.endExclusive - interval.start, config)
-        if (durations.isEmpty()) return
+        // D6R-007: structural starts x legal durations. The PLN-013 duration set is
+        // computed per structural start from that start's own segment capacity
+        // (U = min(R, C, max) changes as the start moves later), never once for the
+        // whole interval.
         val baseStarts = CandidateGeneration.structuralStarts(
             CandidateGeneration.StructureInputs(
                 interval = interval,
@@ -444,35 +420,54 @@ internal class FullReplanEngine(
                 tentativeBoundaries = emptyList(),
             ),
         )
-        durations.forEach { duration ->
-            val starts = baseStarts + CandidateGeneration.clampedOriginalStarts(
-                interval, cutoff, original?.range?.start, duration,
-            )
-            starts.distinct().forEach { start ->
-                val segment = Interval(start, interval.endExclusive)
-                if (duration > segment.endExclusive - segment.start) return@forEach
-                val range = Interval(start, start + duration)
-                if (!PlacementLegality.isDeadlineLegal(cutoff, overflow, range)) return@forEach
+        data class StartDuration(val start: Instant, val duration: Duration)
 
-                val displaced = tentative.working.filter {
-                    it !in tentative.pendingSubjects && isDisplaceable(it, task) && overlaps(it.range, range)
-                }
-                if (requireDisplacement && displaced.isEmpty()) return@forEach
-
-                val arrangement = arrangeDisplacements(tentative, task, range, displaced) ?: return@forEach
-                output += PlacementCandidate(
-                    range = range,
-                    taskId = task.id,
-                    sourceReservation = original,
-                    displacements = arrangement,
-                    overflowLegalityRank = overflowRank(cutoff, range),
-                    overflowLatenessMillis = latenessMillis(cutoff, range, demand, fixedDuration),
-                    preserveRank = preserveRank,
-                    movementMillis = original?.let { kotlin.math.abs((range.start - it.range.start).inWholeMilliseconds) } ?: 0L,
-                    contextSwitchDelta = contextSwitchDelta(task.id, range, contextOccupancy(tentative, arrangement)),
-                    durationRank = if (fixedDuration != null) 0 else rankOf(demand, duration, segment.endExclusive - segment.start),
-                )
+        val pairs = mutableListOf<StartDuration>()
+        fun enumerate(start: Instant, durations: List<Duration>) {
+            durations.forEach { duration ->
+                if (duration <= interval.endExclusive - start) pairs += StartDuration(start, duration)
             }
+        }
+        fun segmentDurations(start: Instant): List<Duration> = CandidateGeneration.durationsForSegment(
+            demand, interval.endExclusive - start, fixedDuration, config,
+        )
+
+        baseStarts.forEach { start -> enumerate(start, segmentDurations(start)) }
+        // The clamped original start must be present with its own legal durations so
+        // the movement criterion is meaningful (D6R-007).
+        original?.range?.start?.let { originalStart ->
+            val clampDurations = fixedDuration?.let { listOf(it) }
+                ?: CandidateGeneration.durationCandidates(demand, interval.endExclusive - interval.start, config)
+            clampDurations.forEach { duration ->
+                CandidateGeneration.clampedOriginalStarts(interval, cutoff, originalStart, duration).forEach { start ->
+                    enumerate(start, segmentDurations(start))
+                }
+            }
+        }
+
+        pairs.distinctBy { it.start to it.duration }.forEach { (start, duration) ->
+            val segment = Interval(start, interval.endExclusive)
+            val range = Interval(start, start + duration)
+            if (!PlacementLegality.isDeadlineLegal(cutoff, overflow, range)) return@forEach
+
+            val displaced = tentative.working.filter {
+                it !in tentative.pendingSubjects && isDisplaceable(it, task) && overlaps(it.range, range)
+            }
+            if (requireDisplacement && displaced.isEmpty()) return@forEach
+
+            val arrangement = arrangeDisplacements(tentative, task, range, displaced) ?: return@forEach
+            output += PlacementCandidate(
+                range = range,
+                taskId = task.id,
+                sourceReservation = original,
+                displacements = arrangement,
+                overflowLegalityRank = overflowRank(cutoff, range),
+                overflowLatenessMillis = latenessMillis(cutoff, range, demand, fixedDuration),
+                preserveRank = preserveRank,
+                movementMillis = original?.let { kotlin.math.abs((range.start - it.range.start).inWholeMilliseconds) } ?: 0L,
+                contextSwitchDelta = contextSwitchDelta(task.id, range, contextOccupancy(tentative, arrangement)),
+                durationRank = if (fixedDuration != null) 0 else rankOf(demand, duration, segment.endExclusive - segment.start),
+            )
         }
     }
 
@@ -706,14 +701,75 @@ internal class FullReplanEngine(
         if (hardShortfall || issues.any { it is PlannerIssue.HardDeadlineShortfall }) {
             return PlannerResult.Infeasible(issues)
         }
-        val ordered = state.entries.sortedWith(MutationOrder.comparator).toImmutableList()
+        val net = netMutations(state).sortedWith(MutationOrder.comparator).toImmutableList()
         return PlannerResult.Success(
-            mutations = ordered.map { it.mutation }.toImmutableList(),
+            mutations = net.map { it.mutation }.toImmutableList(),
             issues = issues,
-            explanations = ordered
+            explanations = net
                 .map { PlannerExplanation(it.mutation.taskId, it.mutation, it.criteria.toImmutableList()) }
                 .toImmutableList(),
         )
+    }
+
+    /**
+     * The planner output is the net mutation from the input Active State to the
+     * final accepted reservation state, not the internal planning event log: a
+     * block displaced twice yields exactly one Move, a displaced-then-resized
+     * SOFT block exactly one Resize, and a deleted block exactly one Delete.
+     * PlanBranch Apply rejects duplicate target IDs, so coalescing here is what
+     * makes every Success actually applicable.
+     */
+    private fun netMutations(state: PlanningState): List<MutationWithCriteria> {
+        // The last planning event that touched a block determines its final range,
+        // so its decision criteria explain the net mutation.
+        val criteriaByBlockId = HashMap<dev.agenticscheduler.domain.id.FocusBlockId, List<PlacementCriterion>>()
+        val criteriaByCreation = HashMap<Triple<dev.agenticscheduler.domain.id.TaskId, Instant, Instant>, List<PlacementCriterion>>()
+        state.entries.forEach { entry ->
+            when (val mutation = entry.mutation) {
+                is FocusBlockMutation.Move -> criteriaByBlockId[mutation.id] = entry.criteria
+                is FocusBlockMutation.Resize -> criteriaByBlockId[mutation.id] = entry.criteria
+                is FocusBlockMutation.Delete -> criteriaByBlockId[mutation.id] = entry.criteria
+                is FocusBlockMutation.Create -> criteriaByCreation[Triple(mutation.draft.taskId, mutation.draft.time.start, mutation.draft.time.endExclusive)] = entry.criteria
+            }
+        }
+
+        val finalByBlockId = state.reservations.mapNotNull { reservation ->
+            reservation.blockId?.let { it to reservation }
+        }.toMap()
+        val canonical = listOf(PlacementCriterion.CANONICAL_IDENTITY)
+        val net = mutableListOf<MutationWithCriteria>()
+
+        snapshot.focusBlocks.forEach { block ->
+            when (val final = finalByBlockId[block.id]) {
+                null -> net += MutationWithCriteria(
+                    FocusBlockMutation.Delete(block.id, block.taskId),
+                    criteriaByBlockId[block.id] ?: canonical,
+                )
+                else -> {
+                    val unchanged = final.range.start == block.time.start && final.range.endExclusive == block.time.endExclusive
+                    if (!unchanged) {
+                        val durationChanged = final.range.endExclusive - final.range.start !=
+                            block.time.endExclusive - block.time.start
+                        val time = ZonedTimeRange(final.range.start, final.range.endExclusive, zone)
+                        val mutation = if (durationChanged) {
+                            FocusBlockMutation.Resize(block.id, block.taskId, time)
+                        } else {
+                            FocusBlockMutation.Move(block.id, block.taskId, time)
+                        }
+                        net += MutationWithCriteria(mutation, criteriaByBlockId[block.id] ?: canonical)
+                    }
+                }
+            }
+        }
+
+        state.reservations.filter { it.blockId == null }.forEach { reservation ->
+            val key = Triple(reservation.taskId, reservation.range.start, reservation.range.endExclusive)
+            net += MutationWithCriteria(
+                FocusBlockMutation.Create(FocusBlockDraft(reservation.taskId, ZonedTimeRange(reservation.range.start, reservation.range.endExclusive, zone))),
+                criteriaByCreation[key] ?: canonical,
+            )
+        }
+        return net
     }
 }
 

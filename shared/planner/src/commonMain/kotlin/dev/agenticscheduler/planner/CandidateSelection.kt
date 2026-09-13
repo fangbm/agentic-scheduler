@@ -68,6 +68,19 @@ internal object CandidateGeneration {
     }
 
     /**
+     * PLN-013 durations for one structural start, computed from that start's own
+     * segment capacity (U = min(R, C, max) changes as the start moves later).
+     * A fixed duration (FLEXIBLE move) bypasses enumeration.
+     */
+    fun durationsForSegment(
+        demand: Duration,
+        segmentCapacity: Duration,
+        fixedDuration: Duration?,
+        config: PlanningProfileConfiguration.Configured,
+    ): List<Duration> = fixedDuration?.let { listOf(it) }
+        ?: durationCandidates(demand, segmentCapacity, config)
+
+    /**
      * Clamped original starts for one placement duration: the original start
      * clamped into the free interval so the range still fits, and — for
      * deadline-bound work — clamped to the latest start that still finishes by
