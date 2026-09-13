@@ -118,6 +118,44 @@ class PlannerReviewRound6Test {
         )
     }
 
+    // R7-01: a SOFT dependent visited before its displaced prerequisite must be
+    // DEFERRED (its dependency floor is unresolvable until P is arranged), not
+    // deleted - the zero-deletion arrangement A 09-11, P 11-12, D 12-13 (same
+    // FocusBlock ID) must beat the Delete-D arrangement.
+    @Test
+    fun `soft dependent visited before its displaced prerequisite is moved not deleted`() {
+        val demand = task(1, 2.hours, deadline = TaskDeadline(Deadline.Exact(at("11:30"), TimeZone.UTC), DeadlinePolicy.HARD, OverflowPolicy.NEVER), priority = TaskPriority.HIGH)
+        val dependent = task(2, 1.hours)
+        val dependentBlock = FocusBlock(FocusBlockId(id(6)), dependent.id, range("09:00", "10:00"), Flexibility.SOFT, PinState.UNPINNED)
+        val prerequisite = task(3, 1.hours)
+        val prerequisiteBlock = FocusBlock(FocusBlockId(id(7)), prerequisite.id, range("10:00", "11:00"), Flexibility.FLEXIBLE, PinState.UNPINNED)
+        val twoHourChunks = PlanningProfile(
+            PlanningProfileId(id(9)),
+            "UTC 2h chunks",
+            PlanningProfileConfiguration.Configured(
+                TimeZone.UTC,
+                listOf(WeeklyAvailabilityWindow(DayOfWeek.MONDAY, LocalTime(9, 0), LocalTime(13, 0))).toImmutableList(),
+                1.hours, 2.hours, 2.hours, AllDayEventPolicy.NON_BLOCKING,
+            ),
+        )
+        val result = assertIs<PlannerResult.Success>(DeterministicPlanner().fullReplan(snapshot(
+            tasks = listOf(demand, dependent, prerequisite),
+            focusBlocks = listOf(dependentBlock, prerequisiteBlock),
+            dependencies = listOf(TaskDependency(TaskDependencyId(id(8)), prerequisite.id, dependent.id)),
+            profile = twoHourChunks,
+        )))
+        val create = assertIs<FocusBlockMutation.Create>(result.mutations.filterIsInstance<FocusBlockMutation.Create>().single())
+        assertEquals(range("09:00", "11:00"), create.draft.time, "the candidate occupies both displaced blocks' slots")
+        val moves = result.mutations.filterIsInstance<FocusBlockMutation.Move>().associateBy { it.id }
+        assertEquals(range("11:00", "12:00"), moves.getValue(prerequisiteBlock.id).time, "the prerequisite is arranged first")
+        assertEquals(range("12:00", "13:00"), moves.getValue(dependentBlock.id).time, "the SOFT dependent keeps its identity and lands after the relocated prerequisite")
+        assertEquals(
+            true,
+            result.mutations.none { it is FocusBlockMutation.Delete && it.taskId == dependent.id },
+            "a zero-deletion arrangement exists and must win over Delete + Create",
+        )
+    }
+
     private fun task(
         number: Int,
         remaining: Duration,

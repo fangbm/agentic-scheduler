@@ -641,7 +641,7 @@ internal class FullReplanEngine(
             ReservationSource.Proposed(ProposalKey(planningTask.id, Int.MIN_VALUE)), null,
         )
 
-        fun dfs(remaining: List<Reservation>, taken: List<Interval>, acc: List<Displacement>): List<Displacement>? {
+        fun dfs(remaining: List<Reservation>, taken: List<Interval>, acc: List<Displacement>, deletionsRemaining: Int): List<Displacement>? {
             if (remaining.isEmpty()) {
                 // Final validation: every relocation replacement's dependency floor
                 // is re-checked against the COMPLETE post-arrangement state - a
@@ -704,20 +704,30 @@ internal class FullReplanEngine(
                     } else {
                         listOf(PlacementCriterion.CANONICAL_IDENTITY)
                     }
-                    val next = dfs(rest, taken + option.range, acc + Displacement(reservation, replacement, criteria)) ?: continue
+                    val next = dfs(rest, taken + option.range, acc + Displacement(reservation, replacement, criteria), deletionsRemaining) ?: continue
                     return next
                 }
-                if (!fixedOnly) {
-                    // Authorized removal after every relocation option (and every
-                    // ordering of the remaining reservations) failed.
-                    val next = dfs(rest, taken, acc + Displacement(reservation, null, listOf(PlacementCriterion.CANONICAL_IDENTITY)))
+                if (!fixedOnly && deletionsRemaining > 0) {
+                    // Authorized removal only after every relocation option AND every
+                    // ordering of the remaining reservations failed at this deletion
+                    // budget (R7: zero-deletion arrangements are always preferred).
+                    val next = dfs(rest, taken, acc + Displacement(reservation, null, listOf(PlacementCriterion.CANONICAL_IDENTITY)), deletionsRemaining - 1)
                     if (next != null) return next
                 }
             }
             return null
         }
 
-        return dfs(ordered, listOf(range), emptyList())
+        // R7 identity preservation: no SOFT/NEW removal is considered until the
+        // search has proven that no zero-deletion arrangement exists; iterative
+        // deepening over the deletion budget preserves as many FocusBlock
+        // identities as the arrangement allows.
+        var deletionsRemaining = 0
+        while (true) {
+            dfs(ordered, listOf(range), emptyList(), deletionsRemaining)?.let { return it }
+            if (deletionsRemaining >= displaced.size) return null
+            deletionsRemaining++
+        }
     }
 
     private fun relocationCutoff(reservation: Reservation): Instant? =
