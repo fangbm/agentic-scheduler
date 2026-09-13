@@ -662,6 +662,51 @@ completion gate in section 18.
 
 ---
 
+# 23. Second review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `7d2bf1c`):
+
+```text
+P1 chunk rank          PlacementCandidate.durationRank (a per-segment list index that is not
+                       comparable across structural starts) replaced by globally comparable
+                       PLN-013 fields: preferredDistanceMillis + durationMillis, compared as
+                       (distance from preferred, then longer duration). CandidateComparison
+                       and the decision-trace keys use a ChunkRank value.
+P1 relocation search   findRelocation rewritten as a complete finite search: every
+                       structural start of every free interval (including the clamped
+                       original start) enumerated and deadline/dependency filtered, best
+                       option by smallest movement then earlier start. The closest position
+                       being illegal no longer means "no relocation".
+P1/P2 SOFT identity    A displaced SOFT block whose same-duration relocation is impossible
+                       is now resized into the remaining legal slot for its own Task's
+                       demand (never enlarged) instead of being deleted and re-created;
+                       the FocusBlock identity survives as a net Resize.
+P2 boundaries          The displacement view removes lower-authority reservations from
+                       occupancy; their start/end boundaries are re-added as structural
+                       start points of the resulting intervals.
+```
+
+New regressions in `PlannerReviewRound2Test`:
+
+```text
+cross-segment chunk ranks compare by global PLN-013 order (90m far chunk beats a
+  locally-ranked 30m near chunk)
+FLEXIBLE relocation finds the earlier deadline-legal position when the closest
+  position violates the deadline (also exercises displaced-reservation boundaries
+  as structural starts)
+SOFT displacement falls back to identity-preserving resize instead of delete
+```
+
+Note on the relocation-search and boundary regressions: the candidate-enumeration
+contract is what the tests pin; greedy earlier-start tie-breaks make some
+boundary-start candidates lose to otherwise-equal earlier candidates, so a
+boundary candidate does not always decide the final placement.
+
+Updated verification totals: planner 57, application 21, domain 42, database 15 tests green;
+full repository build successful.
+
+---
+
 # 22. Review round record (2026-09-13)
 
 Post-review corrections on the same branch (commit `8e6e511`, rebased onto `ba3d326`):
