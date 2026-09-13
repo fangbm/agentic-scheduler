@@ -774,7 +774,7 @@ full repository build successful.
 
 # 25. Fourth review round record (2026-09-13)
 
-Post-review corrections on the same branch (commit `a90732d`):
+Post-review corrections on the same branch (commit `9884727`):
 
 ```text
 P0 NEW displacement    A displaced planner-created proposal (Proposed source, no
@@ -814,7 +814,54 @@ the invalidated dependent's original FLEXIBLE identity survives (no Delete +
 
 Also corrected the third-round record's commit hash (`7afee35`, not `f7a23ba`).
 
-Updated verification totals: planner 64, application 21, domain 42, database 15 tests green;
+Updated verification totals: planner 63, application 21, domain 42, database 15 tests green;
+full repository build successful.
+
+---
+
+# 26. Fifth review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `c9325d4`):
+
+```text
+P0 selected-task      Every placement candidate with a displacement arrangement is
+   dependency         re-validated against the POST-arrangement dependency truth:
+   legality           dependencyEarliestStart(planningTask) computed over current
+                      reservations - displaced + relocation replacements + the
+                      candidate itself. A candidate that displaced its own
+                      prerequisite past its own start (or pushed a prerequisite
+                      out of coverage) is rejected and the search continues;
+                      PLN-009 is enforced before anything enters the accepted
+                      state instead of relying on the final invariant throw.
+P1 closure rollback   invalidateTask() is provenance-aware: reservations the
+   provenance         CURRENT delta explicitly relocated or removed for the
+                      invalidated Task survive (they are part of the planned
+                      Task's atomic TaskPlanDelta - D6R-003/004); the Task's own
+                      earlier delta contributions roll back to the normalized
+                      originals. Provenance is the stable reservation source
+                      identity (Existing block ID / Proposed proposal key) - no
+                      history system involved. A current-delta relocation can no
+                      longer be silently undone by the closure.
+P2 relocation truth   relocationOptions evaluates the displaced Task's dependency
+                      boundary against the post-arrangement view including the
+                      candidate itself, so a displaced Task that depends on the
+                      planning Task respects the planning Task's post-candidate
+                      completion.
+P2 regression         R4-02 fixture strengthened per review: the dependent's
+                      original [09:30,10:30) is legal until the prerequisite's
+                      availability repair moves the completion to 11:30, and the
+                      closure must produce exactly one net Move of the SAME
+                      FocusBlock ID to [11:30,12:30) - zero or two mutations fail.
+```
+
+New regressions in `PlannerReviewRound4Test` (strengthened):
+
+```text
+prerequisite self-replan invalidates the already-planned dependent: exactly one
+  net Move, same FocusBlock ID, [11:30,12:30), no Delete/Create
+```
+
+Updated verification totals: planner 63, application 21, domain 42, database 15 tests green;
 full repository build successful.
 
 ---
