@@ -100,17 +100,14 @@ internal data class PlanningState(
     )
 
     /**
-     * Invalidates the accepted contribution of [taskId] (D6R-003 closure): its
-     * replaced, resized, or proposed reservations are removed; untouched original
-     * input reservations and reservations another delta explicitly placed there
-     * (kept) survive for the Task's re-planning.
+     * Invalidates the accepted contribution of [taskId] (D6R-003 closure) by
+     * undoing the Task's accepted planner delta: every reservation the delta
+     * replaced, resized, moved, or proposed is removed and the Task's normalized
+     * original reservations are restored, so re-planning sees exactly the Active
+     * State input again (D6R-001: an existing FocusBlock never disappears).
      */
-    fun invalidateTask(taskId: TaskId, kept: List<Reservation>): PlanningState = PlanningState(
-        reservations = reservations.filter { reservation ->
-            reservation.taskId != taskId ||
-                kept.contains(reservation) ||
-                reservation.originalRange == reservation.range
-        },
+    fun invalidateTask(taskId: TaskId, originals: List<Reservation>): PlanningState = PlanningState(
+        reservations = reservations.filter { it.taskId != taskId } + originals,
         entries = entries,
         issues = issues,
     )

@@ -63,6 +63,7 @@ internal class FullReplanEngine(
         val normalized = SnapshotNormalization.normalize(snapshot, config)
         tasksById = normalized.tasksById
         var state = normalized.state
+        val originalReservationsByTask = normalized.state.reservations.groupBy { it.taskId }
         // Issues are attributed per Task so that the D6R-003 closure can replace a
         // re-planned Task's stale issues with its fresh ones.
         val issuesByTask = LinkedHashMap<dev.agenticscheduler.domain.id.TaskId, List<PlannerIssue>>()
@@ -91,23 +92,35 @@ internal class FullReplanEngine(
                 break
             }
             waiting.remove(selected)
+            // D6R-003 closure seeding: the trigger is any Task whose accepted truth
+            // (coverage / planned completion) changes across the delta - the planned
+            // Task's own self-replan as much as a cross-task displacement.
+            val truthBefore = taskTruth(state)
             val outcome = planTask(state, selected)
-            state = state.plus(outcome.delta)
+            val nextState = state.plus(outcome.delta)
+            val truthAfter = taskTruth(nextState)
+            state = nextState
             issuesByTask[selected.id] = outcome.delta.issues
             hasAcceptedDelta += selected.id
 
-            // D6R-003 closure: a cross-task displacement changes the owner's
-            // coverage and planned completion. Its accepted work — and that of
-            // every already-planned transitive dependent — is invalidated and
-            // re-planned against the new accepted truth.
-            val seeds = outcome.delta.displacedTaskIds.filter { it in hasAcceptedDelta }.toSet()
+            val truthChanged = snapshot.tasks.map { it.id }
+                .filter { truthBefore[it] != truthAfter[it] }
+                .toSet()
+            // The planned Task's own delta is fresh by construction; everything
+            // else whose truth moved - displaced owners included - is invalidated.
+            // The planned Task's own truth change seeds the closure so its already
+            // planned dependents are invalidated; the Task's own fresh delta is
+            // excluded from the invalidation itself.
+            val seeds = (truthChanged + outcome.delta.displacedTaskIds)
+                .filter { it in hasAcceptedDelta }
+                .toSet()
             if (seeds.isNotEmpty()) {
-                val invalid = processedDependentClosure(seeds, hasAcceptedDelta)
+                val invalid = processedDependentClosure(seeds, hasAcceptedDelta) - setOf(selected.id)
                 invalid.forEach { invalidated ->
-                    state = state.invalidateTask(invalidated, outcome.delta.addedReservations)
+                    state = state.invalidateTask(invalidated, originalReservationsByTask[invalidated] ?: emptyList())
                     issuesByTask.remove(invalidated)
                     hasAcceptedDelta -= invalidated
-                    waiting.removeIf { it.id == invalidated }
+                    waiting.removeAll { it.id == invalidated }
                 }
                 waiting.addAll(invalid.mapNotNull { tasksById[it] })
                 waiting.sortWith(::compareTaskServiceOrder)
@@ -116,6 +129,13 @@ internal class FullReplanEngine(
 
         return finalize(state, issuesByTask)
     }
+
+    /** The accepted truth of every Task: future coverage and planned completion. */
+    private fun taskTruth(state: PlanningState): Map<dev.agenticscheduler.domain.id.TaskId, Pair<Duration, Instant?>> =
+        snapshot.tasks.associate { task ->
+            val coverage = SnapshotNormalization.futureCoverageOf(state.reservations, task.id, snapshot.referenceNow)
+            task.id to (coverage to EffortTruth.plannedCompletion(task, state.reservations, snapshot.referenceNow))
+        }
 
     /** Processes tasks reachable as transitive dependents of the displaced seeds. */
     private fun processedDependentClosure(
@@ -577,7 +597,7 @@ internal class FullReplanEngine(
             if (index == ordered.size) return acc
             val reservation = ordered[index]
             val fixedOnly = reservation.authority == ReservationAuthority.FLEXIBLE
-            val demand = if (fixedOnly) null else displacedTaskRemainingDemand(tentative, reservation, displacedSet)
+            val demand = displacedTaskRemainingDemand(tentative, reservation, displacedSet)
             // Relocation options ranked with the same PLN-015 comparator as
             // placement candidates (deadline class, lateness, movement, chunk
             // rank, ...) — never a hand-rolled same-duration-first shortcut.
@@ -591,7 +611,7 @@ internal class FullReplanEngine(
                         sourceReservation = reservation,
                         displacements = emptyList(),
                         overflowLegalityRank = overflowRank(cutoff, optionRange),
-                        overflowLatenessMillis = latenessMillis(cutoff, optionRange, duration, null),
+                        overflowLatenessMillis = latenessMillis(cutoff, optionRange, demand ?: duration, null),
                         preserveRank = if (optionRange == reservation.range) 0 else 1,
                         movementMillis = kotlin.math.abs((optionRange.start - reservation.range.start).inWholeMilliseconds),
                         contextSwitchDelta = contextSwitchDelta(
@@ -602,9 +622,18 @@ internal class FullReplanEngine(
                         durationMillis = duration.inWholeMilliseconds,
                     )
                 }
-            for (option in options.sortedWith(CandidateComparison::compare)) {
+            val ranked = options.sortedWith(CandidateComparison::compare)
+            val comparatorWinner = ranked.firstOrNull()
+            for (option in ranked) {
                 val replacement = reservation.copy(range = option.range)
-                val criteria = CandidateComparison.decisionCriteria(option, options)
+                // A criterion trace is only truthful for the comparator winner; a
+                // feasibility-driven fallback choice lost the comparison and won
+                // only because the winner's subtree was infeasible (D6R-008).
+                val criteria = if (option == comparatorWinner) {
+                    CandidateComparison.decisionCriteria(option, options)
+                } else {
+                    listOf(PlacementCriterion.CANONICAL_IDENTITY)
+                }
                 val next = dfs(index + 1, taken + option.range, acc + Displacement(reservation, replacement, criteria)) ?: continue
                 return next
             }
@@ -728,24 +757,31 @@ internal class FullReplanEngine(
         val criteria = trace.criteriaForWinner()
 
         winner.displacements.forEach { displacement ->
-            val id = requireNotNull(displacement.displaced.blockId)
+            val id = displacement.displaced.blockId
             val replacement = displacement.replacement
             if (replacement == null) {
                 tentative.replace(displacement.displaced, null)
-                tentative.entries += MutationWithCriteria(
-                    FocusBlockMutation.Delete(id, displacement.displaced.taskId),
-                    displacement.criteria,
-                )
+                // A displaced planner-created proposal has no Active State ID: the
+                // accepted state simply loses the proposal, and netMutations() never
+                // emits a Delete for an ID that does not exist.
+                if (id != null) {
+                    tentative.entries += MutationWithCriteria(
+                        FocusBlockMutation.Delete(id, displacement.displaced.taskId),
+                        displacement.criteria,
+                    )
+                }
             } else {
                 tentative.replace(displacement.displaced, replacement)
-                val durationChanged = replacement.range.endExclusive - replacement.range.start !=
-                    displacement.displaced.range.endExclusive - displacement.displaced.range.start
-                val mutation = if (durationChanged) {
-                    FocusBlockMutation.Resize(id, displacement.displaced.taskId, zoned(replacement.range))
-                } else {
-                    FocusBlockMutation.Move(id, displacement.displaced.taskId, zoned(replacement.range))
+                if (id != null) {
+                    val durationChanged = replacement.range.endExclusive - replacement.range.start !=
+                        displacement.displaced.range.endExclusive - displacement.displaced.range.start
+                    val mutation = if (durationChanged) {
+                        FocusBlockMutation.Resize(id, displacement.displaced.taskId, zoned(replacement.range))
+                    } else {
+                        FocusBlockMutation.Move(id, displacement.displaced.taskId, zoned(replacement.range))
+                    }
+                    tentative.entries += MutationWithCriteria(mutation, displacement.criteria)
                 }
-                tentative.entries += MutationWithCriteria(mutation, displacement.criteria)
             }
         }
 
