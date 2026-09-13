@@ -131,7 +131,9 @@ internal data class PlacementCandidate(
     val preserveRank: Int,
     val movementMillis: Long,
     val contextSwitchDelta: Int,
-    val durationRank: Int,
+    /** PLN-013 chunk rank, globally comparable across segments: distance from preferred, then longer. */
+    val preferredDistanceMillis: Long,
+    val durationMillis: Long,
 ) {
     fun identityText(): String = sourceReservation?.identityText()
         ?: displacements.firstOrNull()?.displaced?.identityText()
@@ -158,6 +160,13 @@ internal data class DecisionTrace(
     fun criteriaForWinner(): List<PlacementCriterion> = decisiveCriteria
 }
 
+/** PLN-013 chunk rank as a globally comparable value: distance from preferred, then longer duration. */
+internal data class ChunkRank(val preferredDistanceMillis: Long, val durationMillis: Long) : Comparable<ChunkRank> {
+    override fun compareTo(other: ChunkRank): Int =
+        preferredDistanceMillis.compareTo(other.preferredDistanceMillis).takeIf { it != 0 }
+            ?: other.durationMillis.compareTo(durationMillis)
+}
+
 internal object CandidateComparison {
 
     private fun criterionOf(index: Int): PlacementCriterion = when (index) {
@@ -178,7 +187,7 @@ internal object CandidateComparison {
         { it.preserveRank },
         { it.movementMillis },
         { it.contextSwitchDelta },
-        { it.durationRank },
+        { ChunkRank(it.preferredDistanceMillis, it.durationMillis) },
         { it.range.start },
         { it.range.endExclusive },
         { it.identityText() },
@@ -193,7 +202,7 @@ internal object CandidateComparison {
     fun compare(first: PlacementCandidate, second: PlacementCandidate): Int {
         compareValuesBy(first, second, { it.overflowLegalityRank }, { it.overflowLatenessMillis }, { it.preserveRank })
             .let { if (it != 0) return it }
-        compareValuesBy(first, second, { it.movementMillis }, { it.contextSwitchDelta }, { it.durationRank })
+        compareValuesBy(first, second, { it.movementMillis }, { it.contextSwitchDelta }, { ChunkRank(it.preferredDistanceMillis, it.durationMillis) })
             .let { if (it != 0) return it }
         compareValuesBy(first, second, { it.range.start }, { it.range.endExclusive }, { it.identityText() })
             .let { if (it != 0) return it }

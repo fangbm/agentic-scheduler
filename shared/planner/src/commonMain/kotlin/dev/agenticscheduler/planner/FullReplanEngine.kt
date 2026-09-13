@@ -343,11 +343,6 @@ internal class FullReplanEngine(
             val duration = original.range.endExclusive - original.range.start
             val coveredByPreserve = fixedDuration != null || duration <= demand
             if (coveredByPreserve && tentative.viewFor(original).any { it.contains(original.range) }) {
-                val durationRank = if (fixedDuration != null) {
-                    0
-                } else {
-                    rankOf(demand, duration, duration)
-                }
                 candidates += PlacementCandidate(
                     range = original.range,
                     taskId = task.id,
@@ -358,7 +353,8 @@ internal class FullReplanEngine(
                     preserveRank = 0,
                     movementMillis = 0L,
                     contextSwitchDelta = 0,
-                    durationRank = durationRank,
+                    preferredDistanceMillis = preferredDistanceMillis(duration),
+                    durationMillis = duration.inWholeMilliseconds,
                 )
             }
         }
@@ -367,20 +363,30 @@ internal class FullReplanEngine(
         if (after >= futureBounds.endExclusive) return candidates
         val futureWindow = Interval(after, futureBounds.endExclusive)
         val cleanIntervals = tentative.viewFor(original).mapNotNull { clipInterval(it, futureWindow) }
+        val displaceable = tentative.working.filter { it !in tentative.pendingSubjects && isDisplaceable(it, task) }
         val displacementIntervals = tentative.viewIgnoringDisplaceable(original, task).mapNotNull { clipInterval(it, futureWindow) }
+        // D6R-007: the displaced reservations' own boundaries are accepted-state
+        // boundaries. The displacement view removes them from occupancy, so they
+        // become interior structural start points of the resulting intervals.
+        val displacementBoundaries = displaceable
+            .flatMap { listOf(it.range.start, it.range.endExclusive) }
+            .filter { it >= after && it < futureBounds.endExclusive }
 
         // Clean candidates on genuinely free space (criterion 3, rank 1).
         cleanIntervals.forEach { interval ->
             collectIntervalCandidates(
                 interval, task, demand, fixedDuration, original, after, cutoff, overflow,
-                tentative, preserveRank = 1, requireDisplacement = false, output = candidates,
+                tentative, preserveRank = 1, requireDisplacement = false,
+                extraBoundaries = emptyList(), output = candidates,
             )
         }
         // Displacement candidates on space held by lower-authority reservations (rank 2).
         displacementIntervals.forEach { interval ->
             collectIntervalCandidates(
                 interval, task, demand, fixedDuration, original, after, cutoff, overflow,
-                tentative, preserveRank = 2, requireDisplacement = true, output = candidates,
+                tentative, preserveRank = 2, requireDisplacement = true,
+                extraBoundaries = displacementBoundaries.filter { it > interval.start && it < interval.endExclusive },
+                output = candidates,
             )
         }
 
@@ -405,6 +411,7 @@ internal class FullReplanEngine(
         tentative: Tentative,
         preserveRank: Int,
         requireDisplacement: Boolean,
+        extraBoundaries: List<Instant>,
         output: MutableList<PlacementCandidate>,
     ) {
         // D6R-007: structural starts x legal durations. The PLN-013 duration set is
@@ -417,7 +424,7 @@ internal class FullReplanEngine(
                 after = after,
                 cutoff = cutoff,
                 originalStart = original?.range?.start,
-                tentativeBoundaries = emptyList(),
+                tentativeBoundaries = extraBoundaries,
             ),
         )
         data class StartDuration(val start: Instant, val duration: Duration)
@@ -466,15 +473,15 @@ internal class FullReplanEngine(
                 preserveRank = preserveRank,
                 movementMillis = original?.let { kotlin.math.abs((range.start - it.range.start).inWholeMilliseconds) } ?: 0L,
                 contextSwitchDelta = contextSwitchDelta(task.id, range, contextOccupancy(tentative, arrangement)),
-                durationRank = if (fixedDuration != null) 0 else rankOf(demand, duration, segment.endExclusive - segment.start),
+                preferredDistanceMillis = preferredDistanceMillis(duration),
+                durationMillis = duration.inWholeMilliseconds,
             )
         }
     }
 
-    private fun rankOf(demand: Duration, duration: Duration, capacity: Duration): Int {
-        val index = CandidateGeneration.durationCandidates(demand, capacity, config).indexOf(duration)
-        return if (index >= 0) index else Int.MAX_VALUE
-    }
+    /** PLN-013 chunk-rank distance key: absolute distance from the preferred duration. */
+    private fun preferredDistanceMillis(duration: Duration): Long =
+        kotlin.math.abs((duration - config.preferredFocusBlock).inWholeMilliseconds)
 
     /**
      * Builds the finite displacement arrangement required by a candidate range.
@@ -493,8 +500,23 @@ internal class FullReplanEngine(
         val taken = mutableListOf(range)
         val displacedSet = displaced.toSet()
         displaced.sortedWith(compareBy({ it.range.start }, { it.identityText() })).forEach { reservation ->
-            val duration = reservation.range.endExclusive - reservation.range.start
-            val relocation = findRelocation(tentative, reservation, duration, displacedSet, taken)
+            // FLEXIBLE: same-ID, same-duration relocation only. SOFT: same-duration
+            // first, then an identity-preserving resize for the displaced Task's own
+            // demand instead of deleting and re-creating the block (D6R-004).
+            val relocation = findRelocation(
+                tentative, reservation,
+                fixedDuration = reservation.range.endExclusive - reservation.range.start,
+                resizedDuration = null, displacedSet, taken,
+            ) ?: run {
+                if (reservation.authority != ReservationAuthority.SOFT) return@run null
+                val demand = displacedTaskRemainingDemand(tentative, reservation, displacedSet)
+                demand?.let {
+                    findRelocation(
+                        tentative, reservation, fixedDuration = null, resizedDuration = it,
+                        displacedSet, taken,
+                    )
+                }
+            }
             if (relocation != null) {
                 arrangement += Displacement(reservation, relocation)
                 taken += relocation.range
@@ -507,10 +529,39 @@ internal class FullReplanEngine(
         return arrangement
     }
 
+    /** Remaining demand of the displaced Task excluding every reservation displaced in this arrangement. */
+    private fun displacedTaskRemainingDemand(
+        tentative: Tentative,
+        reservation: Reservation,
+        displacedSet: Set<Reservation>,
+    ): Duration? {
+        val displacedTask = tasksById[reservation.taskId] ?: return null
+        val remaining = displacedTask.effort.remaining ?: return null
+        val otherCoverage = tentative.working
+            .filter {
+                it.taskId == displacedTask.id && it !in displacedSet &&
+                    it.range.start >= snapshot.referenceNow
+            }
+            .fold(Duration.ZERO) { total, r -> total + (r.range.endExclusive - r.range.start) }
+        return (remaining - otherCoverage).takeIf { it > Duration.ZERO }
+    }
+
+    /**
+     * Complete finite relocation search (D6R-007): every structural start of every
+     * free interval (interval start, dependency and deadline boundaries, the
+     * clamped original start) is enumerated with the relocation duration and
+     * filtered by the displaced Task's deadline legality. The closest position is
+     * never treated as the only one: when it is illegal, an earlier legal position
+     * in the same interval is still found.
+     *
+     * [fixedDuration] is set for FLEXIBLE relocations (same duration mandatory).
+     * [resizedDuration] is set for identity-preserving SOFT resize relocations.
+     */
     private fun findRelocation(
         tentative: Tentative,
         reservation: Reservation,
-        duration: Duration,
+        fixedDuration: Duration?,
+        resizedDuration: Duration?,
         displacedSet: Set<Reservation>,
         taken: List<Interval>,
     ): Reservation? {
@@ -524,29 +575,57 @@ internal class FullReplanEngine(
             tentative.working.filter { it !in displacedSet }.map { it.range } +
             taken
         val space = subtractIntervals(availability, cuts).mapNotNull { clipInterval(it, futureBounds) }
-        return space.flatMap { interval ->
-            if (interval.endExclusive - interval.start < duration) {
-                emptyList()
-            } else {
-                val latest = interval.endExclusive - duration
-                val clamped = reservation.range.start.coerceIn(interval.start, latest)
-                val start = maxOf(clamped, after)
-                if (start > latest) {
-                    emptyList()
-                } else {
-                    listOf(Interval(start, start + duration))
-                }
+
+        data class RelocationOption(val range: Interval, val duration: Duration, val sameDuration: Boolean)
+
+        val options = mutableListOf<RelocationOption>()
+        fun enumerate(interval: Interval, duration: Duration, sameDuration: Boolean) {
+            val starts = CandidateGeneration.structuralStarts(
+                CandidateGeneration.StructureInputs(
+                    interval = interval,
+                    after = after,
+                    cutoff = cutoff,
+                    originalStart = reservation.range.start,
+                    tentativeBoundaries = emptyList(),
+                ),
+            ) + CandidateGeneration.clampedOriginalStarts(
+                interval, cutoff, reservation.range.start, duration,
+            )
+            starts.distinct().forEach { start ->
+                if (start + duration > interval.endExclusive) return@forEach
+                val range = Interval(start, start + duration)
+                if (!PlacementLegality.isDeadlineLegal(cutoff, overflow, range)) return@forEach
+                options += RelocationOption(range, duration, sameDuration)
             }
         }
-            .filter { PlacementLegality.isDeadlineLegal(cutoff, overflow, it) }
+
+        val sameDuration = reservation.range.endExclusive - reservation.range.start
+        space.forEach { interval ->
+            if (interval.endExclusive - interval.start >= sameDuration) {
+                enumerate(interval, sameDuration, sameDuration = true)
+            }
+            if (resizedDuration != null && interval.endExclusive - interval.start >= resizedDuration) {
+                // Identity-preserving SOFT resize: PLN-013 durations for the displaced
+                // Task's own demand, never enlarging the block.
+                CandidateGeneration.durationCandidates(
+                    resizedDuration, interval.endExclusive - interval.start, config,
+                ).filter { it <= sameDuration }
+                    .forEach { duration -> enumerate(interval, duration, sameDuration = false) }
+            }
+        }
+
+        return options
             .sortedWith(
                 compareBy(
-                    { kotlin.math.abs((it.start - reservation.range.start).inWholeMilliseconds) },
-                    { it.start },
+                    { if (it.sameDuration) 0 else 1 },
+                    { kotlin.math.abs((it.range.start - reservation.range.start).inWholeMilliseconds) },
+                    { kotlin.math.abs((it.duration - config.preferredFocusBlock).inWholeMilliseconds) },
+                    { -it.duration.inWholeMilliseconds },
+                    { it.range.start },
                 ),
             )
             .firstOrNull()
-            ?.let { relocation -> reservation.copy(range = relocation) }
+            ?.let { relocation -> reservation.copy(range = relocation.range) }
     }
 
     // ------------------------------------------------------------------ application
