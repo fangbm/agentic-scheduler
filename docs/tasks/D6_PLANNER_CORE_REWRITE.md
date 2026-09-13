@@ -707,6 +707,71 @@ full repository build successful.
 
 ---
 
+# 24. Third review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `f7a23ba`):
+
+```text
+P1 blocked relocation   relocationOptions returns no options when the displaced
+                        Task's dependency completion is unresolved (D6R-002/PLN-009).
+                        The previous "?: referenceNow" guess moved dependency-blocked
+                        Tasks' blocks; the round-2 regression was reversed to pin the
+                        contract (block keeps its original reservation, demand
+                        reported as uncoverable).
+P1 cross-task closure   TaskPlanDelta now reports displaced owner Tasks; after a
+                        commit, every already-planned displaced owner - plus its
+                        transitive already-planned dependents - is invalidated
+                        (replaced/resized/proposed reservations removed, untouched
+                        originals and the displacing replacements kept) and re-queued
+                        for re-planning against the new truth. Issues are attributed
+                        per Task so stale issues are replaced, not accumulated.
+P1 arrangement truth    relocationOptions evaluates dependency boundaries against the
+                        POST-arrangement view (earlier relocations in the same
+                        transaction applied), so a relocation never relies on a
+                        prerequisite position it just moved.
+P1 authoritative HARD   finalize() validates every eligible HARD Task against the
+                        final accepted state (coverageCompletedByCutoff), covering
+                        dependency-blocked HARD Tasks that never reach planTask;
+                        their runs are now Infeasible with HardDeadlineShortfall.
+P1 backtracking         arrangeDisplacements is a finite depth-first search with
+                        backtracking over each displaced reservation's relocation
+                        options; the displaced reservations' range boundaries AND
+                        their Tasks' deadline boundaries are structural starts of the
+                        relocation space, so a greedy first choice can no longer
+                        manufacture a false infeasibility.
+P1 relocation ranking   relocation options are ranked with the same PLN-015
+                        comparator as placements (CandidateComparison) - the
+                        same-duration-first shortcut is gone; a before-deadline
+                        resize now beats a closer same-duration overflow move.
+P2 traces               displacement Move/Resize/Delete explanations carry the
+                        decision criteria of the relocation comparison; delete keeps
+                        CANONICAL_IDENTITY (a fallback after all options failed).
+P2 NEW authority        planner-created proposals are displaceable exactly like the
+                        SOFT blocks they materialize into.
+Hardening               PlanningInvariants now also verifies dependency legality for
+                        every planner-touched reservation.
+```
+
+New regressions in `PlannerReviewRound3Test` (plus the reversed round-2 expectation):
+
+```text
+displacing a prerequisite invalidates and replans the dependent
+dependency-blocked HARD Task yields Infeasible with shortfall
+multi-reservation displacement backtracks to a feasible arrangement
+soft relocation obeys PLN-015 (before-deadline resize beats closer overflow move)
+  and carries the DEADLINE_LEGALITY decision trace
+relocation of a dependency-blocked Task is illegal (reversed round-2 expectation)
+```
+
+Note on the PLN-015 relocation ranking: the option ranking is shared with placement
+ranking (one comparator); outcome-level discrimination of the deadline-class rule is
+pinned by the before-deadline-resize fixture.
+
+Updated verification totals: planner 64, application 21, domain 42, database 15 tests green;
+full repository build successful.
+
+---
+
 # 22. Review round record (2026-09-13)
 
 Post-review corrections on the same branch (commit `8e6e511`, rebased onto `ba3d326`):
