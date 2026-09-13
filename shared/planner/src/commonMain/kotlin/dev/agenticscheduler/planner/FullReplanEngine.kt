@@ -570,7 +570,7 @@ internal class FullReplanEngine(
             }
             if (requireDisplacement && displaced.isEmpty()) return@forEach
 
-            val arrangement = arrangeDisplacements(tentative, task, range, displaced) ?: return@forEach
+            val arrangement = arrangeDisplacements(tentative, task, range, original, displaced) ?: return@forEach
             // PLN-009: the candidate must respect the dependency boundary computed
             // against the POST-arrangement state - the arrangement may have moved
             // the planning Task's own prerequisite past the candidate, and a
@@ -609,14 +609,21 @@ internal class FullReplanEngine(
      * same-duration relocation inside this transaction; displaced SOFT/NEW
      * reservations may fall back to authorized removal after every relocation
      * option (including identity-preserving resize) has been exhausted.
-     * The search is a finite depth-first walk with backtracking over each
-     * reservation's relocation options in PLN-015 order, so a greedy first
-     * choice can never manufacture a false "no arrangement" answer.
+     *
+     * The search is a finite depth-first walk with backtracking:
+     * - the provisional state excludes the planning Task's own subject reservation
+     *   that the candidate replaces (D6R-001/004: the swap must be provable);
+     * - the next reservation to place is chosen dynamically from the remaining
+     *   ones, so a displaced dependency chain is arranged in dependency-resolvable
+     *   order instead of range order;
+     * - the base case re-validates every replacement's dependency floor against
+     *   the complete post-arrangement state before accepting the arrangement.
      */
     private fun arrangeDisplacements(
         tentative: Tentative,
         planningTask: Task,
         range: Interval,
+        subject: Reservation?,
         displaced: List<Reservation>,
     ): List<Displacement>? {
         if (displaced.isEmpty()) return emptyList()
@@ -629,17 +636,43 @@ internal class FullReplanEngine(
             listOf(reservation.range.start, reservation.range.endExclusive) +
                 (tasksById[reservation.taskId]?.deadline?.let { listOf(TimeResolution.effectiveCutoff(it.deadline, zone)) } ?: emptyList())
         }.filter { it >= snapshot.referenceNow && it < futureBounds.endExclusive }
+        val candidateReservation = Reservation(
+            planningTask.id, range, ReservationAuthority.NEW,
+            ReservationSource.Proposed(ProposalKey(planningTask.id, Int.MIN_VALUE)), null,
+        )
 
-        fun dfs(index: Int, taken: List<Interval>, acc: List<Displacement>): List<Displacement>? {
-            if (index == ordered.size) return acc
-            val reservation = ordered[index]
-            val fixedOnly = reservation.authority == ReservationAuthority.FLEXIBLE
-            val demand = displacedTaskRemainingDemand(tentative, reservation, displacedSet)
-            // Relocation options ranked with the same PLN-015 comparator as
-            // placement candidates (deadline class, lateness, movement, chunk
-            // rank, ...) — never a hand-rolled same-duration-first shortcut.
-            val options = relocationOptions(tentative, reservation, demand, displacedSet, taken, acc, arrangementBoundaries, planningTask.id, range)
-                .map { optionRange ->
+        fun dfs(remaining: List<Reservation>, taken: List<Interval>, acc: List<Displacement>): List<Displacement>? {
+            if (remaining.isEmpty()) {
+                // Final validation: every relocation replacement's dependency floor
+                // is re-checked against the COMPLETE post-arrangement state - a
+                // later relocation may have moved an earlier placement's own
+                // prerequisite (D6R-003/PLN-009).
+                val provisional = tentative.working.filter { it !in displacedSet && it !== subject } +
+                    acc.mapNotNull { it.replacement } + candidateReservation
+                val allLegal = acc.all { displacement ->
+                    val replacement = displacement.replacement ?: return@all true
+                    val ownerTask = tasksById[replacement.taskId] ?: return@all false
+                    val floor = EffortTruth.dependencyEarliestStart(
+                        ownerTask, snapshot.dependencies, tasksById, provisional, snapshot.referenceNow,
+                    ) ?: return@all false
+                    replacement.range.start >= floor
+                }
+                return if (allLegal) acc else null
+            }
+            // Dynamic ordering: every remaining reservation is tried as the next
+            // placement - one whose dependency floor is not yet resolvable is
+            // deferred and retried once the others have been arranged.
+            for (reservation in remaining) {
+                val rest = remaining.filter { it != reservation }
+                val fixedOnly = reservation.authority == ReservationAuthority.FLEXIBLE
+                val demand = displacedTaskRemainingDemand(tentative, reservation, displacedSet)
+                // Relocation options ranked with the same PLN-015 comparator as
+                // placement candidates (deadline class, lateness, movement, chunk
+                // rank, ...) — never a hand-rolled same-duration-first shortcut.
+                val options = relocationOptions(
+                    tentative, reservation, demand, displacedSet, taken, acc,
+                    arrangementBoundaries, planningTask.id, range, subject,
+                ).map { optionRange ->
                     val duration = optionRange.endExclusive - optionRange.start
                     val cutoff = relocationCutoff(reservation)
                     PlacementCandidate(
@@ -653,35 +686,38 @@ internal class FullReplanEngine(
                         movementMillis = kotlin.math.abs((optionRange.start - reservation.range.start).inWholeMilliseconds),
                         contextSwitchDelta = contextSwitchDelta(
                             reservation.taskId, optionRange,
-                            tentative.working.filter { it !in displacedSet } + acc.mapNotNull { it.replacement },
+                            tentative.working.filter { it !in displacedSet && it !== subject } + acc.mapNotNull { it.replacement },
                         ),
                         preferredDistanceMillis = preferredDistanceMillis(duration),
                         durationMillis = duration.inWholeMilliseconds,
                     )
                 }
-            val ranked = options.sortedWith(CandidateComparison::compare)
-            val comparatorWinner = ranked.firstOrNull()
-            for (option in ranked) {
-                val replacement = reservation.copy(range = option.range)
-                // A criterion trace is only truthful for the comparator winner; a
-                // feasibility-driven fallback choice lost the comparison and won
-                // only because the winner's subtree was infeasible (D6R-008).
-                val criteria = if (option == comparatorWinner) {
-                    CandidateComparison.decisionCriteria(option, options)
-                } else {
-                    listOf(PlacementCriterion.CANONICAL_IDENTITY)
+                val ranked = options.sortedWith(CandidateComparison::compare)
+                val comparatorWinner = ranked.firstOrNull()
+                for (option in ranked) {
+                    val replacement = reservation.copy(range = option.range)
+                    // A criterion trace is only truthful for the comparator winner; a
+                    // feasibility-driven fallback choice lost the comparison and won
+                    // only because the winner's subtree was infeasible (D6R-008).
+                    val criteria = if (option == comparatorWinner) {
+                        CandidateComparison.decisionCriteria(option, options)
+                    } else {
+                        listOf(PlacementCriterion.CANONICAL_IDENTITY)
+                    }
+                    val next = dfs(rest, taken + option.range, acc + Displacement(reservation, replacement, criteria)) ?: continue
+                    return next
                 }
-                val next = dfs(index + 1, taken + option.range, acc + Displacement(reservation, replacement, criteria)) ?: continue
-                return next
-            }
-            if (!fixedOnly) {
-                // Authorized removal after every relocation option failed.
-                return dfs(index + 1, taken, acc + Displacement(reservation, null, listOf(PlacementCriterion.CANONICAL_IDENTITY)))
+                if (!fixedOnly) {
+                    // Authorized removal after every relocation option (and every
+                    // ordering of the remaining reservations) failed.
+                    val next = dfs(rest, taken, acc + Displacement(reservation, null, listOf(PlacementCriterion.CANONICAL_IDENTITY)))
+                    if (next != null) return next
+                }
             }
             return null
         }
 
-        return dfs(0, listOf(range), emptyList())
+        return dfs(ordered, listOf(range), emptyList())
     }
 
     private fun relocationCutoff(reservation: Reservation): Instant? =
@@ -728,6 +764,7 @@ internal class FullReplanEngine(
         extraBoundaries: List<Instant>,
         planningTaskId: dev.agenticscheduler.domain.id.TaskId,
         candidateRange: Interval,
+        subject: Reservation?,
     ): List<Interval> {
         val displacedTask = tasksById[reservation.taskId] ?: return emptyList()
         val cutoff = EffortTruth.effectiveCutoff(displacedTask, zone)
@@ -738,7 +775,11 @@ internal class FullReplanEngine(
         // from them (D6R-003). D6R-002/PLN-009: an unresolved dependency boundary
         // means no placement of this Task's blocks can be proven legal - never
         // guess "now".
-        val provisional = tentative.working.filter { it !in displacedSet } + arranged.mapNotNull { it.replacement } +
+        // The planning Task's own subject reservation that the candidate replaces
+        // must not occupy the relocation space - otherwise a legal swap with the
+        // candidate is judged infeasible (D6R-001/004).
+        val provisional = tentative.working.filter { it !in displacedSet && it !== subject } +
+            arranged.mapNotNull { it.replacement } +
             // The candidate itself counts: a displaced Task that depends on the
             // planning Task must respect the planning Task's post-candidate
             // completion (PLN-009).
