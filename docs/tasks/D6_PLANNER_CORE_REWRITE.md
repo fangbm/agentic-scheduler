@@ -709,7 +709,7 @@ full repository build successful.
 
 # 24. Third review round record (2026-09-13)
 
-Post-review corrections on the same branch (commit `f7a23ba`):
+Post-review corrections on the same branch (commit `7afee35`):
 
 ```text
 P1 blocked relocation   relocationOptions returns no options when the displaced
@@ -766,6 +766,53 @@ relocation of a dependency-blocked Task is illegal (reversed round-2 expectation
 Note on the PLN-015 relocation ranking: the option ranking is shared with placement
 ranking (one comparator); outcome-level discrimination of the deadline-class rule is
 pinned by the before-deadline-resize fixture.
+
+Updated verification totals: planner 64, application 21, domain 42, database 15 tests green;
+full repository build successful.
+
+---
+
+# 25. Fourth review round record (2026-09-13)
+
+Post-review corrections on the same branch (commit `a90732d`):
+
+```text
+P0 NEW displacement    A displaced planner-created proposal (Proposed source, no
+                       Active State ID) no longer crashes requireNotNull(blockId):
+                       its replacement/removal is a silent accepted-state change and
+                       netMutations() derives the final Create set, so the output
+                       contains Creates only.
+P0 closure seeding     The closure is seeded by every Task whose accepted truth
+                       (future coverage / planned completion) changed across a
+                       delta - covering the planned Task's own self-replan as much
+                       as cross-task displacements - instead of displacement alone.
+                       The planned Task's fresh delta is excluded from the
+                       invalidation itself; its already-planned dependents are not.
+P1 identity restore    invalidateTask() now undoes the Task's accepted delta by
+                       restoring its normalized original reservations (replacing
+                       moved/resized/proposed ones), so an invalidated existing
+                       FLEXIBLE block keeps its FocusBlock identity - never
+                       Delete + Create (D6R-001).
+P2 relocation traces   A relocation chosen as the comparator winner carries the
+                       decision trace; a feasibility-driven fallback choice (whose
+                       comparator-winner subtree was infeasible) records
+                       CANONICAL_IDENTITY instead of criteria it actually lost.
+P2 lateness reference  relocation options rank overflow lateness by the displaced
+                       Task's remaining demand, matching the placement semantics.
+```
+
+New regressions in `PlannerReviewRound4Test`:
+
+```text
+later-ready HARD Task displaces a prior NEW proposal without throwing; the net
+  output is Creates only and no mutation references a nonexistent ID
+prerequisite self-replan invalidates the already-planned dependent (no invariant
+  throw; the dependent is re-planned behind the moved completion)
+the invalidated dependent's original FLEXIBLE identity survives (no Delete +
+  Create; at most one net Move)
+```
+
+Also corrected the third-round record's commit hash (`7afee35`, not `f7a23ba`).
 
 Updated verification totals: planner 64, application 21, domain 42, database 15 tests green;
 full repository build successful.
