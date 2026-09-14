@@ -1,6 +1,8 @@
 package dev.agenticscheduler.application.editing
 
 import dev.agenticscheduler.application.id.UuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
@@ -21,6 +23,9 @@ import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.TimePlacement
 import dev.agenticscheduler.domain.time.ZonedTimeRange
+import dev.agenticscheduler.sync.EventPut
+import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.TaskPut
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.datetime.LocalDate
@@ -131,14 +136,18 @@ class EventEditingService(
     private val events: EventRepository,
     private val transactions: ApplicationTransactionRunner,
     private val ids: UuidV7Generator,
+    private val mutations: MutationCoordinator? = null,
 ) {
     suspend fun create(input: CreateEventInput): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
         val event = Event(EventId(ids.next()), input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
-        return transactions.inWriteTransaction {
+        return mutations?.execute(MutationOrigin.User) {
             events.upsert(event)
+            record(EventPut(null, event.toSemanticImage()))
             EditingResult.Success(event)
+        }?.value ?: transactions.inWriteTransaction {
+            events.upsert(event); EditingResult.Success(event)
         }
     }
 
@@ -146,13 +155,18 @@ class EventEditingService(
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
         val event = Event(input.id, input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
+        if (mutations != null) {
+            return mutations.executeIfAny(MutationOrigin.User) {
+                val before = events.get(input.id)
+                if (before == null) EditingResult.NotFound else {
+                    events.upsert(event)
+                    record(EventPut(before.toSemanticImage(), event.toSemanticImage()))
+                    EditingResult.Success(event)
+                }
+            }?.value ?: EditingResult.NotFound
+        }
         return transactions.inWriteTransaction {
-            if (events.get(input.id) == null) {
-                EditingResult.NotFound
-            } else {
-                events.upsert(event)
-                EditingResult.Success(event)
-            }
+            if (events.get(input.id) == null) EditingResult.NotFound else { events.upsert(event); EditingResult.Success(event) }
         }
     }
 }
@@ -161,15 +175,19 @@ class TaskEditingService(
     private val tasks: TaskRepository,
     private val transactions: ApplicationTransactionRunner,
     private val ids: UuidV7Generator,
+    private val mutations: MutationCoordinator? = null,
 ) {
     suspend fun create(input: CreateTaskInput): EditingResult<Task> {
         val built = validateTask(input.title, input.estimated, Duration.ZERO, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
         val valid = built as TaskInput.Valid
         val task = Task(TaskId(ids.next()), input.title, TaskStatus.OPEN, input.priority, valid.effort, valid.deadline)
-        return transactions.inWriteTransaction {
+        return mutations?.execute(MutationOrigin.User) {
             tasks.upsertTask(task)
+            record(TaskPut(null, task.toSemanticImage()))
             EditingResult.Success(task)
+        }?.value ?: transactions.inWriteTransaction {
+            tasks.upsertTask(task); EditingResult.Success(task)
         }
     }
 
@@ -178,13 +196,18 @@ class TaskEditingService(
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
         val valid = built as TaskInput.Valid
         val task = Task(input.id, input.title, input.status, input.priority, valid.effort, valid.deadline)
+        if (mutations != null) {
+            return mutations.executeIfAny(MutationOrigin.User) {
+                val before = tasks.getTask(input.id)
+                if (before == null) EditingResult.NotFound else {
+                    tasks.upsertTask(task)
+                    record(TaskPut(before.toSemanticImage(), task.toSemanticImage()))
+                    EditingResult.Success(task)
+                }
+            }?.value ?: EditingResult.NotFound
+        }
         return transactions.inWriteTransaction {
-            if (tasks.getTask(input.id) == null) {
-                EditingResult.NotFound
-            } else {
-                tasks.upsertTask(task)
-                EditingResult.Success(task)
-            }
+            if (tasks.getTask(input.id) == null) EditingResult.NotFound else { tasks.upsertTask(task); EditingResult.Success(task) }
         }
     }
 }

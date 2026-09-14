@@ -3,6 +3,7 @@ package dev.agenticscheduler.database.dao
 import androidx.room3.Dao
 import androidx.room3.Query
 import androidx.room3.Upsert
+import androidx.room3.Insert
 import dev.agenticscheduler.database.record.*
 import kotlinx.coroutines.flow.Flow
 
@@ -21,3 +22,17 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface AcademicHolidayDao { @Query("SELECT * FROM academic_holidays ORDER BY id ASC") fun observeAll(): Flow<List<AcademicHolidayRecord>>; @Query("SELECT * FROM academic_holidays WHERE id = :id") suspend fun get(id: String): AcademicHolidayRecord?; @Upsert suspend fun upsert(value: AcademicHolidayRecord) }
 @Dao interface CourseOccurrenceExceptionDao { @Query("SELECT * FROM course_occurrence_exceptions ORDER BY id ASC") fun observeAll(): Flow<List<CourseOccurrenceExceptionRecord>>; @Query("SELECT * FROM course_occurrence_exceptions WHERE id = :id") suspend fun get(id: String): CourseOccurrenceExceptionRecord?; @Query("SELECT id FROM course_occurrence_exceptions WHERE schedule_rule_id = :scheduleRuleId AND academic_week_number = :academicWeekNumber") suspend fun idForOccurrence(scheduleRuleId: String, academicWeekNumber: Int): String?; @Upsert suspend fun upsert(value: CourseOccurrenceExceptionRecord) }
 @Dao interface ExamDao { @Query("SELECT * FROM exams ORDER BY id ASC") fun observeAll(): Flow<List<ExamRecord>>; @Query("SELECT * FROM exams WHERE id = :id") suspend fun get(id: String): ExamRecord?; @Upsert suspend fun upsert(value: ExamRecord) }
+
+@Dao interface MutationJournalDao {
+    @Query("SELECT * FROM replica_causal_state WHERE state_key = 'LOCAL'") suspend fun localReplicaState(): ReplicaCausalStateRecord?
+    @Upsert suspend fun saveLocalReplicaState(value: ReplicaCausalStateRecord)
+    @Insert suspend fun insertMutationRecord(value: MutationRecord)
+    @Insert suspend fun insertChangeLogEntries(values: List<ChangeLogEntryRecord>)
+    @Insert suspend fun insertSyncOperation(value: SyncOperationJournalRecord)
+    @Upsert suspend fun upsertFocusBlockTombstone(value: FocusBlockTombstoneRecord)
+    @Query("SELECT * FROM sync_operation_journal WHERE mutation_id = :mutationId") suspend fun syncOperation(mutationId: String): SyncOperationJournalRecord?
+    @Query("SELECT * FROM mutation_record ORDER BY hlc_physical_millis ASC, hlc_logical ASC, mutation_id ASC") suspend fun timeline(): List<MutationRecord>
+    @Query("SELECT * FROM change_log_entry WHERE mutation_id = :mutationId ORDER BY ordinal ASC") suspend fun entries(mutationId: String): List<ChangeLogEntryRecord>
+    @Query("SELECT * FROM change_log_entry WHERE entity_kind = :entityKind AND entity_id = :entityId ORDER BY mutation_id ASC, ordinal ASC") suspend fun entityEntries(entityKind: String, entityId: String): List<ChangeLogEntryRecord>
+    @Query("SELECT * FROM focus_block_tombstone WHERE focus_block_id = :focusBlockId") suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstoneRecord?
+}

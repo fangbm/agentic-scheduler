@@ -13,9 +13,86 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import dev.agenticscheduler.database.record.ChangeLogEntryRecord
+import dev.agenticscheduler.database.record.FocusBlockTombstoneRecord
+import dev.agenticscheduler.database.record.MutationRecord
+import dev.agenticscheduler.database.record.ReplicaCausalStateRecord
+import dev.agenticscheduler.database.record.SyncOperationJournalRecord
+import dev.agenticscheduler.sync.FocusBlockDelete
+import dev.agenticscheduler.sync.LocalJournalCodec
+import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.ReplicaId
+import dev.agenticscheduler.sync.HlcTimestamp
+import dev.agenticscheduler.sync.operationKind
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
+}
+
+/** Room implementation of the D7 atomic journal port; callers already own the write transaction. */
+class RoomMutationJournalRepository(private val database: AgenticSchedulerDatabase) : MutationJournalRepository {
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = database.mutationJournalDao().localReplicaState()?.let { record ->
+        LocalReplicaCausalState(
+            replicaId = ReplicaId(record.replicaId),
+            lastCounter = record.lastCounter,
+            observedContext = LocalJournalCodec.decodeContext(record.observedContextJson),
+            lastHlc = HlcTimestamp(record.lastHlcPhysicalMillis, record.lastHlcLogical, ReplicaId(record.lastHlcReplicaId)),
+        )
+    }
+
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) {
+        database.mutationJournalDao().saveLocalReplicaState(ReplicaCausalStateRecord(
+            replicaId = state.replicaId.value,
+            lastCounter = state.lastCounter,
+            observedContextJson = LocalJournalCodec.encodeContext(state.observedContext),
+            lastHlcPhysicalMillis = state.lastHlc.physicalMillis,
+            lastHlcLogical = state.lastHlc.logical,
+            lastHlcReplicaId = state.lastHlc.replicaId.value,
+        ))
+    }
+
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) {
+        val operation = mutation.operation
+        database.mutationJournalDao().insertMutationRecord(MutationRecord(
+            mutationId = operation.mutationId,
+            origin = operation.origin.durableName(),
+            dvvJson = LocalJournalCodec.encodeDvv(operation.dvv),
+            hlcPhysicalMillis = operation.hlc.physicalMillis,
+            hlcLogical = operation.hlc.logical,
+            hlcReplicaId = operation.hlc.replicaId,
+            committedAtEpochMillis = mutation.committedAtEpochMillis,
+        ))
+        database.mutationJournalDao().insertChangeLogEntries(operation.orderedMutations.mapIndexed { ordinal, entry ->
+            ChangeLogEntryRecord(
+                entryId = "${operation.mutationId}:$ordinal",
+                mutationId = operation.mutationId,
+                ordinal = ordinal,
+                entityKind = entry.entityKind.name,
+                entityId = entry.entityId,
+                operationKind = entry.operationKind(),
+                beforeImageJson = LocalJournalCodec.beforeImage(entry),
+                afterImageJson = LocalJournalCodec.afterImage(entry),
+            )
+        })
+        database.mutationJournalDao().insertSyncOperation(SyncOperationJournalRecord(operation.mutationId, LocalJournalCodec.version, LocalJournalCodec.encode(operation)))
+        operation.orderedMutations.filterIsInstance<FocusBlockDelete>().forEach { delete ->
+            database.mutationJournalDao().upsertFocusBlockTombstone(FocusBlockTombstoneRecord(
+                focusBlockId = delete.before.id,
+                deletionMutationId = operation.mutationId,
+                dvvJson = LocalJournalCodec.encodeDvv(operation.dvv),
+                hlcPhysicalMillis = operation.hlc.physicalMillis,
+                hlcLogical = operation.hlc.logical,
+                hlcReplicaId = operation.hlc.replicaId,
+            ))
+        }
+    }
+}
+
+private fun MutationOrigin.durableName(): String = when (this) {
+    MutationOrigin.User -> "USER"
+    MutationOrigin.Planner -> "PLANNER"
+    MutationOrigin.System -> "SYSTEM"
+    is MutationOrigin.Undo -> "UNDO:$originalMutationId"
 }
 
 class RoomEventRepository(private val database: AgenticSchedulerDatabase) : EventRepository {

@@ -37,6 +37,8 @@ import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
 import dev.agenticscheduler.application.planner.PlannerPreview
@@ -47,6 +49,7 @@ import dev.agenticscheduler.database.openDesktopDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
+import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.event.Event
@@ -93,11 +96,12 @@ fun main() = application {
     val profiles = RoomPlanningProfileRepository(database)
     val transactions = RoomApplicationTransactionRunner(database)
     val ids = productionUuidV7Generator()
+    val mutations = MutationCoordinator(transactions, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() })
     val calendar = RepositoryCalendarQueryService(events, tasks, academics)
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, transactions, ids), PlanningProfileSettingsService(profiles, transactions, ids), EventEditingService(events, transactions, ids), TaskEditingService(tasks, transactions, ids))
+                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, transactions, ids, mutations = mutations), PlanningProfileSettingsService(profiles, transactions, ids, mutations), EventEditingService(events, transactions, ids, mutations), TaskEditingService(tasks, transactions, ids, mutations))
             }
         }
     }

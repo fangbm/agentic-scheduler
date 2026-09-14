@@ -11,6 +11,7 @@ wearCompose = "1.6.2"
 kotlinxDatetime = "0.8.0"
 kotlinxCollectionsImmutable = "0.5.2"
 kotlinxCoroutines = "1.11.0"
+kotlinxSerializationJson = "1.11.0"
 room = "3.0.3"
 sqliteBundled = "2.7.0"
 ksp = "2.3.12"
@@ -25,6 +26,7 @@ androidx-wear-compose-material3 = { module = "androidx.wear.compose:compose-mate
 kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.ref = "kotlinxDatetime" }
 kotlinx-collections-immutable = { module = "org.jetbrains.kotlinx:kotlinx-collections-immutable", version.ref = "kotlinxCollectionsImmutable" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 androidx-room3-runtime = { module = "androidx.room3:room3-runtime", version.ref = "room" }
 androidx-room3-compiler = { module = "androidx.room3:room3-compiler", version.ref = "room" }
 androidx-room3-testing = { module = "androidx.room3:room3-testing", version.ref = "room" }
@@ -35,6 +37,7 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 compose-multiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 room3 = { id = "androidx.room3", version.ref = "room" }

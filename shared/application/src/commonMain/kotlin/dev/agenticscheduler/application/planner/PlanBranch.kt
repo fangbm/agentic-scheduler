@@ -1,6 +1,9 @@
 package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationScope
+import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.domain.id.FocusBlockId
@@ -14,6 +17,9 @@ import dev.agenticscheduler.planner.PlannerIssue
 import dev.agenticscheduler.planner.PlannerExplanation
 import dev.agenticscheduler.planner.PlannerResult
 import dev.agenticscheduler.planner.PlanningSnapshot
+import dev.agenticscheduler.sync.FocusBlockDelete
+import dev.agenticscheduler.sync.FocusBlockPut
+import dev.agenticscheduler.sync.MutationOrigin
 import kotlin.time.Instant
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -99,12 +105,21 @@ class PlanBranchApplier(
     private val transactions: ApplicationTransactionRunner,
     private val tasks: TaskRepository,
     private val uuidV7: UuidV7Generator,
+    private val mutations: MutationCoordinator? = null,
     /** A null snapshot means the current facts cannot be resolved safely, so Apply is stale. */
     private val currentSnapshot: suspend () -> PlanningSnapshot?,
 ) {
-    suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult = transactions.inWriteTransaction {
+    suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult {
+        if (mutations != null) {
+            return mutations.executeIfAny(MutationOrigin.Planner) { applyWithin(branch, applyNow, this) }?.value
+                ?: PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+        }
+        return transactions.inWriteTransaction { applyWithin(branch, applyNow, null) }
+    }
+
+    private suspend fun applyWithin(branch: PlanBranch, applyNow: Instant, scope: MutationScope?): PlanBranchApplyResult {
         if (branch.status != PlanBranchStatus.DRAFT || currentSnapshot()?.withoutReferenceNow() != branch.baseFacts.withoutReferenceNow()) {
-            return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+            return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
         val targetIds = branch.mutations.mapNotNull { mutation -> when (mutation) {
             is FocusBlockMutation.Create -> null
@@ -119,25 +134,37 @@ class PlanBranchApplier(
                 is FocusBlockMutation.Resize -> mutation.time.start <= applyNow
                 is FocusBlockMutation.Delete -> false
             }
-        }) return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+        }) return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         val existing = targetIds.associateWith { tasks.getFocusBlock(it) }
-        if (existing.values.any { it == null }) return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+        if (existing.values.any { it == null }) return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         // A PlanBranch only authorizes changes to blocks that are still future at
         // the instant of Apply. Checking only the proposed destination would let a
         // started block be deleted or moved away after the preview was created.
         if (existing.values.filterNotNull().any { it.time.start <= applyNow }) {
-            return@inWriteTransaction PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+            return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
         branch.mutations.forEach { mutation -> when (mutation) {
-            is FocusBlockMutation.Create -> tasks.upsertFocusBlock(FocusBlock(
+            is FocusBlockMutation.Create -> {
+                val created = FocusBlock(
                 id = FocusBlockId(uuidV7.next()), taskId = mutation.draft.taskId, time = mutation.draft.time,
                 flexibility = Flexibility.SOFT, pinState = PinState.UNPINNED,
-            ))
-            is FocusBlockMutation.Move -> tasks.upsertFocusBlock(requireNotNull(existing[mutation.id]).copy(time = mutation.time))
-            is FocusBlockMutation.Resize -> tasks.upsertFocusBlock(requireNotNull(existing[mutation.id]).copy(time = mutation.time))
-            is FocusBlockMutation.Delete -> tasks.deleteFocusBlock(mutation.id)
+                )
+                tasks.upsertFocusBlock(created)
+                scope?.record(FocusBlockPut(null, created.toSemanticImage()))
+            }
+            is FocusBlockMutation.Move -> {
+                val before = requireNotNull(existing[mutation.id]); val after = before.copy(time = mutation.time)
+                tasks.upsertFocusBlock(after); scope?.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
+            }
+            is FocusBlockMutation.Resize -> {
+                val before = requireNotNull(existing[mutation.id]); val after = before.copy(time = mutation.time)
+                tasks.upsertFocusBlock(after); scope?.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
+            }
+            is FocusBlockMutation.Delete -> {
+                val before = requireNotNull(existing[mutation.id]); tasks.deleteFocusBlock(mutation.id); scope?.record(FocusBlockDelete(before.toSemanticImage()))
+            }
         } }
-        PlanBranchApplyResult.Applied(branch.copy(status = PlanBranchStatus.APPLIED))
+        return PlanBranchApplyResult.Applied(branch.copy(status = PlanBranchStatus.APPLIED))
     }
 }
 

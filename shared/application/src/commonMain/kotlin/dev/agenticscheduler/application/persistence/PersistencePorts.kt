@@ -5,10 +5,32 @@ import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.*
 import dev.agenticscheduler.domain.planning.PlanningProfile
 import dev.agenticscheduler.domain.task.*
+import dev.agenticscheduler.sync.HlcTimestamp
+import dev.agenticscheduler.sync.ReplicaId
+import dev.agenticscheduler.sync.SyncOperation
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
 
 interface ApplicationTransactionRunner { suspend fun <T> inWriteTransaction(block: suspend () -> T): T }
+
+/** Durable D7 journal boundary. Implementations participate in the caller's application transaction. */
+interface MutationJournalRepository {
+    suspend fun localReplicaState(): LocalReplicaCausalState?
+    suspend fun saveLocalReplicaState(state: LocalReplicaCausalState)
+    suspend fun appendCommittedMutation(mutation: CommittedMutation)
+}
+
+data class LocalReplicaCausalState(
+    val replicaId: ReplicaId,
+    val lastCounter: Long,
+    val observedContext: Map<ReplicaId, Long>,
+    val lastHlc: HlcTimestamp,
+) { init { require(lastCounter >= 0) } }
+
+data class CommittedMutation(
+    val operation: SyncOperation,
+    val committedAtEpochMillis: Long,
+)
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }
 interface TaskRepository {
     fun observeTasks(): Flow<ImmutableList<Task>>; suspend fun getTask(id: TaskId): Task?; suspend fun upsertTask(task: Task)

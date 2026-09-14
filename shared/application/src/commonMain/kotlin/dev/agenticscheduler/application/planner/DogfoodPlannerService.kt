@@ -1,6 +1,8 @@
 package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.EventRepository
@@ -15,6 +17,8 @@ import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlannerIssue
 import dev.agenticscheduler.planner.PlanningHorizon
 import dev.agenticscheduler.planner.PlanningSnapshot
+import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.PlanningProfilePut
 import kotlin.time.Instant
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.first
@@ -33,6 +37,7 @@ class DogfoodPlannerService(
     private val uuidV7: UuidV7Generator,
     private val planner: DeterministicPlanner = DeterministicPlanner(),
     private val snapshotAssembler: PlanningSnapshotAssembler = PlanningSnapshotAssembler(),
+    private val mutations: MutationCoordinator? = null,
 ) {
     private val previews = PlannerPreviewService(planner, PlanBranchFactory(uuidV7))
 
@@ -70,6 +75,7 @@ class DogfoodPlannerService(
                     is SnapshotAssembly.Invalid -> null
                 }
             },
+            mutations = mutations,
         ).apply(branch, applyNow)
     }
 
@@ -150,19 +156,30 @@ class PlanningProfileSettingsService(
     private val profiles: PlanningProfileRepository,
     private val transactions: ApplicationTransactionRunner,
     private val uuidV7: UuidV7Generator,
+    private val mutations: MutationCoordinator? = null,
 ) {
-    suspend fun createUnconfigured(name: String): PlanningProfile = transactions.inWriteTransaction {
+    suspend fun createUnconfigured(name: String): PlanningProfile {
         val profile = PlanningProfile(
             PlanningProfileId(uuidV7.next()),
             name,
             dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured,
         )
-        profiles.upsert(profile)
-        profile
+        return mutations?.execute(MutationOrigin.User) {
+            profiles.upsert(profile)
+            record(PlanningProfilePut(null, profile.toSemanticImage()))
+            profile
+        }?.value ?: transactions.inWriteTransaction { profiles.upsert(profile); profile }
     }
 
-    suspend fun save(profile: PlanningProfile): PlanningProfile = transactions.inWriteTransaction {
-        profiles.upsert(profile)
-        profile
+    suspend fun save(profile: PlanningProfile): PlanningProfile {
+        if (mutations != null) {
+            return mutations.execute(MutationOrigin.User) {
+                val before = profiles.get(profile.id)
+                profiles.upsert(profile)
+                record(PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage()))
+                profile
+            }.value
+        }
+        return transactions.inWriteTransaction { profiles.upsert(profile); profile }
     }
 }

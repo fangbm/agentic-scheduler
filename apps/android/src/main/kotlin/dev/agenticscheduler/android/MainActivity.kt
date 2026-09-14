@@ -38,6 +38,8 @@ import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranch
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
@@ -49,6 +51,7 @@ import dev.agenticscheduler.database.openAndroidDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
+import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.event.Event
@@ -93,13 +96,14 @@ class MainActivity : ComponentActivity() {
     private val ids by lazy { productionUuidV7Generator() }
     private val academics by lazy { RoomAcademicRepository(database) }
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
+    private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
     private val calendarQueryService: CalendarQueryService by lazy {
         RepositoryCalendarQueryService(events, tasks, academics)
     }
-    private val eventEditor by lazy { EventEditingService(events, transactionRunner, ids) }
-    private val taskEditor by lazy { TaskEditingService(tasks, transactionRunner, ids) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, transactionRunner, ids) }
-    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, transactionRunner, ids) }
+    private val eventEditor by lazy { EventEditingService(events, transactionRunner, ids, mutations) }
+    private val taskEditor by lazy { TaskEditingService(tasks, transactionRunner, ids, mutations) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, transactionRunner, ids, mutations = mutations) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, transactionRunner, ids, mutations) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
