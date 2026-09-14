@@ -45,6 +45,9 @@ import dev.agenticscheduler.sync.PlanningProfilePut
 import dev.agenticscheduler.sync.TaskPut
 import dev.agenticscheduler.sync.WorkLogAppend
 import dev.agenticscheduler.sync.GenericFactImage
+import dev.agenticscheduler.sync.AcademicYearPut
+import dev.agenticscheduler.sync.TaskDependencyPut
+import dev.agenticscheduler.sync.operationKind
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -147,12 +150,27 @@ class UndoServiceTest {
         assertEquals(first, failedTasks.focus); assertEquals(diverged, failedTasks.extraFocus); assertEquals(emptyList(), failedJournal.mutations)
     }
 
-    @Test fun `unsupported D7 undo reports a structured result without writing`() = kotlinx.coroutines.runBlocking {
-        val journal = MemoryJournalForUndo()
-        val operation = WorkLogAppend(GenericFactImage("00000000-0000-7000-8000-000000000070", emptyList()))
-        val result = UndoService(coordinator(journal), MemoryHistory("00000000-0000-7000-8000-000000000071", operation), unusedEvents(), MemoryTasksForUndo(), MemoryProfiles()).undo("00000000-0000-7000-8000-000000000071")
-        assertIs<UndoResult.Unsupported>(result)
-        assertEquals(emptyList(), journal.mutations)
+    @Test fun `every frozen unsupported Undo category returns a structured result without writing`() = kotlinx.coroutines.runBlocking {
+        val event = event(EventId("00000000-0000-7000-8000-000000000070"), "created")
+        val task = task(TaskId("00000000-0000-7000-8000-000000000071"), "created")
+        val genericBefore = GenericFactImage("00000000-0000-7000-8000-000000000072", emptyList())
+        val genericAfter = GenericFactImage("00000000-0000-7000-8000-000000000073", emptyList())
+        val unsupported = listOf<EntityMutation>(
+            EventPut(null, event.toSemanticImage()),
+            TaskPut(null, task.toSemanticImage()),
+            AcademicYearPut(null, genericAfter),
+            AcademicYearPut(genericBefore, genericAfter),
+            TaskDependencyPut(null, genericAfter),
+            WorkLogAppend(genericAfter),
+        )
+        unsupported.forEachIndexed { index, operation ->
+            val mutationId = "00000000-0000-7000-8000-0000000001${index.toString().padStart(2, '0')}"
+            val journal = MemoryJournalForUndo()
+            val result = UndoService(coordinator(journal), MemoryHistory(mutationId, operation), unusedEvents(), MemoryTasksForUndo(), MemoryProfiles()).undo(mutationId)
+            assertIs<UndoResult.Unsupported>(result, operation.operationKind())
+            assertEquals(emptyList(), journal.mutations, operation.operationKind())
+        }
+        Unit
     }
 
     @Test fun `replay journals an older focus put without resurrecting its tombstone`() = kotlinx.coroutines.runBlocking {
@@ -183,13 +201,18 @@ class UndoServiceTest {
         assertEquals(listOf(newer, older), journal.mutations.map(CommittedMutation::operation))
     }
 
-    @Test fun `replay duplicate is idempotent and does not append a second journal entry`() = kotlinx.coroutines.runBlocking {
+    @Test fun `replaying the same operation twice is idempotent for both Active State and journal`() = kotlinx.coroutines.runBlocking {
         val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000090", "00000000-0000-7000-8000-000000000091", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED"))
         val operation = SyncOperation("00000000-0000-7000-8000-000000000092", DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(put))
         val journal = MemoryJournalForUndo()
-        val history = MemoryHistory(operation.mutationId, put)
-        val result = FocusBlockOperationReplayer(IdentityTransactionsForUndo, journal, history, MemoryTasksForUndo(), RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 }).replay(operation)
-        assertEquals(FocusBlockReplayResult.Duplicate, result); assertEquals(emptyList(), journal.mutations)
+        val history = MemoryHistory("irrelevant", put, present = false, mutationProvider = { id -> journal.mutations.firstOrNull { it.operation.mutationId == id } })
+        val tasks = MemoryTasksForUndo()
+        val replayer = FocusBlockOperationReplayer(IdentityTransactionsForUndo, journal, history, tasks, RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 })
+        assertEquals(FocusBlockReplayResult.Applied, replayer.replay(operation))
+        val applied = tasks.focus
+        assertEquals(FocusBlockReplayResult.Duplicate, replayer.replay(operation))
+        assertEquals(applied, tasks.focus)
+        assertEquals(listOf(operation), journal.mutations.map(CommittedMutation::operation))
     }
 
     private fun event(id: EventId, title: String) = Event(id, title, dev.agenticscheduler.domain.time.AllDayRange(kotlinx.datetime.LocalDate(2026, 1, 1), kotlinx.datetime.LocalDate(2026, 1, 2)), dev.agenticscheduler.domain.planning.Flexibility.HARD, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
@@ -207,9 +230,9 @@ private class MemoryJournalForUndo : MutationJournalRepository {
     override suspend fun appendCommittedMutation(mutation: CommittedMutation) { mutations += mutation }
     override suspend fun advanceFocusBlockTombstones(operation: SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) { acceptedDeletes.forEach { delete -> tombstones[delete.entityId] = FocusBlockTombstone(delete.entityId, dev.agenticscheduler.sync.MutationId(operation.mutationId), operation.dvv) } }
 }
-private class MemoryHistory(val id: String, mutation: EntityMutation, private val tombstone: FocusBlockTombstone? = null, private val present: Boolean = true, extraMutations: List<EntityMutation> = emptyList(), private val tombstoneProvider: (() -> FocusBlockTombstone?)? = null) : HistoryRepository {
+private class MemoryHistory(val id: String, mutation: EntityMutation, private val tombstone: FocusBlockTombstone? = null, private val present: Boolean = true, extraMutations: List<EntityMutation> = emptyList(), private val tombstoneProvider: (() -> FocusBlockTombstone?)? = null, private val mutationProvider: ((String) -> CommittedMutation?)? = null) : HistoryRepository {
     private val value = CommittedMutation(SyncOperation(id, DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 0)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(mutation) + extraMutations), 1)
-    override suspend fun timeline() = listOf(value); override suspend fun mutation(mutationId: String) = value.takeIf { present && it.operation.mutationId == mutationId }
+    override suspend fun timeline() = listOf(value); override suspend fun mutation(mutationId: String) = mutationProvider?.invoke(mutationId) ?: value.takeIf { present && it.operation.mutationId == mutationId }
     override suspend fun entityChanges(entityKind: EntityKind, entityId: String) = emptyList<HistoryChange>(); override suspend fun diff(mutationId: String) = emptyList<HistoryChange>()
     override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = (tombstoneProvider?.invoke() ?: tombstone)?.takeIf { it.focusBlockId == focusBlockId }
 }

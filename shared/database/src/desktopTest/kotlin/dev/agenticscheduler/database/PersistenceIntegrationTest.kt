@@ -56,6 +56,9 @@ import dev.agenticscheduler.domain.id.TaskDependencyId
 import dev.agenticscheduler.domain.id.PlanningProfileId
 import dev.agenticscheduler.domain.id.AcademicHolidayId
 import dev.agenticscheduler.sync.operationKind
+import dev.agenticscheduler.sync.FocusBlockImage
+import dev.agenticscheduler.sync.FocusBlockPut
+import dev.agenticscheduler.sync.MutationOrigin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -401,6 +404,28 @@ class PersistenceIntegrationTest {
         assertEquals(emptyList(), events.observeAll().first())
         assertEquals(emptyList(), database.mutationJournalDao().timeline())
         assertEquals(null, database.mutationJournalDao().localReplicaState())
+        database.close()
+    }
+
+    @Test fun `grouped Planner ChangeLog preserves child ordinal and durable diff order`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val tasks = RoomTaskRepository(database)
+        val source = task(70)
+        tasks.upsertTask(source)
+        val first = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(71)), source.id, ZonedTimeRange(Instant.parse("2026-01-01T10:00:00Z"), Instant.parse("2026-01-01T11:00:00Z"), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
+        val second = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(72)), source.id, ZonedTimeRange(Instant.parse("2026-01-01T11:00:00Z"), Instant.parse("2026-01-01T12:00:00Z"), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), RoomMutationJournalRepository(database), ids, MutationWallClock { 1 })
+        val committed = coordinator.execute(MutationOrigin.Planner) {
+            tasks.upsertFocusBlock(first)
+            record(FocusBlockPut(null, FocusBlockImage(first.id.value, first.taskId.value, first.time.start.toString(), first.time.endExclusive.toString(), first.time.timeZone.id, first.flexibility.name, first.pinState.name)))
+            tasks.upsertFocusBlock(second)
+            record(FocusBlockPut(null, FocusBlockImage(second.id.value, second.taskId.value, second.time.start.toString(), second.time.endExclusive.toString(), second.time.timeZone.id, second.flexibility.name, second.pinState.name)))
+        }
+        val diff = RoomMutationJournalRepository(database).diff(committed.mutationId.value)
+        assertEquals(listOf(0, 1), diff.map { it.ordinal })
+        assertEquals(listOf(first.id.value, second.id.value), diff.map { it.entityId })
+        assertTrue(diff.all { it.beforeImageJson == null && it.afterImageJson != null })
         database.close()
     }
 

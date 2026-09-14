@@ -2,7 +2,7 @@
 
 > Task ID: **D8-01 / D8-02 / D8-03**  
 > Milestone: **D8 — Sync / E2EE / Server**  
-> Status: **SPEC FROZEN — READY AFTER D7**  
+> Status: **SPEC FROZEN — READY FOR IMPLEMENTATION (D7 COMPLETE)**
 > Date: 2026-09-12  
 > Decision source: `docs/SYNC_SECURITY_DECISIONS.md`
 

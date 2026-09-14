@@ -2,7 +2,7 @@
 
 > Task ID: **D7-01 / D7-02 / D7-03**  
 > Milestone: **D7 — Audit / Mutation / Sync Foundation**  
-> Status: **SPEC FROZEN — READY AFTER D6**  
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE**
 > Date: 2026-09-12  
 > Decision source: `docs/HISTORY_SYNC_DECISIONS.md`
 
