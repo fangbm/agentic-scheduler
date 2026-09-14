@@ -2,7 +2,7 @@
 
 > Task ID: **D8-01 / D8-02 / D8-03**  
 > Milestone: **D8 — Sync / E2EE / Server**  
-> Status: **SPEC FROZEN — READY FOR IMPLEMENTATION (D7 COMPLETE)**
+> Status: **SPEC FROZEN — D8-01b paused for D7.1 typed-semantic rebaseline**
 > Date: 2026-09-12  
 > Decision source: `docs/SYNC_SECURITY_DECISIONS.md`
 
@@ -41,6 +41,10 @@ this Task Spec
 ```
 
 D8 implementation must not begin until D7 is COMPLETE.
+
+D8-01a must be revalidated after the D7.1 HST-002A amendment. D8-01b and later
+may begin only after every D7 semantic operation payload uses the canonical
+strongly typed image model; no GenericFact compatibility path is permitted.
 
 OD-012 local database encryption remains a separate production-sensitive-data release gate; it does not block protocol implementation/tests.
 

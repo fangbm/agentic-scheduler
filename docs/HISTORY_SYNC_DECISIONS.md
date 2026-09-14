@@ -65,6 +65,37 @@ WorkLog remains append-oriented: an existing WorkLog ID with different content i
 
 ---
 
+# HST-002A — Strongly typed semantic images
+
+> Status: **D7.1 AMENDMENT — FROZEN before D8 receive implementation**
+
+Every synchronized `EntityMutation` owns a canonical, strongly typed semantic
+image. `GenericFactImage` and `SemanticField` were pre-release implementation
+drafts and are removed; they have no compatibility or decoder obligation.
+
+`shared:sync` continues to own the serializable image DTOs and does not depend
+on Domain. `:shared:application` owns explicit two-way mappers between Domain
+objects and those images. The mapper reconstructs Domain objects so existing
+Domain and cross-entity validation remains the final authority.
+
+The semantic image model uses dedicated enums and sealed variants for states
+such as time placement, deadlines, course time, room override, and exam
+schedule. It must not encode those states as kind strings plus nullable fields.
+Canonical collection ordering is part of normalized equality:
+
+```text
+AcademicWeek / AcademicPeriod        number ascending
+TeachingWeekSet                       ascending and unique
+PlanningProfile availability          weekday, then start/end
+DVV context                           ReplicaId lexicographic
+```
+
+The D7 journal's `LocalJournalCodec.version` remains `1`: no released durable
+data exists, so old development JSON is intentionally unsupported. This changes
+no Room schema and does not alter the HST-002 operation vocabulary.
+
+---
+
 # HST-003 — Delete/tombstone scope v1
 
 D7 authorizes synchronized deletion semantics only for `FocusBlock`, because D6 already has an explicit `deleteFocusBlock` application/persistence path.

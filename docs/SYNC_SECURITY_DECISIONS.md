@@ -462,6 +462,30 @@ schedule
 
 ---
 
+# SYN-014A — Typed semantic normalization and Exam reference group
+
+> Status: **D7.1 AMENDMENT — FROZEN before D8 receive implementation**
+
+D8 semantic merge consumes the canonical strong semantic images from HST-002A;
+it never interprets `Map<String, String>` or runtime-defined field schemas.
+Normalized equality is image equality after the frozen collection
+canonicalization rules.
+
+Exam adds one structural reference group:
+
+```text
+reference = semesterId + courseId
+title
+schedule
+```
+
+`schedule` is always one sealed value. Concurrent `DateOnly` and `Exact`
+values therefore conflict rather than being field-spliced. Academic aggregates
+remain conservative whole-aggregate groups; this amendment does not introduce
+finer-grained academic merge.
+
+---
+
 # SYN-015 — Conflict resolution UX contract
 
 `SyncConflict` stores structured references to:
