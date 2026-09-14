@@ -8,6 +8,8 @@ import dev.agenticscheduler.domain.task.*
 import dev.agenticscheduler.sync.HlcTimestamp
 import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.SyncOperation
+import dev.agenticscheduler.sync.EntityKind
+import dev.agenticscheduler.sync.MutationId
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
 
@@ -31,6 +33,26 @@ data class CommittedMutation(
     val operation: SyncOperation,
     val committedAtEpochMillis: Long,
 )
+
+interface HistoryRepository {
+    suspend fun timeline(): List<CommittedMutation>
+    suspend fun mutation(mutationId: String): CommittedMutation?
+    suspend fun entityChanges(entityKind: EntityKind, entityId: String): List<HistoryChange>
+    suspend fun diff(mutationId: String): List<HistoryChange>
+    suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone?
+}
+
+data class HistoryChange(
+    val mutationId: String,
+    val ordinal: Int,
+    val entityKind: EntityKind,
+    val entityId: String,
+    val operationKind: String,
+    val beforeImageJson: String?,
+    val afterImageJson: String?,
+)
+
+data class FocusBlockTombstone(val focusBlockId: String, val deletionMutationId: MutationId)
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }
 interface TaskRepository {
     fun observeTasks(): Flow<ImmutableList<Task>>; suspend fun getTask(id: TaskId): Task?; suspend fun upsertTask(task: Task)

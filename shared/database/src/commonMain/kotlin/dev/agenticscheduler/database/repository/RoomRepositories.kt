@@ -21,6 +21,7 @@ import dev.agenticscheduler.database.record.SyncOperationJournalRecord
 import dev.agenticscheduler.sync.FocusBlockDelete
 import dev.agenticscheduler.sync.LocalJournalCodec
 import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.HlcTimestamp
 import dev.agenticscheduler.sync.operationKind
@@ -30,7 +31,7 @@ class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDat
 }
 
 /** Room implementation of the D7 atomic journal port; callers already own the write transaction. */
-class RoomMutationJournalRepository(private val database: AgenticSchedulerDatabase) : MutationJournalRepository {
+class RoomMutationJournalRepository(private val database: AgenticSchedulerDatabase) : MutationJournalRepository, HistoryRepository {
     override suspend fun localReplicaState(): LocalReplicaCausalState? = database.mutationJournalDao().localReplicaState()?.let { record ->
         LocalReplicaCausalState(
             replicaId = ReplicaId(record.replicaId),
@@ -86,7 +87,24 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
             ))
         }
     }
+
+    override suspend fun timeline(): List<CommittedMutation> = database.mutationJournalDao().timeline().mapNotNull { record -> mutation(record.mutationId) }
+
+    override suspend fun mutation(mutationId: String): CommittedMutation? {
+        val record = database.mutationJournalDao().syncOperation(mutationId) ?: return null
+        val metadata = database.mutationJournalDao().mutationRecord(mutationId) ?: return null
+        return CommittedMutation(LocalJournalCodec.decode(record.operationJson), metadata.committedAtEpochMillis)
+    }
+
+    override suspend fun entityChanges(entityKind: dev.agenticscheduler.sync.EntityKind, entityId: String): List<HistoryChange> =
+        database.mutationJournalDao().entityEntries(entityKind.name, entityId).map { it.toHistoryChange() }
+
+    override suspend fun diff(mutationId: String): List<HistoryChange> = database.mutationJournalDao().entries(mutationId).map { it.toHistoryChange() }
+
+    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId)) }
 }
+
+private fun ChangeLogEntryRecord.toHistoryChange() = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson)
 
 private fun MutationOrigin.durableName(): String = when (this) {
     MutationOrigin.User -> "USER"
