@@ -44,7 +44,10 @@ import dev.agenticscheduler.sync.EntityMutation
 import dev.agenticscheduler.sync.PlanningProfilePut
 import dev.agenticscheduler.sync.TaskPut
 import dev.agenticscheduler.sync.WorkLogAppend
-import dev.agenticscheduler.sync.GenericFactImage
+import dev.agenticscheduler.sync.AcademicYearImage
+import dev.agenticscheduler.sync.TaskDependencyImage
+import dev.agenticscheduler.sync.WorkLogImage
+import dev.agenticscheduler.sync.ZonedTimeRangeImage
 import dev.agenticscheduler.sync.AcademicYearPut
 import dev.agenticscheduler.sync.TaskDependencyPut
 import dev.agenticscheduler.sync.operationKind
@@ -153,15 +156,17 @@ class UndoServiceTest {
     @Test fun `every frozen unsupported Undo category returns a structured result without writing`() = kotlinx.coroutines.runBlocking {
         val event = event(EventId("00000000-0000-7000-8000-000000000070"), "created")
         val task = task(TaskId("00000000-0000-7000-8000-000000000071"), "created")
-        val genericBefore = GenericFactImage("00000000-0000-7000-8000-000000000072", emptyList())
-        val genericAfter = GenericFactImage("00000000-0000-7000-8000-000000000073", emptyList())
+        val academicBefore = AcademicYearImage("00000000-0000-7000-8000-000000000072", "before", "2026-01-01", "2027-01-01")
+        val academicAfter = AcademicYearImage("00000000-0000-7000-8000-000000000073", "after", "2027-01-01", "2028-01-01")
+        val dependency = TaskDependencyImage("00000000-0000-7000-8000-000000000074", "00000000-0000-7000-8000-000000000075", "00000000-0000-7000-8000-000000000076")
+        val workLog = WorkLogImage("00000000-0000-7000-8000-000000000077", "00000000-0000-7000-8000-000000000071", ZonedTimeRangeImage("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", "UTC"))
         val unsupported = listOf<EntityMutation>(
             EventPut(null, event.toSemanticImage()),
             TaskPut(null, task.toSemanticImage()),
-            AcademicYearPut(null, genericAfter),
-            AcademicYearPut(genericBefore, genericAfter),
-            TaskDependencyPut(null, genericAfter),
-            WorkLogAppend(genericAfter),
+            AcademicYearPut(null, academicAfter),
+            AcademicYearPut(academicBefore, academicAfter),
+            TaskDependencyPut(null, dependency),
+            WorkLogAppend(workLog),
         )
         unsupported.forEachIndexed { index, operation ->
             val mutationId = "00000000-0000-7000-8000-0000000001${index.toString().padStart(2, '0')}"

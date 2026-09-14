@@ -48,16 +48,16 @@ sealed interface EntityMutation { val entityKind: EntityKind; val entityId: Stri
 @Serializable @SerialName("PlanningProfilePut") data class PlanningProfilePut(val before: PlanningProfileImage?, val after: PlanningProfileImage) : EntityMutation { override val entityKind = EntityKind.PLANNING_PROFILE; override val entityId get() = after.id }
 @Serializable @SerialName("FocusBlockPut") data class FocusBlockPut(val before: FocusBlockImage?, val after: FocusBlockImage) : EntityMutation { override val entityKind = EntityKind.FOCUS_BLOCK; override val entityId get() = after.id }
 @Serializable @SerialName("FocusBlockDelete") data class FocusBlockDelete(val before: FocusBlockImage) : EntityMutation { override val entityKind = EntityKind.FOCUS_BLOCK; override val entityId get() = before.id }
-@Serializable @SerialName("WorkLogAppend") data class WorkLogAppend(val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.WORK_LOG; override val entityId get() = after.id }
-@Serializable @SerialName("TaskDependencyPut") data class TaskDependencyPut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.TASK_DEPENDENCY; override val entityId get() = after.id }
-@Serializable @SerialName("AcademicYearPut") data class AcademicYearPut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.ACADEMIC_YEAR; override val entityId get() = after.id }
-@Serializable @SerialName("SemesterPut") data class SemesterPut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.SEMESTER; override val entityId get() = after.id }
-@Serializable @SerialName("CoursePut") data class CoursePut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.COURSE; override val entityId get() = after.id }
-@Serializable @SerialName("PeriodTemplatePut") data class PeriodTemplatePut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.PERIOD_TEMPLATE; override val entityId get() = after.id }
-@Serializable @SerialName("AcademicHolidayPut") data class AcademicHolidayPut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.ACADEMIC_HOLIDAY; override val entityId get() = after.id }
-@Serializable @SerialName("CourseScheduleRulePut") data class CourseScheduleRulePut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.COURSE_SCHEDULE_RULE; override val entityId get() = after.id }
-@Serializable @SerialName("CourseOccurrenceExceptionPut") data class CourseOccurrenceExceptionPut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.COURSE_OCCURRENCE_EXCEPTION; override val entityId get() = after.id }
-@Serializable @SerialName("ExamPut") data class ExamPut(val before: GenericFactImage?, val after: GenericFactImage) : EntityMutation { override val entityKind = EntityKind.EXAM; override val entityId get() = after.id }
+@Serializable @SerialName("WorkLogAppend") data class WorkLogAppend(val after: WorkLogImage) : EntityMutation { override val entityKind = EntityKind.WORK_LOG; override val entityId get() = after.id }
+@Serializable @SerialName("TaskDependencyPut") data class TaskDependencyPut(val before: TaskDependencyImage?, val after: TaskDependencyImage) : EntityMutation { override val entityKind = EntityKind.TASK_DEPENDENCY; override val entityId get() = after.id }
+@Serializable @SerialName("AcademicYearPut") data class AcademicYearPut(val before: AcademicYearImage?, val after: AcademicYearImage) : EntityMutation { override val entityKind = EntityKind.ACADEMIC_YEAR; override val entityId get() = after.id }
+@Serializable @SerialName("SemesterPut") data class SemesterPut(val before: SemesterImage?, val after: SemesterImage) : EntityMutation { override val entityKind = EntityKind.SEMESTER; override val entityId get() = after.id }
+@Serializable @SerialName("CoursePut") data class CoursePut(val before: CourseImage?, val after: CourseImage) : EntityMutation { override val entityKind = EntityKind.COURSE; override val entityId get() = after.id }
+@Serializable @SerialName("PeriodTemplatePut") data class PeriodTemplatePut(val before: PeriodTemplateImage?, val after: PeriodTemplateImage) : EntityMutation { override val entityKind = EntityKind.PERIOD_TEMPLATE; override val entityId get() = after.id }
+@Serializable @SerialName("AcademicHolidayPut") data class AcademicHolidayPut(val before: AcademicHolidayImage?, val after: AcademicHolidayImage) : EntityMutation { override val entityKind = EntityKind.ACADEMIC_HOLIDAY; override val entityId get() = after.id }
+@Serializable @SerialName("CourseScheduleRulePut") data class CourseScheduleRulePut(val before: CourseScheduleRuleImage?, val after: CourseScheduleRuleImage) : EntityMutation { override val entityKind = EntityKind.COURSE_SCHEDULE_RULE; override val entityId get() = after.id }
+@Serializable @SerialName("CourseOccurrenceExceptionPut") data class CourseOccurrenceExceptionPut(val before: CourseOccurrenceExceptionImage?, val after: CourseOccurrenceExceptionImage) : EntityMutation { override val entityKind = EntityKind.COURSE_OCCURRENCE_EXCEPTION; override val entityId get() = after.id }
+@Serializable @SerialName("ExamPut") data class ExamPut(val before: ExamImage?, val after: ExamImage) : EntityMutation { override val entityKind = EntityKind.EXAM; override val entityId get() = after.id }
 
 /** Explicit normalized source-fact images used by D7's currently writable commands. */
 @Serializable data class EventImage(val id: String, val title: String, val flexibility: String, val pinState: String, val timeKind: String, val start: String, val endExclusive: String, val timeZone: String? = null)
@@ -65,10 +65,6 @@ sealed interface EntityMutation { val entityKind: EntityKind; val entityId: Stri
 @Serializable data class PlanningProfileImage(val id: String, val name: String, val configurationState: String, val timeZone: String? = null, val weeklyAvailability: List<AvailabilityWindowImage> = emptyList(), val minimumFocusDuration: String? = null, val preferredFocusDuration: String? = null, val maximumFocusDuration: String? = null, val allDayEventPolicy: String? = null)
 @Serializable data class AvailabilityWindowImage(val dayOfWeek: String, val start: String, val endExclusive: String)
 @Serializable data class FocusBlockImage(val id: String, val taskId: String, val start: String, val endExclusive: String, val timeZone: String, val flexibility: String, val pinState: String)
-
-/** Used only by unsupported-in-D7 command vocabulary; it is not a generic mutation API. */
-@Serializable data class GenericFactImage(val id: String, val fields: List<SemanticField>) { init { require(fields == fields.sortedBy(SemanticField::name)) { "Semantic fields must be canonical." } } }
-@Serializable data class SemanticField(val name: String, val value: String)
 
 object LocalJournalCodec {
     const val version: Int = 1
@@ -89,15 +85,15 @@ object LocalJournalCodec {
         is FocusBlockPut -> mutation.before?.let { json.encodeToString(FocusBlockImage.serializer(), it) }
         is FocusBlockDelete -> json.encodeToString(FocusBlockImage.serializer(), mutation.before)
         is WorkLogAppend -> null
-        is TaskDependencyPut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is AcademicYearPut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is SemesterPut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is CoursePut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is PeriodTemplatePut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is AcademicHolidayPut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is CourseScheduleRulePut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is CourseOccurrenceExceptionPut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
-        is ExamPut -> mutation.before?.let { json.encodeToString(GenericFactImage.serializer(), it) }
+        is TaskDependencyPut -> mutation.before?.let { json.encodeToString(TaskDependencyImage.serializer(), it) }
+        is AcademicYearPut -> mutation.before?.let { json.encodeToString(AcademicYearImage.serializer(), it) }
+        is SemesterPut -> mutation.before?.let { json.encodeToString(SemesterImage.serializer(), it) }
+        is CoursePut -> mutation.before?.let { json.encodeToString(CourseImage.serializer(), it) }
+        is PeriodTemplatePut -> mutation.before?.let { json.encodeToString(PeriodTemplateImage.serializer(), it) }
+        is AcademicHolidayPut -> mutation.before?.let { json.encodeToString(AcademicHolidayImage.serializer(), it) }
+        is CourseScheduleRulePut -> mutation.before?.let { json.encodeToString(CourseScheduleRuleImage.serializer(), it) }
+        is CourseOccurrenceExceptionPut -> mutation.before?.let { json.encodeToString(CourseOccurrenceExceptionImage.serializer(), it) }
+        is ExamPut -> mutation.before?.let { json.encodeToString(ExamImage.serializer(), it) }
     }
 
     fun afterImage(mutation: EntityMutation): String? = when (mutation) {
@@ -106,16 +102,16 @@ object LocalJournalCodec {
         is PlanningProfilePut -> json.encodeToString(PlanningProfileImage.serializer(), mutation.after)
         is FocusBlockPut -> json.encodeToString(FocusBlockImage.serializer(), mutation.after)
         is FocusBlockDelete -> null
-        is WorkLogAppend -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is TaskDependencyPut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is AcademicYearPut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is SemesterPut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is CoursePut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is PeriodTemplatePut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is AcademicHolidayPut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is CourseScheduleRulePut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is CourseOccurrenceExceptionPut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
-        is ExamPut -> json.encodeToString(GenericFactImage.serializer(), mutation.after)
+        is WorkLogAppend -> json.encodeToString(WorkLogImage.serializer(), mutation.after)
+        is TaskDependencyPut -> json.encodeToString(TaskDependencyImage.serializer(), mutation.after)
+        is AcademicYearPut -> json.encodeToString(AcademicYearImage.serializer(), mutation.after)
+        is SemesterPut -> json.encodeToString(SemesterImage.serializer(), mutation.after)
+        is CoursePut -> json.encodeToString(CourseImage.serializer(), mutation.after)
+        is PeriodTemplatePut -> json.encodeToString(PeriodTemplateImage.serializer(), mutation.after)
+        is AcademicHolidayPut -> json.encodeToString(AcademicHolidayImage.serializer(), mutation.after)
+        is CourseScheduleRulePut -> json.encodeToString(CourseScheduleRuleImage.serializer(), mutation.after)
+        is CourseOccurrenceExceptionPut -> json.encodeToString(CourseOccurrenceExceptionImage.serializer(), mutation.after)
+        is ExamPut -> json.encodeToString(ExamImage.serializer(), mutation.after)
     }
 }
 
