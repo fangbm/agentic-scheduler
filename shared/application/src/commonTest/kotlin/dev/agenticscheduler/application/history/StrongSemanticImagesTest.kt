@@ -53,6 +53,15 @@ class StrongSemanticImagesTest {
         }
         val cancelled = CourseOccurrenceException(CourseOccurrenceExceptionId(id(24)), CourseOccurrenceKey(CourseScheduleRuleId(id(25)), AcademicWeekNumber(1)), CourseOccurrenceDisposition.CANCELLED, null, RoomOverride.Unchanged)
         assertEquals(cancelled, cancelled.toSemanticImage().toDomain())
+
+        val zoned = dev.agenticscheduler.domain.event.Event(EventId(id(26)), "Zoned", range("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", zone), Flexibility.FLEXIBLE, PinState.PINNED)
+        val floating = dev.agenticscheduler.domain.event.Event(EventId(id(27)), "Floating", dev.agenticscheduler.domain.time.FloatingTimeRange(kotlinx.datetime.LocalDateTime.parse("2026-01-01T09:00"), kotlinx.datetime.LocalDateTime.parse("2026-01-01T10:00")), Flexibility.SOFT, PinState.UNPINNED)
+        val exactDeadline = Task(TaskId(id(28)), "Exact", TaskStatus.IN_PROGRESS, TaskPriority.HIGH, TaskEffort(null, 0.hours, null), TaskDeadline(Deadline.Exact(Instant.parse("2026-01-01T09:00:00Z"), zone), DeadlinePolicy.HARD, OverflowPolicy.ALLOW))
+        val clockRule = CourseScheduleRule(CourseScheduleRuleId(id(29)), CourseId(id(30)), DayOfWeek.TUESDAY, TeachingWeekSet.of(listOf(AcademicWeekNumber(1))), CourseTimeSpec.ClockTime(time("09:00"), time("10:00")), null)
+        val clearRoom = CourseOccurrenceException(CourseOccurrenceExceptionId(id(31)), CourseOccurrenceKey(clockRule.id, AcademicWeekNumber(1)), CourseOccurrenceDisposition.ACTIVE, null, RoomOverride.Clear)
+        assertEquals(zoned, zoned.toSemanticImage().toDomain()); assertEquals(floating, floating.toSemanticImage().toDomain())
+        assertEquals(exactDeadline, exactDeadline.toSemanticImage().toDomain()); assertEquals(clockRule, clockRule.toSemanticImage().toDomain())
+        assertEquals(clearRoom, clearRoom.toSemanticImage().toDomain())
     }
 
     @Test fun `non canonical aggregates and invalid cancelled occurrences are rejected`() {

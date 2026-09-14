@@ -56,22 +56,22 @@ internal fun PlanningProfileImage.toDomain() = PlanningProfile(PlanningProfileId
 
 private fun ZonedTimeRange.toSemanticImage() = ZonedTimeRangeImage(start.toString(), endExclusive.toString(), timeZone.id)
 private fun ZonedTimeRangeImage.toDomain() = ZonedTimeRange(Instant.parse(start), Instant.parse(endExclusive), TimeZone.of(timeZone))
-private fun Flexibility.toImage() = FlexibilityImage.valueOf(name)
-private fun FlexibilityImage.toDomain() = Flexibility.valueOf(name)
-private fun PinState.toImage() = PinStateImage.valueOf(name)
-private fun PinStateImage.toDomain() = PinState.valueOf(name)
-private fun TaskStatus.toImage() = TaskStatusImage.valueOf(name)
-private fun TaskStatusImage.toDomain() = TaskStatus.valueOf(name)
-private fun TaskPriority.toImage() = TaskPriorityImage.valueOf(name)
-private fun TaskPriorityImage.toDomain() = TaskPriority.valueOf(name)
-private fun DeadlinePolicy.toImage() = DeadlinePolicyImage.valueOf(name)
-private fun DeadlinePolicyImage.toDomain() = DeadlinePolicy.valueOf(name)
-private fun OverflowPolicy.toImage() = OverflowPolicyImage.valueOf(name)
-private fun OverflowPolicyImage.toDomain() = OverflowPolicy.valueOf(name)
-private fun AllDayEventPolicy.toImage() = AllDayEventPolicyImage.valueOf(name)
-private fun AllDayEventPolicyImage.toDomain() = AllDayEventPolicy.valueOf(name)
-private fun DayOfWeek.toImage() = DayOfWeekImage.valueOf(name)
-private fun DayOfWeekImage.toDomain() = DayOfWeek.valueOf(name)
+private fun Flexibility.toImage() = when (this) { Flexibility.HARD -> FlexibilityImage.HARD; Flexibility.FLEXIBLE -> FlexibilityImage.FLEXIBLE; Flexibility.SOFT -> FlexibilityImage.SOFT }
+private fun FlexibilityImage.toDomain() = when (this) { FlexibilityImage.HARD -> Flexibility.HARD; FlexibilityImage.FLEXIBLE -> Flexibility.FLEXIBLE; FlexibilityImage.SOFT -> Flexibility.SOFT }
+private fun PinState.toImage() = when (this) { PinState.PINNED -> PinStateImage.PINNED; PinState.UNPINNED -> PinStateImage.UNPINNED }
+private fun PinStateImage.toDomain() = when (this) { PinStateImage.PINNED -> PinState.PINNED; PinStateImage.UNPINNED -> PinState.UNPINNED }
+private fun TaskStatus.toImage() = when (this) { TaskStatus.OPEN -> TaskStatusImage.OPEN; TaskStatus.IN_PROGRESS -> TaskStatusImage.IN_PROGRESS; TaskStatus.COMPLETED -> TaskStatusImage.COMPLETED; TaskStatus.CANCELLED -> TaskStatusImage.CANCELLED }
+private fun TaskStatusImage.toDomain() = when (this) { TaskStatusImage.OPEN -> TaskStatus.OPEN; TaskStatusImage.IN_PROGRESS -> TaskStatus.IN_PROGRESS; TaskStatusImage.COMPLETED -> TaskStatus.COMPLETED; TaskStatusImage.CANCELLED -> TaskStatus.CANCELLED }
+private fun TaskPriority.toImage() = when (this) { TaskPriority.LOW -> TaskPriorityImage.LOW; TaskPriority.NORMAL -> TaskPriorityImage.NORMAL; TaskPriority.HIGH -> TaskPriorityImage.HIGH }
+private fun TaskPriorityImage.toDomain() = when (this) { TaskPriorityImage.LOW -> TaskPriority.LOW; TaskPriorityImage.NORMAL -> TaskPriority.NORMAL; TaskPriorityImage.HIGH -> TaskPriority.HIGH }
+private fun DeadlinePolicy.toImage() = when (this) { DeadlinePolicy.NORMAL -> DeadlinePolicyImage.NORMAL; DeadlinePolicy.HARD -> DeadlinePolicyImage.HARD }
+private fun DeadlinePolicyImage.toDomain() = when (this) { DeadlinePolicyImage.NORMAL -> DeadlinePolicy.NORMAL; DeadlinePolicyImage.HARD -> DeadlinePolicy.HARD }
+private fun OverflowPolicy.toImage() = when (this) { OverflowPolicy.NEVER -> OverflowPolicyImage.NEVER; OverflowPolicy.ASK -> OverflowPolicyImage.ASK; OverflowPolicy.ALLOW -> OverflowPolicyImage.ALLOW }
+private fun OverflowPolicyImage.toDomain() = when (this) { OverflowPolicyImage.NEVER -> OverflowPolicy.NEVER; OverflowPolicyImage.ASK -> OverflowPolicy.ASK; OverflowPolicyImage.ALLOW -> OverflowPolicy.ALLOW }
+private fun AllDayEventPolicy.toImage() = when (this) { AllDayEventPolicy.NON_BLOCKING -> AllDayEventPolicyImage.NON_BLOCKING; AllDayEventPolicy.BLOCK_WHOLE_LOCAL_DAY -> AllDayEventPolicyImage.BLOCK_WHOLE_LOCAL_DAY }
+private fun AllDayEventPolicyImage.toDomain() = when (this) { AllDayEventPolicyImage.NON_BLOCKING -> AllDayEventPolicy.NON_BLOCKING; AllDayEventPolicyImage.BLOCK_WHOLE_LOCAL_DAY -> AllDayEventPolicy.BLOCK_WHOLE_LOCAL_DAY }
+private fun DayOfWeek.toImage() = when (this) { DayOfWeek.MONDAY -> DayOfWeekImage.MONDAY; DayOfWeek.TUESDAY -> DayOfWeekImage.TUESDAY; DayOfWeek.WEDNESDAY -> DayOfWeekImage.WEDNESDAY; DayOfWeek.THURSDAY -> DayOfWeekImage.THURSDAY; DayOfWeek.FRIDAY -> DayOfWeekImage.FRIDAY; DayOfWeek.SATURDAY -> DayOfWeekImage.SATURDAY; DayOfWeek.SUNDAY -> DayOfWeekImage.SUNDAY }
+private fun DayOfWeekImage.toDomain() = when (this) { DayOfWeekImage.MONDAY -> DayOfWeek.MONDAY; DayOfWeekImage.TUESDAY -> DayOfWeek.TUESDAY; DayOfWeekImage.WEDNESDAY -> DayOfWeek.WEDNESDAY; DayOfWeekImage.THURSDAY -> DayOfWeek.THURSDAY; DayOfWeekImage.FRIDAY -> DayOfWeek.FRIDAY; DayOfWeekImage.SATURDAY -> DayOfWeek.SATURDAY; DayOfWeekImage.SUNDAY -> DayOfWeek.SUNDAY }
 
 internal fun WorkLog.toSemanticImage() = WorkLogImage(id.value, taskId.value, time.toSemanticImage())
 internal fun WorkLogImage.toDomain() = WorkLog(WorkLogId(id), TaskId(taskId), time.toDomain())
@@ -91,8 +91,8 @@ internal fun CourseImage.toDomain() = Course(CourseId(id), SemesterId(semesterId
 internal fun PeriodTemplate.toSemanticImage() = PeriodTemplateImage(id.value, name, periods.map { AcademicPeriodImage(it.number.value, it.start.toString(), it.endExclusive.toString()) })
 internal fun PeriodTemplateImage.toDomain() = PeriodTemplate(PeriodTemplateId(id), name, periods.map { AcademicPeriod(AcademicPeriodNumber(it.number), LocalTime.parse(it.start), LocalTime.parse(it.endExclusive)) }.toImmutableList())
 
-internal fun AcademicHoliday.toSemanticImage() = AcademicHolidayImage(id.value, semesterId.value, name, AllDayRangeImage(dates.startDate.toString(), dates.endDateExclusive.toString()), AcademicHolidayTeachingEffectImage.valueOf(teachingEffect.name))
-internal fun AcademicHolidayImage.toDomain() = AcademicHoliday(AcademicHolidayId(id), SemesterId(semesterId), name, AllDayRange(LocalDate.parse(dates.startDate), LocalDate.parse(dates.endDateExclusive)), AcademicHolidayTeachingEffect.valueOf(teachingEffect.name))
+internal fun AcademicHoliday.toSemanticImage() = AcademicHolidayImage(id.value, semesterId.value, name, AllDayRangeImage(dates.startDate.toString(), dates.endDateExclusive.toString()), when (teachingEffect) { AcademicHolidayTeachingEffect.NO_EFFECT -> AcademicHolidayTeachingEffectImage.NO_EFFECT; AcademicHolidayTeachingEffect.SUSPEND_TEACHING -> AcademicHolidayTeachingEffectImage.SUSPEND_TEACHING })
+internal fun AcademicHolidayImage.toDomain() = AcademicHoliday(AcademicHolidayId(id), SemesterId(semesterId), name, AllDayRange(LocalDate.parse(dates.startDate), LocalDate.parse(dates.endDateExclusive)), when (teachingEffect) { AcademicHolidayTeachingEffectImage.NO_EFFECT -> AcademicHolidayTeachingEffect.NO_EFFECT; AcademicHolidayTeachingEffectImage.SUSPEND_TEACHING -> AcademicHolidayTeachingEffect.SUSPEND_TEACHING })
 
 internal fun CourseScheduleRule.toSemanticImage() = CourseScheduleRuleImage(id.value, courseId.value, dayOfWeek.toImage(), teachingWeeks.weeks.map(AcademicWeekNumber::value), when (val value = time) {
     is CourseTimeSpec.ClockTime -> CourseTimeSpecImage.ClockTime(value.start.toString(), value.endExclusive.toString())
@@ -103,12 +103,12 @@ internal fun CourseScheduleRuleImage.toDomain() = CourseScheduleRule(CourseSched
     is CourseTimeSpecImage.PeriodBased -> CourseTimeSpec.PeriodBased(PeriodTemplateId(value.periodTemplateId), AcademicPeriodNumber(value.startPeriod), AcademicPeriodNumber(value.endPeriodInclusive))
 }, room)
 
-internal fun CourseOccurrenceException.toSemanticImage() = CourseOccurrenceExceptionImage(id.value, CourseOccurrenceKeyImage(occurrenceKey.scheduleRuleId.value, occurrenceKey.academicWeekNumber.value), CourseOccurrenceDispositionImage.valueOf(disposition.name), timeOverride?.toSemanticImage(), when (val value = roomOverride) {
+internal fun CourseOccurrenceException.toSemanticImage() = CourseOccurrenceExceptionImage(id.value, CourseOccurrenceKeyImage(occurrenceKey.scheduleRuleId.value, occurrenceKey.academicWeekNumber.value), when (disposition) { CourseOccurrenceDisposition.ACTIVE -> CourseOccurrenceDispositionImage.ACTIVE; CourseOccurrenceDisposition.CANCELLED -> CourseOccurrenceDispositionImage.CANCELLED }, timeOverride?.toSemanticImage(), when (val value = roomOverride) {
     RoomOverride.Unchanged -> RoomOverrideImage.Unchanged
     RoomOverride.Clear -> RoomOverrideImage.Clear
     is RoomOverride.Set -> RoomOverrideImage.Set(value.value)
 })
-internal fun CourseOccurrenceExceptionImage.toDomain() = CourseOccurrenceException(CourseOccurrenceExceptionId(id), CourseOccurrenceKey(CourseScheduleRuleId(occurrence.scheduleRuleId), AcademicWeekNumber(occurrence.academicWeekNumber)), CourseOccurrenceDisposition.valueOf(disposition.name), timeOverride?.toDomain(), when (val value = roomOverride) {
+internal fun CourseOccurrenceExceptionImage.toDomain() = CourseOccurrenceException(CourseOccurrenceExceptionId(id), CourseOccurrenceKey(CourseScheduleRuleId(occurrence.scheduleRuleId), AcademicWeekNumber(occurrence.academicWeekNumber)), when (disposition) { CourseOccurrenceDispositionImage.ACTIVE -> CourseOccurrenceDisposition.ACTIVE; CourseOccurrenceDispositionImage.CANCELLED -> CourseOccurrenceDisposition.CANCELLED }, timeOverride?.toDomain(), when (val value = roomOverride) {
     RoomOverrideImage.Unchanged -> RoomOverride.Unchanged
     RoomOverrideImage.Clear -> RoomOverride.Clear
     is RoomOverrideImage.Set -> RoomOverride.Set(value.value)
