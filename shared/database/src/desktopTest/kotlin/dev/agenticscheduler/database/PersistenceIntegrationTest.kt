@@ -16,6 +16,9 @@ import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.DecryptedPayloadReceipt
+import dev.agenticscheduler.application.history.SyncEngine
+import dev.agenticscheduler.application.history.SyncReceiveResult
 import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
 import dev.agenticscheduler.application.persistence.MutationJournalRepository
@@ -71,6 +74,16 @@ import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.DvvSnapshot
 import dev.agenticscheduler.sync.DotSnapshot
 import dev.agenticscheduler.sync.EntityKind
+import dev.agenticscheduler.sync.SyncOperation
+import dev.agenticscheduler.sync.SyncPayloadV1
+import dev.agenticscheduler.sync.SyncWireCodec
+import dev.agenticscheduler.sync.HlcSnapshot
+import dev.agenticscheduler.sync.EventPut
+import dev.agenticscheduler.sync.EventImage
+import dev.agenticscheduler.sync.EventTimeImage
+import dev.agenticscheduler.sync.AllDayRangeImage
+import dev.agenticscheduler.sync.FlexibilityImage
+import dev.agenticscheduler.sync.PinStateImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -446,6 +459,45 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
+    @Test fun `D8 receive applies deduplicates quarantines and defers concurrent operations durably`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database)
+        val receive = RoomSyncReceiveRepository(database)
+        val engine = SyncEngine(
+            RoomApplicationTransactionRunner(database), journal, journal, receive,
+            RoomEventRepository(database), RoomTaskRepository(database), RoomPlanningProfileRepository(database), RoomAcademicRepository(database),
+            ids, MutationWallClock { 1 },
+        )
+        val space = SyncSpaceId("personal-space")
+        val first = remoteEventOperation(id(60), id(61), id(62), "First")
+        val firstPayload = SyncWireCodec.encodePayload(SyncPayloadV1(operation = first))
+        assertEquals(SyncReceiveResult.Applied(MutationId(first.mutationId)), engine.receive(DecryptedPayloadReceipt(space, first.mutationId, 5, firstPayload)))
+        assertEquals("First", RoomEventRepository(database).get(EventId(id(62)))?.title)
+        assertEquals(first, journal.mutation(first.mutationId)?.operation)
+        assertEquals(5L, receive.serverCursor(space))
+        assertEquals(SyncReceiveResult.Duplicate(MutationId(first.mutationId)), engine.receive(DecryptedPayloadReceipt(space, first.mutationId, 6, firstPayload)))
+        assertEquals(6L, receive.serverCursor(space))
+
+        val after = SyncOperation(
+            id(67), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(id(61), 1)), DotSnapshot(id(61), 2)), HlcSnapshot(11, 0, id(61)), MutationOrigin.User,
+            listOf(EventPut(EventImage(id(62), "First", EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED), EventImage(id(62), "After", EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED))),
+        )
+        assertEquals(SyncReceiveResult.Applied(MutationId(after.mutationId)), engine.receive(DecryptedPayloadReceipt(space, after.mutationId, 7, SyncWireCodec.encodePayload(SyncPayloadV1(operation = after)))))
+        assertEquals("After", RoomEventRepository(database).get(EventId(id(62)))?.title)
+
+        val malformedId = id(63)
+        assertEquals(SyncReceiveResult.Quarantined(malformedId, ProtocolQuarantineReason.UNSUPPORTED_MUTATION), engine.receive(DecryptedPayloadReceipt(space, malformedId, 8, firstPayload.replace("\"type\":\"EventPut\"", "\"type\":\"FutureMutation\""))))
+        assertEquals(8L, receive.serverCursor(space))
+        assertEquals(ProtocolQuarantineReason.UNSUPPORTED_MUTATION, receive.quarantine(space, malformedId)?.reason)
+
+        val concurrent = remoteEventOperation(id(64), id(65), id(66), "Concurrent")
+        assertEquals(SyncReceiveResult.RequiresSemanticMerge(MutationId(concurrent.mutationId)), engine.receive(DecryptedPayloadReceipt(space, concurrent.mutationId, 9, SyncWireCodec.encodePayload(SyncPayloadV1(operation = concurrent)))))
+        assertEquals(8L, receive.serverCursor(space))
+        assertEquals(null, journal.mutation(concurrent.mutationId))
+        database.close()
+    }
+
     @Test fun `journal append failure rolls active state and causal state back together`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val events = RoomEventRepository(database)
@@ -484,6 +536,10 @@ class PersistenceIntegrationTest {
 
     private fun task(number: Int) = Task(TaskId(id(number)), "task $number", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null)
     private fun id(number: Int) = "00000000-0000-7000-8000-0000000000${number.toString().padStart(2, '0')}"
+    private fun remoteEventOperation(mutationId: String, replicaId: String, eventId: String, title: String) = SyncOperation(
+        mutationId, DvvSnapshot(emptyList(), DotSnapshot(replicaId, 1)), HlcSnapshot(10, 0, replicaId), MutationOrigin.User,
+        listOf(EventPut(null, EventImage(eventId, title, EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED))),
+    )
 }
 
 private class FailingJournal(private val delegate: MutationJournalRepository) : MutationJournalRepository {
