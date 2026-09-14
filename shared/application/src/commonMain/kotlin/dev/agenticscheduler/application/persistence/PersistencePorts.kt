@@ -53,6 +53,7 @@ data class HistoryChange(
     val operationKind: String,
     val beforeImageJson: String?,
     val afterImageJson: String?,
+    val hlc: HlcTimestamp,
 )
 
 data class FocusBlockTombstone(val focusBlockId: String, val deletionMutationId: MutationId, val dvv: DvvSnapshot)

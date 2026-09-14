@@ -100,14 +100,15 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
     }
 
     override suspend fun entityChanges(entityKind: dev.agenticscheduler.sync.EntityKind, entityId: String): List<HistoryChange> =
-        database.mutationJournalDao().entityEntries(entityKind.name, entityId).map { it.toHistoryChange() }
+        database.mutationJournalDao().entityEntries(entityKind.name, entityId).map { it.toHistoryChange(requireNotNull(database.mutationJournalDao().mutationRecord(it.mutationId))) }.sortedWith(historyChangeComparator)
 
-    override suspend fun diff(mutationId: String): List<HistoryChange> = database.mutationJournalDao().entries(mutationId).map { it.toHistoryChange() }
+    override suspend fun diff(mutationId: String): List<HistoryChange> = database.mutationJournalDao().entries(mutationId).map { it.toHistoryChange(requireNotNull(database.mutationJournalDao().mutationRecord(it.mutationId))) }
 
     override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId), LocalJournalCodec.decodeDvv(it.dvvJson)) }
 }
 
-private fun ChangeLogEntryRecord.toHistoryChange() = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson)
+private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))
+private val historyChangeComparator = compareBy<HistoryChange>({ it.hlc.physicalMillis }, { it.hlc.logical }, { it.hlc.replicaId.value }, { it.mutationId }, { it.ordinal })
 
 private fun MutationOrigin.durableName(): String = when (this) {
     MutationOrigin.User -> "USER"
