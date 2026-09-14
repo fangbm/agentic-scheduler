@@ -3,6 +3,11 @@ package dev.agenticscheduler.application.planner
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.persistence.CommittedMutation
+import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
+import dev.agenticscheduler.application.persistence.MutationJournalRepository
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.domain.id.FocusBlockId
@@ -69,6 +74,15 @@ class PlanBranchTest {
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
     }
 
+    @Test fun `unchanged no mutation branch applies without allocating a mutation`() = runBlocking {
+        val snapshot = snapshot(); val repository = InMemoryTasks()
+        val branch = PlanBranch(PlanBranchId(id(30)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
+        val coordinator = MutationCoordinator(IdentityTransactionRunner, EmptyJournal, generator(), MutationWallClock { 1 })
+        val applier = PlanBranchApplier(IdentityTransactionRunner, repository, generator(), coordinator) { snapshot }
+        assertEquals(PlanBranchStatus.APPLIED, assertIs<PlanBranchApplyResult.Applied>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
+        assertEquals(0, EmptyJournal.appended)
+    }
+
     @Test fun `unresolvable current source facts refuse stale apply`() = runBlocking {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(6)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
@@ -124,6 +138,13 @@ class PlanBranchTest {
 }
 
 private object IdentityTransactionRunner : ApplicationTransactionRunner { override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = block() }
+private object EmptyJournal : MutationJournalRepository {
+    var appended = 0
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = null
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) = Unit
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { appended++ }
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
+}
 private class RollingBackTransactions(private val tasks: InMemoryTasks) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T { val before = tasks.blocks.toMap(); return try { block() } catch (failure: Throwable) { tasks.blocks.clear(); tasks.blocks.putAll(before); throw failure } }
 }

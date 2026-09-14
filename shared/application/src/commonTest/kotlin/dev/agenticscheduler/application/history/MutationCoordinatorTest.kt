@@ -54,4 +54,5 @@ private class MemoryJournal(private val failAppend: Boolean = false) : MutationJ
         if (failAppend) error("forced journal failure")
         operations += mutation
     }
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
 }

@@ -11,6 +11,7 @@ import dev.agenticscheduler.sync.EntityMutation
 import dev.agenticscheduler.sync.HybridLogicalClock
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.FocusBlockDelete
 import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.toSnapshot
@@ -51,6 +52,7 @@ class MutationCoordinator(
             val operation = SyncOperation(mutationId.value, dvv.toSnapshot(), hlc.toSnapshot(), origin, mutations)
 
             journal.appendCommittedMutation(CommittedMutation(operation, now))
+            journal.advanceFocusBlockTombstones(operation, mutations.filterIsInstance<FocusBlockDelete>())
             journal.saveLocalReplicaState(LocalReplicaCausalState(replicaId, nextCounter, dvv.observedContext(), hlc))
             MutationExecution(value, mutationId)
         }

@@ -96,6 +96,7 @@ private class MemoryJournalForUndo : MutationJournalRepository {
     override suspend fun localReplicaState() = state
     override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
     override suspend fun appendCommittedMutation(mutation: CommittedMutation) { mutations += mutation }
+    override suspend fun advanceFocusBlockTombstones(operation: SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
 }
 private class MemoryHistory(val id: String, mutation: EntityMutation, private val tombstone: FocusBlockTombstone? = null, private val present: Boolean = true) : HistoryRepository {
     private val value = CommittedMutation(SyncOperation(id, DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 0)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(mutation)), 1)

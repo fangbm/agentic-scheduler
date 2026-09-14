@@ -74,6 +74,7 @@ class FocusBlockOperationReplayer(
             is ReplayAction.Delete -> tasks.deleteFocusBlock(FocusBlockId(action.mutation.entityId))
         } }
         journal.appendCommittedMutation(CommittedMutation(operation, wallClock.nowEpochMillis()))
+        journal.advanceFocusBlockTombstones(operation, actions.filterIsInstance<ReplayAction.Delete>().map(ReplayAction.Delete::mutation))
         val prior = journal.localReplicaState()
         val replicaId = prior?.replicaId ?: ReplicaId(ids.next())
         val mergedContext = mergeContexts(prior?.observedContext.orEmpty(), operation.dvv)

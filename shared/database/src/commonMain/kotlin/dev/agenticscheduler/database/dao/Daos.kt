@@ -32,7 +32,7 @@ import kotlinx.coroutines.flow.Flow
     @Upsert suspend fun upsertFocusBlockTombstone(value: FocusBlockTombstoneRecord)
     @Query("SELECT * FROM sync_operation_journal WHERE mutation_id = :mutationId") suspend fun syncOperation(mutationId: String): SyncOperationJournalRecord?
     @Query("SELECT * FROM mutation_record WHERE mutation_id = :mutationId") suspend fun mutationRecord(mutationId: String): MutationRecord?
-    @Query("SELECT * FROM mutation_record ORDER BY hlc_physical_millis ASC, hlc_logical ASC, mutation_id ASC") suspend fun timeline(): List<MutationRecord>
+    @Query("SELECT * FROM mutation_record ORDER BY hlc_physical_millis ASC, hlc_logical ASC, hlc_replica_id ASC, mutation_id ASC") suspend fun timeline(): List<MutationRecord>
     @Query("SELECT * FROM change_log_entry WHERE mutation_id = :mutationId ORDER BY ordinal ASC") suspend fun entries(mutationId: String): List<ChangeLogEntryRecord>
     @Query("SELECT * FROM change_log_entry WHERE entity_kind = :entityKind AND entity_id = :entityId ORDER BY mutation_id ASC, ordinal ASC") suspend fun entityEntries(entityKind: String, entityId: String): List<ChangeLogEntryRecord>
     @Query("SELECT * FROM focus_block_tombstone WHERE focus_block_id = :focusBlockId") suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstoneRecord?

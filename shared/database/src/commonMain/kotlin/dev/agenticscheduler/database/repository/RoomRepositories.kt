@@ -76,7 +76,10 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
             )
         })
         database.mutationJournalDao().insertSyncOperation(SyncOperationJournalRecord(operation.mutationId, LocalJournalCodec.version, LocalJournalCodec.encode(operation)))
-        operation.orderedMutations.filterIsInstance<FocusBlockDelete>().forEach { delete ->
+    }
+
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<FocusBlockDelete>) {
+        acceptedDeletes.forEach { delete ->
             database.mutationJournalDao().upsertFocusBlockTombstone(FocusBlockTombstoneRecord(
                 focusBlockId = delete.before.id,
                 deletionMutationId = operation.mutationId,

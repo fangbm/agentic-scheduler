@@ -19,7 +19,7 @@ class HistoryQueryService(private val history: HistoryRepository) {
     suspend fun getEntityChanges(entityKind: EntityKind, entityId: String): List<HistoryChange> = history.entityChanges(entityKind, entityId)
     suspend fun getDiff(mutationId: String): List<HistoryChange> = history.diff(mutationId)
 
-    data class TimelineCursor(val physicalMillis: Long, val logical: Long, val mutationId: String)
+    data class TimelineCursor(val physicalMillis: Long, val logical: Long, val replicaId: String, val mutationId: String)
 
     private fun CommittedMutation.isAfter(cursor: TimelineCursor): Boolean {
         val timestamp = operation.hlc
@@ -27,6 +27,8 @@ class HistoryQueryService(private val history: HistoryRepository) {
         if (physical != 0) return physical > 0
         val logical = timestamp.logical.compareTo(cursor.logical)
         if (logical != 0) return logical > 0
+        val replica = timestamp.replicaId.compareTo(cursor.replicaId)
+        if (replica != 0) return replica > 0
         return operation.mutationId > cursor.mutationId
     }
 

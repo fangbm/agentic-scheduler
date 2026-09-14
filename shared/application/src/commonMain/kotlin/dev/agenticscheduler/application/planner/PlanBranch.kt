@@ -111,8 +111,11 @@ class PlanBranchApplier(
 ) {
     suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult {
         if (mutations != null) {
-            return mutations.executeIfAny(MutationOrigin.Planner) { applyWithin(branch, applyNow, this) }?.value
-                ?: PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
+            var noMutationResult: PlanBranchApplyResult? = null
+            val execution = mutations.executeIfAny(MutationOrigin.Planner) {
+                applyWithin(branch, applyNow, this).also { noMutationResult = it }
+            }
+            return execution?.value ?: requireNotNull(noMutationResult)
         }
         return transactions.inWriteTransaction { applyWithin(branch, applyNow, null) }
     }

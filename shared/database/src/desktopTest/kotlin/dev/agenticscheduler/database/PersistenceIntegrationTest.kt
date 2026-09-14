@@ -391,4 +391,5 @@ private class FailingJournal(private val delegate: MutationJournalRepository) : 
     override suspend fun localReplicaState(): LocalReplicaCausalState? = delegate.localReplicaState()
     override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) = delegate.saveLocalReplicaState(state)
     override suspend fun appendCommittedMutation(mutation: CommittedMutation) { delegate.appendCommittedMutation(mutation); error("forced journal failure") }
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = delegate.advanceFocusBlockTombstones(operation, acceptedDeletes)
 }

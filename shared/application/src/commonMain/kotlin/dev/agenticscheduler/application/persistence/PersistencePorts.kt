@@ -11,6 +11,7 @@ import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.DvvSnapshot
+import dev.agenticscheduler.sync.FocusBlockDelete
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +22,7 @@ interface MutationJournalRepository {
     suspend fun localReplicaState(): LocalReplicaCausalState?
     suspend fun saveLocalReplicaState(state: LocalReplicaCausalState)
     suspend fun appendCommittedMutation(mutation: CommittedMutation)
+    suspend fun advanceFocusBlockTombstones(operation: SyncOperation, acceptedDeletes: List<FocusBlockDelete>)
 }
 
 data class LocalReplicaCausalState(
