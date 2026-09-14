@@ -2,7 +2,7 @@
 
 > Task ID: **D7-01 / D7-02 / D7-03**  
 > Milestone: **D7 — Audit / Mutation / Sync Foundation**  
-> Status: **IMPLEMENTED / VERIFIED / COMPLETE — D7.1 semantic-schema amendment in progress before D8**
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE — D7.1 typed semantic-schema amendment incorporated**
 > Date: 2026-09-12  
 > Decision source: `docs/HISTORY_SYNC_DECISIONS.md`
 
