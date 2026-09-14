@@ -11,10 +11,16 @@ import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.persistence.CommittedMutation
+import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
+import dev.agenticscheduler.application.persistence.MutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
+import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.AcademicYearId
@@ -349,6 +355,40 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
+    @Test fun `exported v2 schema migrates to v3 without losing D6 facts`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(2)
+        legacy.prepare("INSERT INTO planning_profiles (id, name, configuration_state) VALUES (?, ?, ?)").use { statement ->
+            statement.bindText(1, id(98)); statement.bindText(2, "D6 profile"); statement.bindText(3, "UNCONFIGURED"); statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(3, emptyList())
+        migrated.prepare("SELECT name FROM planning_profiles WHERE id = ?").use { statement ->
+            statement.bindText(1, id(98)); assertEquals(true, statement.step()); assertEquals("D6 profile", statement.getText(0))
+        }
+        migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_operation_journal'").use { statement -> assertEquals(true, statement.step()) }
+        migrated.close()
+    }
+
+    @Test fun `journal append failure rolls active state and causal state back together`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val events = RoomEventRepository(database)
+        val journal = RoomMutationJournalRepository(database)
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), FailingJournal(journal), ids, MutationWallClock { 1 })
+        val editor = EventEditingService(events, RoomApplicationTransactionRunner(database), ids, coordinator)
+        assertFailsWith<IllegalStateException> { editor.create(CreateEventInput("rollback", EventTimeInput.AllDay(LocalDate(2026, 1, 1), LocalDate(2026, 1, 2)), Flexibility.HARD, PinState.UNPINNED)) }
+        assertEquals(emptyList(), events.observeAll().first())
+        assertEquals(emptyList(), database.mutationJournalDao().timeline())
+        assertEquals(null, database.mutationJournalDao().localReplicaState())
+        database.close()
+    }
+
     private fun task(number: Int) = Task(TaskId(id(number)), "task $number", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null)
     private fun id(number: Int) = "00000000-0000-7000-8000-0000000000${number.toString().padStart(2, '0')}"
+}
+
+private class FailingJournal(private val delegate: MutationJournalRepository) : MutationJournalRepository {
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = delegate.localReplicaState()
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) = delegate.saveLocalReplicaState(state)
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { delegate.appendCommittedMutation(mutation); error("forced journal failure") }
 }
