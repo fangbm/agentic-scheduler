@@ -25,6 +25,14 @@ import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.HlcTimestamp
 import dev.agenticscheduler.sync.operationKind
+import dev.agenticscheduler.sync.ProtocolQuarantine
+import dev.agenticscheduler.sync.ProtocolQuarantineReason
+import dev.agenticscheduler.sync.SyncConflict
+import dev.agenticscheduler.sync.SyncReceiveStateCodec
+import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.database.record.ProtocolQuarantineRecord
+import dev.agenticscheduler.database.record.SyncConflictRecord
+import dev.agenticscheduler.database.record.SyncSpaceCursorRecord
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
@@ -105,6 +113,39 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
     override suspend fun diff(mutationId: String): List<HistoryChange> = database.mutationJournalDao().entries(mutationId).map { it.toHistoryChange(requireNotNull(database.mutationJournalDao().mutationRecord(it.mutationId))) }
 
     override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId), LocalJournalCodec.decodeDvv(it.dvvJson)) }
+}
+
+/** D8 receive metadata implementation. Callers own the encompassing application transaction. */
+class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) : SyncReceiveRepository {
+    override suspend fun serverCursor(syncSpaceId: SyncSpaceId): Long =
+        database.syncReceiveDao().cursor(syncSpaceId.value)?.serverCursor ?: 0L
+
+    override suspend fun saveServerCursor(syncSpaceId: SyncSpaceId, cursor: Long) {
+        require(cursor >= 0)
+        database.syncReceiveDao().saveCursor(SyncSpaceCursorRecord(syncSpaceId.value, cursor))
+    }
+
+    override suspend fun quarantine(value: ProtocolQuarantine) {
+        database.syncReceiveDao().saveQuarantine(ProtocolQuarantineRecord(
+            value.syncSpaceId.value, value.mutationId, value.serverCursor, value.reason.name, value.detail,
+        ))
+    }
+
+    override suspend fun quarantine(syncSpaceId: SyncSpaceId, mutationId: String): ProtocolQuarantine? =
+        database.syncReceiveDao().quarantine(syncSpaceId.value, mutationId)?.let { record ->
+            ProtocolQuarantine(SyncSpaceId(record.syncSpaceId), record.mutationId, record.serverCursor, ProtocolQuarantineReason.valueOf(record.reason), record.detail)
+        }
+
+    override suspend fun saveConflict(value: SyncConflict) {
+        database.syncReceiveDao().saveConflict(SyncConflictRecord(
+            value.conflictId,
+            value.syncSpaceId.value,
+            SyncReceiveStateCodec.encodeConflict(value),
+        ))
+    }
+
+    override suspend fun conflict(conflictId: String): SyncConflict? =
+        database.syncReceiveDao().conflict(conflictId)?.let { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
 }
 
 private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))
