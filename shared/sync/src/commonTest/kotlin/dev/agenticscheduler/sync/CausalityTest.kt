@@ -31,6 +31,15 @@ class CausalityTest {
         assertEquals(true, merged > remote)
     }
 
+    @Test fun `HLC receive covers each frozen merge branch and stable ordering`() {
+        val last = HlcTimestamp(100, 3, a)
+        assertEquals(HlcTimestamp(100, 4, a), HybridLogicalClock.tickReceive(last, HlcTimestamp(100, 2, b), 90, a))
+        assertEquals(HlcTimestamp(100, 4, a), HybridLogicalClock.tickReceive(last, HlcTimestamp(90, 9, b), 80, a))
+        assertEquals(HlcTimestamp(110, 8, a), HybridLogicalClock.tickReceive(last, HlcTimestamp(110, 7, b), 80, a))
+        assertEquals(HlcTimestamp(120, 0, a), HybridLogicalClock.tickReceive(last, HlcTimestamp(110, 7, b), 120, a))
+        assertEquals(listOf(a, b), listOf(HlcTimestamp(1, 0, b), HlcTimestamp(1, 0, a)).sorted().map(HlcTimestamp::replicaId))
+    }
+
     @Test fun `focus block tombstone suppresses only a causally older put`() {
         val olderPut = DottedVersionVector(emptyMap(), Dot(a, 1)).toSnapshot()
         val tombstone = DottedVersionVector(mapOf(a to 1), Dot(a, 2)).toSnapshot()
