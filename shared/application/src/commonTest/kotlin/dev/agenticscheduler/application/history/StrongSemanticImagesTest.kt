@@ -13,6 +13,7 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Instant
 
@@ -52,6 +53,18 @@ class StrongSemanticImagesTest {
         }
         val cancelled = CourseOccurrenceException(CourseOccurrenceExceptionId(id(24)), CourseOccurrenceKey(CourseScheduleRuleId(id(25)), AcademicWeekNumber(1)), CourseOccurrenceDisposition.CANCELLED, null, RoomOverride.Unchanged)
         assertEquals(cancelled, cancelled.toSemanticImage().toDomain())
+    }
+
+    @Test fun `non canonical aggregates and invalid cancelled occurrences are rejected`() {
+        assertFailsWith<IllegalArgumentException> {
+            dev.agenticscheduler.sync.SemesterImage(id(30), id(31), "S", "2026-01-01", "2026-03-01", "UTC", listOf(dev.agenticscheduler.sync.AcademicWeekImage(2, "2026-01-08", "2026-01-15"), dev.agenticscheduler.sync.AcademicWeekImage(1, "2026-01-01", "2026-01-08")))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            dev.agenticscheduler.sync.CourseScheduleRuleImage(id(32), id(33), dev.agenticscheduler.sync.DayOfWeekImage.MONDAY, listOf(2, 1), dev.agenticscheduler.sync.CourseTimeSpecImage.ClockTime("09:00", "10:00"), null)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            dev.agenticscheduler.sync.CourseOccurrenceExceptionImage(id(34), dev.agenticscheduler.sync.CourseOccurrenceKeyImage(id(35), 1), dev.agenticscheduler.sync.CourseOccurrenceDispositionImage.CANCELLED, dev.agenticscheduler.sync.ZonedTimeRangeImage("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", "UTC"), dev.agenticscheduler.sync.RoomOverrideImage.Unchanged).toDomain()
+        }
     }
 
     private fun id(number: Int) = "00000000-0000-7000-8000-${number.toString().padStart(12, '0')}"
