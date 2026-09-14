@@ -1,32 +1,16 @@
 package dev.agenticscheduler.application.history
 
 import dev.agenticscheduler.domain.event.Event
-import dev.agenticscheduler.domain.planning.PlanningProfile
-import dev.agenticscheduler.domain.planning.PlanningProfileConfiguration
-import dev.agenticscheduler.domain.task.FocusBlock
-import dev.agenticscheduler.domain.task.Task
-import dev.agenticscheduler.domain.time.AllDayRange
-import dev.agenticscheduler.domain.time.FloatingTimeRange
-import dev.agenticscheduler.domain.time.ZonedTimeRange
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.FocusBlockId
 import dev.agenticscheduler.domain.id.PlanningProfileId
 import dev.agenticscheduler.domain.id.TaskId
-import dev.agenticscheduler.domain.planning.AllDayEventPolicy
-import dev.agenticscheduler.domain.planning.Deadline
-import dev.agenticscheduler.domain.planning.DeadlinePolicy
-import dev.agenticscheduler.domain.planning.Flexibility
-import dev.agenticscheduler.domain.planning.OverflowPolicy
-import dev.agenticscheduler.domain.planning.PinState
-import dev.agenticscheduler.domain.planning.TaskDeadline
-import dev.agenticscheduler.domain.task.TaskEffort
-import dev.agenticscheduler.domain.task.TaskPriority
-import dev.agenticscheduler.domain.task.TaskStatus
-import dev.agenticscheduler.sync.AvailabilityWindowImage
-import dev.agenticscheduler.sync.EventImage
-import dev.agenticscheduler.sync.FocusBlockImage
-import dev.agenticscheduler.sync.PlanningProfileImage
-import dev.agenticscheduler.sync.TaskImage
+import dev.agenticscheduler.domain.planning.*
+import dev.agenticscheduler.domain.task.*
+import dev.agenticscheduler.domain.time.AllDayRange
+import dev.agenticscheduler.domain.time.FloatingTimeRange
+import dev.agenticscheduler.domain.time.ZonedTimeRange
+import dev.agenticscheduler.sync.*
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -36,46 +20,57 @@ import kotlinx.datetime.TimeZone
 import kotlin.time.Duration
 import kotlin.time.Instant
 
-internal fun Event.toSemanticImage(): EventImage = when (val placement = time) {
-    is ZonedTimeRange -> EventImage(id.value, title, flexibility.name, pinState.name, "ZONED", placement.start.toString(), placement.endExclusive.toString(), placement.timeZone.id)
-    is AllDayRange -> EventImage(id.value, title, flexibility.name, pinState.name, "ALL_DAY", placement.startDate.toString(), placement.endDateExclusive.toString())
-    is FloatingTimeRange -> EventImage(id.value, title, flexibility.name, pinState.name, "FLOATING", placement.start.toString(), placement.endExclusive.toString())
-}
+internal fun Event.toSemanticImage() = EventImage(id.value, title, when (val placement = time) {
+    is ZonedTimeRange -> EventTimeImage.Zoned(placement.toSemanticImage())
+    is AllDayRange -> EventTimeImage.AllDay(AllDayRangeImage(placement.startDate.toString(), placement.endDateExclusive.toString()))
+    is FloatingTimeRange -> EventTimeImage.Floating(FloatingTimeRangeImage(placement.start.toString(), placement.endExclusive.toString()))
+}, flexibility.toImage(), pinState.toImage())
 
-internal fun Task.toSemanticImage(): TaskImage {
-    val deadline = deadline?.deadline
-    return TaskImage(id.value, title, status.name, priority.name, effort.estimated?.toIsoString(), effort.completed.toIsoString(), effort.remaining?.toIsoString(), when (deadline) { null -> null; is dev.agenticscheduler.domain.planning.Deadline.Exact -> "EXACT"; is dev.agenticscheduler.domain.planning.Deadline.DateOnly -> "DATE_ONLY" }, when (deadline) { is dev.agenticscheduler.domain.planning.Deadline.Exact -> deadline.at.toString(); is dev.agenticscheduler.domain.planning.Deadline.DateOnly -> deadline.date.toString(); null -> null }, (deadline as? dev.agenticscheduler.domain.planning.Deadline.Exact)?.timeZone?.id, this.deadline?.policy?.name, this.deadline?.overflowPolicy?.name)
-}
+internal fun Task.toSemanticImage() = TaskImage(id.value, title, status.toImage(), priority.toImage(), TaskEffortImage(effort.estimated?.toIsoString(), effort.completed.toIsoString(), effort.remaining?.toIsoString()), deadline?.let { TaskDeadlineImage(when (val value = it.deadline) {
+    is Deadline.Exact -> DeadlineImage.Exact(value.at.toString(), value.timeZone.id)
+    is Deadline.DateOnly -> DeadlineImage.DateOnly(value.date.toString())
+}, it.policy.toImage(), it.overflowPolicy.toImage()) })
 
-internal fun FocusBlock.toSemanticImage() = FocusBlockImage(id.value, taskId.value, time.start.toString(), time.endExclusive.toString(), time.timeZone.id, flexibility.name, pinState.name)
+internal fun FocusBlock.toSemanticImage() = FocusBlockImage(id.value, taskId.value, time.toSemanticImage(), flexibility.toImage(), pinState.toImage())
 
-internal fun PlanningProfile.toSemanticImage(): PlanningProfileImage = when (val configuration = configuration) {
-    PlanningProfileConfiguration.Unconfigured -> PlanningProfileImage(id.value, name, "UNCONFIGURED")
-    is PlanningProfileConfiguration.Configured -> PlanningProfileImage(id.value, name, "CONFIGURED", configuration.timeZone.id, configuration.weeklyAvailability.map { AvailabilityWindowImage(it.dayOfWeek.name, it.start.toString(), it.endExclusive.toString()) }, configuration.minimumFocusBlock.toIsoString(), configuration.preferredFocusBlock.toIsoString(), configuration.maximumFocusBlock.toIsoString(), configuration.allDayEventPolicy.name)
-}
-
-internal fun EventImage.toDomain(): Event = Event(EventId(id), title, when (timeKind) {
-    "ZONED" -> ZonedTimeRange(Instant.parse(start), Instant.parse(endExclusive), TimeZone.of(requireNotNull(timeZone)))
-    "ALL_DAY" -> AllDayRange(LocalDate.parse(start), LocalDate.parse(endExclusive))
-    "FLOATING" -> FloatingTimeRange(LocalDateTime.parse(start), LocalDateTime.parse(endExclusive))
-    else -> error("Unknown semantic Event time kind: $timeKind")
-}, Flexibility.valueOf(flexibility), PinState.valueOf(pinState))
-
-internal fun TaskImage.toDomain(): Task {
-    val deadline = deadlineKind?.let { kind -> TaskDeadline(
-        when (kind) {
-            "EXACT" -> Deadline.Exact(Instant.parse(requireNotNull(deadlineValue)), TimeZone.of(requireNotNull(deadlineTimeZone)))
-            "DATE_ONLY" -> Deadline.DateOnly(LocalDate.parse(requireNotNull(deadlineValue)))
-            else -> error("Unknown semantic Task deadline kind: $kind")
-        }, DeadlinePolicy.valueOf(requireNotNull(deadlinePolicy)), OverflowPolicy.valueOf(requireNotNull(overflowPolicy)),
-    ) }
-    return Task(TaskId(id), title, TaskStatus.valueOf(status), TaskPriority.valueOf(priority), TaskEffort(estimatedEffort?.let(Duration::parseIsoString), Duration.parseIsoString(completedEffort), remainingEffort?.let(Duration::parseIsoString)), deadline)
-}
-
-internal fun FocusBlockImage.toDomain() = FocusBlock(FocusBlockId(id), TaskId(taskId), ZonedTimeRange(Instant.parse(start), Instant.parse(endExclusive), TimeZone.of(timeZone)), Flexibility.valueOf(flexibility), PinState.valueOf(pinState))
-
-internal fun PlanningProfileImage.toDomain(): PlanningProfile = PlanningProfile(PlanningProfileId(id), name, when (configurationState) {
-    "UNCONFIGURED" -> PlanningProfileConfiguration.Unconfigured
-    "CONFIGURED" -> PlanningProfileConfiguration.Configured(TimeZone.of(requireNotNull(timeZone)), weeklyAvailability.map { dev.agenticscheduler.domain.planning.WeeklyAvailabilityWindow(DayOfWeek.valueOf(it.dayOfWeek), LocalTime.parse(it.start), LocalTime.parse(it.endExclusive)) }.toImmutableList(), Duration.parseIsoString(requireNotNull(minimumFocusDuration)), Duration.parseIsoString(requireNotNull(preferredFocusDuration)), Duration.parseIsoString(requireNotNull(maximumFocusDuration)), AllDayEventPolicy.valueOf(requireNotNull(allDayEventPolicy)))
-    else -> error("Unknown semantic PlanningProfile configuration state: $configurationState")
+internal fun PlanningProfile.toSemanticImage() = PlanningProfileImage(id.value, name, when (val value = configuration) {
+    PlanningProfileConfiguration.Unconfigured -> PlanningProfileConfigurationImage.Unconfigured
+    is PlanningProfileConfiguration.Configured -> PlanningProfileConfigurationImage.Configured(value.timeZone.id, value.weeklyAvailability.map { CanonicalAvailabilityWindowImage(it.dayOfWeek.toImage(), it.start.toString(), it.endExclusive.toString()) }, value.minimumFocusBlock.toIsoString(), value.preferredFocusBlock.toIsoString(), value.maximumFocusBlock.toIsoString(), value.allDayEventPolicy.toImage())
 })
+
+internal fun EventImage.toDomain() = Event(EventId(id), title, when (val value = time) {
+    is EventTimeImage.Zoned -> value.time.toDomain()
+    is EventTimeImage.AllDay -> AllDayRange(LocalDate.parse(value.dates.startDate), LocalDate.parse(value.dates.endDateExclusive))
+    is EventTimeImage.Floating -> FloatingTimeRange(LocalDateTime.parse(value.time.start), LocalDateTime.parse(value.time.endExclusive))
+}, flexibility.toDomain(), pinState.toDomain())
+
+internal fun TaskImage.toDomain() = Task(TaskId(id), title, status.toDomain(), priority.toDomain(), TaskEffort(effort.estimated?.let(Duration::parseIsoString), Duration.parseIsoString(effort.completed), effort.remaining?.let(Duration::parseIsoString)), deadline?.let { value -> TaskDeadline(when (val deadlineValue = value.deadline) {
+    is DeadlineImage.Exact -> Deadline.Exact(Instant.parse(deadlineValue.at), TimeZone.of(deadlineValue.timeZone))
+    is DeadlineImage.DateOnly -> Deadline.DateOnly(LocalDate.parse(deadlineValue.date))
+}, value.policy.toDomain(), value.overflowPolicy.toDomain()) })
+
+internal fun FocusBlockImage.toDomain() = FocusBlock(FocusBlockId(id), TaskId(taskId), time.toDomain(), flexibility.toDomain(), pinState.toDomain())
+
+internal fun PlanningProfileImage.toDomain() = PlanningProfile(PlanningProfileId(id), name, when (val value = configuration) {
+    PlanningProfileConfigurationImage.Unconfigured -> PlanningProfileConfiguration.Unconfigured
+    is PlanningProfileConfigurationImage.Configured -> PlanningProfileConfiguration.Configured(TimeZone.of(value.timeZone), value.weeklyAvailability.map { WeeklyAvailabilityWindow(it.dayOfWeek.toDomain(), LocalTime.parse(it.start), LocalTime.parse(it.endExclusive)) }.toImmutableList(), Duration.parseIsoString(value.minimumFocusDuration), Duration.parseIsoString(value.preferredFocusDuration), Duration.parseIsoString(value.maximumFocusDuration), value.allDayEventPolicy.toDomain())
+})
+
+private fun ZonedTimeRange.toSemanticImage() = ZonedTimeRangeImage(start.toString(), endExclusive.toString(), timeZone.id)
+private fun ZonedTimeRangeImage.toDomain() = ZonedTimeRange(Instant.parse(start), Instant.parse(endExclusive), TimeZone.of(timeZone))
+private fun Flexibility.toImage() = FlexibilityImage.valueOf(name)
+private fun FlexibilityImage.toDomain() = Flexibility.valueOf(name)
+private fun PinState.toImage() = PinStateImage.valueOf(name)
+private fun PinStateImage.toDomain() = PinState.valueOf(name)
+private fun TaskStatus.toImage() = TaskStatusImage.valueOf(name)
+private fun TaskStatusImage.toDomain() = TaskStatus.valueOf(name)
+private fun TaskPriority.toImage() = TaskPriorityImage.valueOf(name)
+private fun TaskPriorityImage.toDomain() = TaskPriority.valueOf(name)
+private fun DeadlinePolicy.toImage() = DeadlinePolicyImage.valueOf(name)
+private fun DeadlinePolicyImage.toDomain() = DeadlinePolicy.valueOf(name)
+private fun OverflowPolicy.toImage() = OverflowPolicyImage.valueOf(name)
+private fun OverflowPolicyImage.toDomain() = OverflowPolicy.valueOf(name)
+private fun AllDayEventPolicy.toImage() = AllDayEventPolicyImage.valueOf(name)
+private fun AllDayEventPolicyImage.toDomain() = AllDayEventPolicy.valueOf(name)
+private fun DayOfWeek.toImage() = DayOfWeekImage.valueOf(name)
+private fun DayOfWeekImage.toDomain() = DayOfWeek.valueOf(name)

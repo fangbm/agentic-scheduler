@@ -59,12 +59,11 @@ sealed interface EntityMutation { val entityKind: EntityKind; val entityId: Stri
 @Serializable @SerialName("CourseOccurrenceExceptionPut") data class CourseOccurrenceExceptionPut(val before: CourseOccurrenceExceptionImage?, val after: CourseOccurrenceExceptionImage) : EntityMutation { override val entityKind = EntityKind.COURSE_OCCURRENCE_EXCEPTION; override val entityId get() = after.id }
 @Serializable @SerialName("ExamPut") data class ExamPut(val before: ExamImage?, val after: ExamImage) : EntityMutation { override val entityKind = EntityKind.EXAM; override val entityId get() = after.id }
 
-/** Explicit normalized source-fact images used by D7's currently writable commands. */
-@Serializable data class EventImage(val id: String, val title: String, val flexibility: String, val pinState: String, val timeKind: String, val start: String, val endExclusive: String, val timeZone: String? = null)
-@Serializable data class TaskImage(val id: String, val title: String, val status: String, val priority: String, val estimatedEffort: String?, val completedEffort: String, val remainingEffort: String?, val deadlineKind: String?, val deadlineValue: String?, val deadlineTimeZone: String?, val deadlinePolicy: String?, val overflowPolicy: String?)
-@Serializable data class PlanningProfileImage(val id: String, val name: String, val configurationState: String, val timeZone: String? = null, val weeklyAvailability: List<AvailabilityWindowImage> = emptyList(), val minimumFocusDuration: String? = null, val preferredFocusDuration: String? = null, val maximumFocusDuration: String? = null, val allDayEventPolicy: String? = null)
-@Serializable data class AvailabilityWindowImage(val dayOfWeek: String, val start: String, val endExclusive: String)
-@Serializable data class FocusBlockImage(val id: String, val taskId: String, val start: String, val endExclusive: String, val timeZone: String, val flexibility: String, val pinState: String)
+/** Canonical typed source-fact images used by D7 history and D8 replication. */
+@Serializable data class EventImage(val id: String, val title: String, val time: EventTimeImage, val flexibility: FlexibilityImage, val pinState: PinStateImage)
+@Serializable data class TaskImage(val id: String, val title: String, val status: TaskStatusImage, val priority: TaskPriorityImage, val effort: TaskEffortImage, val deadline: TaskDeadlineImage?)
+@Serializable data class PlanningProfileImage(val id: String, val name: String, val configuration: PlanningProfileConfigurationImage)
+@Serializable data class FocusBlockImage(val id: String, val taskId: String, val time: ZonedTimeRangeImage, val flexibility: FlexibilityImage, val pinState: PinStateImage)
 
 object LocalJournalCodec {
     const val version: Int = 1

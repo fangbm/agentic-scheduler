@@ -180,7 +180,7 @@ class UndoServiceTest {
 
     @Test fun `replay journals an older focus put without resurrecting its tombstone`() = kotlinx.coroutines.runBlocking {
         val replica = "00000000-0000-7000-8000-000000000001"
-        val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000030", "00000000-0000-7000-8000-000000000031", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED"))
+        val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000030", "00000000-0000-7000-8000-000000000031", ZonedTimeRangeImage("2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC"), dev.agenticscheduler.sync.FlexibilityImage.SOFT, dev.agenticscheduler.sync.PinStateImage.UNPINNED))
         val operation = SyncOperation("00000000-0000-7000-8000-000000000032", DvvSnapshot(emptyList(), DotSnapshot(replica, 1)), HlcSnapshot(1, 0, replica), MutationOrigin.User, listOf(put))
         val tombstone = FocusBlockTombstone(put.entityId, dev.agenticscheduler.sync.MutationId("00000000-0000-7000-8000-000000000033"), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(replica, 1)), DotSnapshot(replica, 2)))
         val history = MemoryHistory("00000000-0000-7000-8000-000000000034", put, tombstone = tombstone, present = false)
@@ -194,7 +194,7 @@ class UndoServiceTest {
 
     @Test fun `older replayed delete is journaled but never downgrades a newer tombstone`() = kotlinx.coroutines.runBlocking {
         val replica = "00000000-0000-7000-8000-000000000001"
-        val image = FocusBlockImage("00000000-0000-7000-8000-000000000080", "00000000-0000-7000-8000-000000000081", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED")
+        val image = FocusBlockImage("00000000-0000-7000-8000-000000000080", "00000000-0000-7000-8000-000000000081", ZonedTimeRangeImage("2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC"), dev.agenticscheduler.sync.FlexibilityImage.SOFT, dev.agenticscheduler.sync.PinStateImage.UNPINNED)
         val newer = SyncOperation("00000000-0000-7000-8000-000000000082", DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(replica, 1)), DotSnapshot(replica, 2)), HlcSnapshot(2, 0, replica), MutationOrigin.User, listOf(FocusBlockDelete(image)))
         val journal = MemoryJournalForUndo()
         val history = MemoryHistory("irrelevant", FocusBlockDelete(image), present = false, tombstoneProvider = { journal.tombstones[image.id] })
@@ -207,7 +207,7 @@ class UndoServiceTest {
     }
 
     @Test fun `replaying the same operation twice is idempotent for both Active State and journal`() = kotlinx.coroutines.runBlocking {
-        val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000090", "00000000-0000-7000-8000-000000000091", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED"))
+        val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000090", "00000000-0000-7000-8000-000000000091", ZonedTimeRangeImage("2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC"), dev.agenticscheduler.sync.FlexibilityImage.SOFT, dev.agenticscheduler.sync.PinStateImage.UNPINNED))
         val operation = SyncOperation("00000000-0000-7000-8000-000000000092", DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(put))
         val journal = MemoryJournalForUndo()
         val history = MemoryHistory("irrelevant", put, present = false, mutationProvider = { id -> journal.mutations.firstOrNull { it.operation.mutationId == id } })

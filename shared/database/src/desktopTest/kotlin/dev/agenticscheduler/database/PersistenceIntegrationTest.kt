@@ -418,9 +418,9 @@ class PersistenceIntegrationTest {
         val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), RoomMutationJournalRepository(database), ids, MutationWallClock { 1 })
         val committed = coordinator.execute(MutationOrigin.Planner) {
             tasks.upsertFocusBlock(first)
-            record(FocusBlockPut(null, FocusBlockImage(first.id.value, first.taskId.value, first.time.start.toString(), first.time.endExclusive.toString(), first.time.timeZone.id, first.flexibility.name, first.pinState.name)))
+            record(FocusBlockPut(null, FocusBlockImage(first.id.value, first.taskId.value, dev.agenticscheduler.sync.ZonedTimeRangeImage(first.time.start.toString(), first.time.endExclusive.toString(), first.time.timeZone.id), dev.agenticscheduler.sync.FlexibilityImage.valueOf(first.flexibility.name), dev.agenticscheduler.sync.PinStateImage.valueOf(first.pinState.name))))
             tasks.upsertFocusBlock(second)
-            record(FocusBlockPut(null, FocusBlockImage(second.id.value, second.taskId.value, second.time.start.toString(), second.time.endExclusive.toString(), second.time.timeZone.id, second.flexibility.name, second.pinState.name)))
+            record(FocusBlockPut(null, FocusBlockImage(second.id.value, second.taskId.value, dev.agenticscheduler.sync.ZonedTimeRangeImage(second.time.start.toString(), second.time.endExclusive.toString(), second.time.timeZone.id), dev.agenticscheduler.sync.FlexibilityImage.valueOf(second.flexibility.name), dev.agenticscheduler.sync.PinStateImage.valueOf(second.pinState.name))))
         }
         val diff = RoomMutationJournalRepository(database).diff(committed.mutationId.value)
         assertEquals(listOf(0, 1), diff.map { it.ordinal })

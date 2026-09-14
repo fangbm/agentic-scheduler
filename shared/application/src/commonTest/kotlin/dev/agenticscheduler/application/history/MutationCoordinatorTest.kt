@@ -39,7 +39,7 @@ class MutationCoordinatorTest {
         wallClock = MutationWallClock { 100 },
     )
 
-    private fun put(id: String) = EventPut(null, EventImage("00000000-0000-7000-8000-00000000000$id", "event", "HARD", "UNPINNED", "ALL_DAY", "2026-01-01", "2026-01-02"))
+    private fun put(id: String) = EventPut(null, EventImage("00000000-0000-7000-8000-00000000000$id", "event", dev.agenticscheduler.sync.EventTimeImage.AllDay(dev.agenticscheduler.sync.AllDayRangeImage("2026-01-01", "2026-01-02")), dev.agenticscheduler.sync.FlexibilityImage.HARD, dev.agenticscheduler.sync.PinStateImage.UNPINNED))
 }
 
 private var nextByte = 0
