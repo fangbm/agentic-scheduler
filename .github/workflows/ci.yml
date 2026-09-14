@@ -18,3 +18,25 @@ jobs:
         run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
       - name: Build and test
         run: ./gradlew build --no-daemon
+
+      - name: Build dogfood app artifacts
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: ./gradlew :apps:android:assembleDebug :apps:desktop:createDistributable --no-daemon
+
+      - name: Upload Android dogfood APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-scheduler-android-debug
+          path: apps/android/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Desktop dogfood app
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-scheduler-desktop-linux
+          path: apps/desktop/build/compose/binaries/main/app/**
+          if-no-files-found: error
+          retention-days: 14
