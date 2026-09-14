@@ -30,4 +30,15 @@ class CausalityTest {
         assertEquals(HlcTimestamp(110, 5, a), merged)
         assertEquals(true, merged > remote)
     }
+
+    @Test fun `focus block tombstone suppresses only a causally older put`() {
+        val olderPut = DottedVersionVector(emptyMap(), Dot(a, 1)).toSnapshot()
+        val tombstone = DottedVersionVector(mapOf(a to 1), Dot(a, 2)).toSnapshot()
+        val concurrentPut = DottedVersionVector(mapOf(a to 1), Dot(b, 1)).toSnapshot()
+        val laterPut = DottedVersionVector(mapOf(a to 2), Dot(a, 3)).toSnapshot()
+
+        assertEquals(FocusBlockPutAgainstTombstone.SUPPRESS_CAUSALLY_OLDER, FocusBlockTombstoneCausality.decide(olderPut, tombstone))
+        assertEquals(FocusBlockPutAgainstTombstone.CONCURRENT_CONFLICT, FocusBlockTombstoneCausality.decide(concurrentPut, tombstone))
+        assertEquals(FocusBlockPutAgainstTombstone.APPLY, FocusBlockTombstoneCausality.decide(laterPut, tombstone))
+    }
 }

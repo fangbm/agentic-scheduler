@@ -125,3 +125,4 @@ fun EntityMutation.operationKind(): String = when (this) {
 
 fun DottedVersionVector.toSnapshot(): DvvSnapshot = DvvSnapshot(context.entries.map { VersionComponent(it.key.value, it.value) }, DotSnapshot(dot.replicaId.value, dot.counter))
 fun HlcTimestamp.toSnapshot(): HlcSnapshot = HlcSnapshot(physicalMillis, logical, replicaId.value)
+fun HlcSnapshot.toTimestamp(): HlcTimestamp = HlcTimestamp(physicalMillis, logical, ReplicaId(replicaId))

@@ -23,6 +23,9 @@ data class Dot(val replicaId: ReplicaId, val counter: Long) {
 
 enum class CausalRelation { BEFORE, AFTER, EQUAL, CONCURRENT }
 
+/** D7 does not choose a concurrent winner; it only classifies the causal fact for D8's semantic merge. */
+enum class FocusBlockPutAgainstTombstone { APPLY, SUPPRESS_CAUSALLY_OLDER, CONCURRENT_CONFLICT }
+
 /**
  * A dotted version vector carries its observed context plus the operation's own
  * dot. The derived version vector is used only for causal comparison; HLC is
@@ -80,6 +83,20 @@ data class HlcTimestamp(
     init { require(logical >= 0) { "HLC logical counter must be non-negative." } }
 
     override fun compareTo(other: HlcTimestamp): Int = compareValuesBy(this, other, HlcTimestamp::physicalMillis, HlcTimestamp::logical, { it.replicaId.value })
+}
+
+fun DvvSnapshot.toDottedVersionVector(): DottedVersionVector = DottedVersionVector(
+    context = context.associate { ReplicaId(it.replicaId) to it.counter },
+    dot = Dot(ReplicaId(dot.replicaId), dot.counter),
+)
+
+/** HST-003: only a causally later Put may follow a FocusBlock tombstone; concurrent input stays unresolved. */
+object FocusBlockTombstoneCausality {
+    fun decide(put: DvvSnapshot, tombstone: DvvSnapshot): FocusBlockPutAgainstTombstone = when (put.toDottedVersionVector().relationTo(tombstone.toDottedVersionVector())) {
+        CausalRelation.BEFORE, CausalRelation.EQUAL -> FocusBlockPutAgainstTombstone.SUPPRESS_CAUSALLY_OLDER
+        CausalRelation.CONCURRENT -> FocusBlockPutAgainstTombstone.CONCURRENT_CONFLICT
+        CausalRelation.AFTER -> FocusBlockPutAgainstTombstone.APPLY
+    }
 }
 
 /** Pure HST-007 tick functions; persistence and wall-clock acquisition stay outside :shared:sync. */

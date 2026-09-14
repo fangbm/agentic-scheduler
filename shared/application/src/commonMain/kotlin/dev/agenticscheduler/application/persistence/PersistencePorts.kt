@@ -10,6 +10,7 @@ import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.DvvSnapshot
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
 
@@ -52,7 +53,7 @@ data class HistoryChange(
     val afterImageJson: String?,
 )
 
-data class FocusBlockTombstone(val focusBlockId: String, val deletionMutationId: MutationId)
+data class FocusBlockTombstone(val focusBlockId: String, val deletionMutationId: MutationId, val dvv: DvvSnapshot)
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }
 interface TaskRepository {
     fun observeTasks(): Flow<ImmutableList<Task>>; suspend fun getTask(id: TaskId): Task?; suspend fun upsertTask(task: Task)

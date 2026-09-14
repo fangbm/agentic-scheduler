@@ -29,9 +29,13 @@ import dev.agenticscheduler.sync.DotSnapshot
 import dev.agenticscheduler.sync.DvvSnapshot
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.EventPut
+import dev.agenticscheduler.sync.FocusBlockImage
+import dev.agenticscheduler.sync.FocusBlockPut
+import dev.agenticscheduler.sync.FocusBlockPutAgainstTombstone
 import dev.agenticscheduler.sync.HlcSnapshot
 import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.SyncOperation
+import dev.agenticscheduler.sync.EntityMutation
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -68,6 +72,20 @@ class UndoServiceTest {
         assertEquals(emptyList(), journal.mutations)
     }
 
+    @Test fun `replay journals an older focus put without resurrecting its tombstone`() = kotlinx.coroutines.runBlocking {
+        val replica = "00000000-0000-7000-8000-000000000001"
+        val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000030", "00000000-0000-7000-8000-000000000031", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED"))
+        val operation = SyncOperation("00000000-0000-7000-8000-000000000032", DvvSnapshot(emptyList(), DotSnapshot(replica, 1)), HlcSnapshot(1, 0, replica), MutationOrigin.User, listOf(put))
+        val tombstone = FocusBlockTombstone(put.entityId, dev.agenticscheduler.sync.MutationId("00000000-0000-7000-8000-000000000033"), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(replica, 1)), DotSnapshot(replica, 2)))
+        val history = MemoryHistory("00000000-0000-7000-8000-000000000034", put, tombstone = tombstone, present = false)
+        val journal = MemoryJournalForUndo(); val tasks = MemoryTasksForUndo()
+        val result = FocusBlockOperationReplayer(IdentityTransactionsForUndo, journal, history, tasks, RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 }).replay(operation)
+
+        assertEquals(FocusBlockReplayResult.SuppressedByTombstone, result)
+        assertEquals(null, tasks.focus)
+        assertEquals(listOf(operation), journal.mutations.map(CommittedMutation::operation))
+    }
+
     private fun event(id: EventId, title: String) = Event(id, title, dev.agenticscheduler.domain.time.AllDayRange(kotlinx.datetime.LocalDate(2026, 1, 1), kotlinx.datetime.LocalDate(2026, 1, 2)), dev.agenticscheduler.domain.planning.Flexibility.HARD, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
     private fun coordinator(journal: MemoryJournalForUndo) = MutationCoordinator(IdentityTransactionsForUndo, journal, RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 })
 }
@@ -79,19 +97,20 @@ private class MemoryJournalForUndo : MutationJournalRepository {
     override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
     override suspend fun appendCommittedMutation(mutation: CommittedMutation) { mutations += mutation }
 }
-private class MemoryHistory(val id: String, mutation: EventPut) : HistoryRepository {
+private class MemoryHistory(val id: String, mutation: EntityMutation, private val tombstone: FocusBlockTombstone? = null, private val present: Boolean = true) : HistoryRepository {
     private val value = CommittedMutation(SyncOperation(id, DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 0)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(mutation)), 1)
-    override suspend fun timeline() = listOf(value); override suspend fun mutation(mutationId: String) = value.takeIf { it.operation.mutationId == mutationId }
+    override suspend fun timeline() = listOf(value); override suspend fun mutation(mutationId: String) = value.takeIf { present && it.operation.mutationId == mutationId }
     override suspend fun entityChanges(entityKind: EntityKind, entityId: String) = emptyList<HistoryChange>(); override suspend fun diff(mutationId: String) = emptyList<HistoryChange>()
-    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = null
+    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = tombstone?.takeIf { it.focusBlockId == focusBlockId }
 }
 private class MemoryEvents(initial: Event) : EventRepository {
     var value = initial; override fun observeAll(): Flow<kotlinx.collections.immutable.ImmutableList<Event>> = flowOf(listOf(value).toImmutableList())
     override suspend fun get(id: EventId) = value.takeIf { it.id == id }; override suspend fun upsert(event: Event) { value = event }
 }
 private class MemoryTasksForUndo : TaskRepository {
+    var focus: FocusBlock? = null
     override fun observeTasks() = flowOf(emptyList<Task>().toImmutableList()); override suspend fun getTask(id: TaskId): Task? = null; override suspend fun upsertTask(task: Task) = Unit
-    override fun observeFocusBlocks() = flowOf(emptyList<FocusBlock>().toImmutableList()); override suspend fun getFocusBlock(id: FocusBlockId): FocusBlock? = null; override suspend fun upsertFocusBlock(focusBlock: FocusBlock) = Unit; override suspend fun deleteFocusBlock(id: FocusBlockId) = Unit
+    override fun observeFocusBlocks() = flowOf(listOfNotNull(focus).toImmutableList()); override suspend fun getFocusBlock(id: FocusBlockId): FocusBlock? = focus?.takeIf { it.id == id }; override suspend fun upsertFocusBlock(focusBlock: FocusBlock) { focus = focusBlock }; override suspend fun deleteFocusBlock(id: FocusBlockId) { if (focus?.id == id) focus = null }
     override fun observeWorkLogs() = flowOf(emptyList<WorkLog>().toImmutableList()); override suspend fun getWorkLog(id: WorkLogId): WorkLog? = null; override suspend fun upsertWorkLog(workLog: WorkLog) = Unit
     override fun observeDependencies() = flowOf(emptyList<TaskDependency>().toImmutableList()); override suspend fun getDependency(id: TaskDependencyId): TaskDependency? = null; override suspend fun upsertDependency(dependency: TaskDependency) = Unit
 }

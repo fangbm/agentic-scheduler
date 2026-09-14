@@ -101,7 +101,7 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
 
     override suspend fun diff(mutationId: String): List<HistoryChange> = database.mutationJournalDao().entries(mutationId).map { it.toHistoryChange() }
 
-    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId)) }
+    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId), LocalJournalCodec.decodeDvv(it.dvvJson)) }
 }
 
 private fun ChangeLogEntryRecord.toHistoryChange() = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson)
