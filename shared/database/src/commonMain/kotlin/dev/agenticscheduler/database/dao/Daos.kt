@@ -37,3 +37,12 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM change_log_entry WHERE entity_kind = :entityKind AND entity_id = :entityId ORDER BY mutation_id ASC, ordinal ASC") suspend fun entityEntries(entityKind: String, entityId: String): List<ChangeLogEntryRecord>
     @Query("SELECT * FROM focus_block_tombstone WHERE focus_block_id = :focusBlockId") suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstoneRecord?
 }
+
+@Dao interface SyncReceiveDao {
+    @Query("SELECT * FROM sync_space_cursor WHERE sync_space_id = :syncSpaceId") suspend fun cursor(syncSpaceId: String): SyncSpaceCursorRecord?
+    @Upsert suspend fun saveCursor(value: SyncSpaceCursorRecord)
+    @Query("SELECT * FROM protocol_quarantine WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun quarantine(syncSpaceId: String, mutationId: String): ProtocolQuarantineRecord?
+    @Upsert suspend fun saveQuarantine(value: ProtocolQuarantineRecord)
+    @Query("SELECT * FROM sync_conflict WHERE conflict_id = :conflictId") suspend fun conflict(conflictId: String): SyncConflictRecord?
+    @Upsert suspend fun saveConflict(value: SyncConflictRecord)
+}

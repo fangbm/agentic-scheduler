@@ -24,6 +24,7 @@ import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
+import dev.agenticscheduler.database.repository.RoomSyncReceiveRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.AcademicYearId
@@ -59,6 +60,17 @@ import dev.agenticscheduler.sync.operationKind
 import dev.agenticscheduler.sync.FocusBlockImage
 import dev.agenticscheduler.sync.FocusBlockPut
 import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.ProtocolQuarantine
+import dev.agenticscheduler.sync.ProtocolQuarantineReason
+import dev.agenticscheduler.sync.SyncConflict
+import dev.agenticscheduler.sync.SyncConflictEntityRef
+import dev.agenticscheduler.sync.SyncConflictParticipant
+import dev.agenticscheduler.sync.SyncConflictStatus
+import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.DvvSnapshot
+import dev.agenticscheduler.sync.DotSnapshot
+import dev.agenticscheduler.sync.EntityKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -391,6 +403,47 @@ class PersistenceIntegrationTest {
         }
         migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_operation_journal'").use { statement -> assertEquals(true, statement.step()) }
         migrated.close()
+    }
+
+    @Test fun `exported v3 schema migrates to v4 with D8 receive tables`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(3)
+        legacy.prepare("INSERT INTO tasks (id, title, status, priority, effort_estimated_iso, effort_completed_iso, effort_remaining_iso) VALUES (?, ?, ?, ?, ?, ?, ?)").use { statement ->
+            statement.bindText(1, id(99)); statement.bindText(2, "D7 fact"); statement.bindText(3, "OPEN"); statement.bindText(4, "NORMAL"); statement.bindNull(5); statement.bindText(6, "PT0S"); statement.bindNull(7); statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(4, emptyList())
+        migrated.prepare("SELECT title FROM tasks WHERE id = ?").use { statement -> statement.bindText(1, id(99)); assertEquals(true, statement.step()); assertEquals("D7 fact", statement.getText(0)) }
+        listOf("sync_space_cursor", "protocol_quarantine", "sync_conflict").forEach { table ->
+            migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").use { statement -> statement.bindText(1, table); assertEquals(true, statement.step(), table) }
+        }
+        migrated.close()
+    }
+
+    @Test fun `D8 receive metadata persists cursor quarantine and structured conflict`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val repository = RoomSyncReceiveRepository(database)
+        val space = SyncSpaceId("personal-space")
+        assertEquals(0L, repository.serverCursor(space))
+        repository.saveServerCursor(space, 17)
+        assertEquals(17L, repository.serverCursor(space))
+        val quarantine = ProtocolQuarantine(space, id(40), 18, ProtocolQuarantineReason.UNSUPPORTED_MUTATION, "FutureMutation")
+        repository.quarantine(quarantine)
+        assertEquals(quarantine, repository.quarantine(space, id(40)))
+        val first = MutationId(id(41)); val second = MutationId(id(42))
+        val conflict = SyncConflict(
+            conflictId = id(43),
+            syncSpaceId = space,
+            entityRefs = listOf(SyncConflictEntityRef(EntityKind.EVENT, id(44), listOf("time"))),
+            participants = listOf(
+                SyncConflictParticipant(first, DvvSnapshot(emptyList(), DotSnapshot(id(45), 1)), "{\"time\":\"first\"}"),
+                SyncConflictParticipant(second, DvvSnapshot(emptyList(), DotSnapshot(id(46), 1)), "{\"time\":\"second\"}"),
+            ),
+            provisionalMutationId = first,
+            status = SyncConflictStatus.OPEN,
+        )
+        repository.saveConflict(conflict)
+        assertEquals(conflict, repository.conflict(conflict.conflictId))
+        database.close()
     }
 
     @Test fun `journal append failure rolls active state and causal state back together`() = runBlocking {

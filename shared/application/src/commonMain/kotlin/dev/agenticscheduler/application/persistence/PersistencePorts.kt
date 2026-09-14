@@ -11,6 +11,9 @@ import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.DvvSnapshot
+import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.ProtocolQuarantine
+import dev.agenticscheduler.sync.SyncConflict
 import dev.agenticscheduler.sync.FocusBlockDelete
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
@@ -57,6 +60,17 @@ data class HistoryChange(
 )
 
 data class FocusBlockTombstone(val focusBlockId: String, val deletionMutationId: MutationId, val dvv: DvvSnapshot)
+
+/** D8 receive-state boundary. Values here are local transport/audit metadata, never Domain facts. */
+interface SyncReceiveRepository {
+    suspend fun serverCursor(syncSpaceId: SyncSpaceId): Long
+    suspend fun saveServerCursor(syncSpaceId: SyncSpaceId, cursor: Long)
+    suspend fun quarantine(value: ProtocolQuarantine)
+    suspend fun quarantine(syncSpaceId: SyncSpaceId, mutationId: String): ProtocolQuarantine?
+    suspend fun saveConflict(value: SyncConflict)
+    suspend fun conflict(conflictId: String): SyncConflict?
+}
+
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }
 interface TaskRepository {
     fun observeTasks(): Flow<ImmutableList<Task>>; suspend fun getTask(id: TaskId): Task?; suspend fun upsertTask(task: Task)
