@@ -8,11 +8,14 @@ import dev.agenticscheduler.application.editing.EditingResult
 import dev.agenticscheduler.application.editing.EventEditingService
 import dev.agenticscheduler.application.editing.EventTimeInput
 import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.UpdateEventInput
+import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.HistoryQueryService
 import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
 import dev.agenticscheduler.application.persistence.MutationJournalRepository
@@ -52,6 +55,7 @@ import dev.agenticscheduler.domain.id.WorkLogId
 import dev.agenticscheduler.domain.id.TaskDependencyId
 import dev.agenticscheduler.domain.id.PlanningProfileId
 import dev.agenticscheduler.domain.id.AcademicHolidayId
+import dev.agenticscheduler.sync.operationKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -182,7 +186,8 @@ class PersistenceIntegrationTest {
         val events = RoomEventRepository(firstDatabase)
         val tasks = RoomTaskRepository(firstDatabase)
         val runner = RoomApplicationTransactionRunner(firstDatabase)
-        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, runner, ids).create(
+        val coordinator = MutationCoordinator(runner, RoomMutationJournalRepository(firstDatabase), ids, MutationWallClock { 1 })
+        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator).create(
             CreateEventInput(
                 "Created event",
                 EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)),
@@ -190,20 +195,36 @@ class PersistenceIntegrationTest {
                 PinState.UNPINNED,
             ),
         )).value)
-        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, runner, ids).create(
+        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator).create(
             CreateTaskInput("Created task", TaskPriority.NORMAL, null, null, null),
         )).value)
+        val updatedEvent = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator).update(
+            UpdateEventInput(event.id, "Updated event", EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)), Flexibility.HARD, PinState.UNPINNED),
+        )).value)
+        val updatedTask = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator).update(
+            UpdateTaskInput(task.id, "Updated task", TaskStatus.IN_PROGRESS, TaskPriority.HIGH, null, kotlin.time.Duration.ZERO, null, null),
+        )).value)
+        val history = RoomMutationJournalRepository(firstDatabase)
+        val timeline = history.timeline()
+        assertEquals(4, timeline.size, "Every Event/Task command must commit one atomic journal operation.")
+        assertEquals(listOf("EventPut", "TaskPut", "EventPut", "TaskPut"), timeline.map { it.operation.orderedMutations.single().operationKind() })
+        timeline.forEach { committed ->
+            val diff = history.diff(committed.operation.mutationId)
+            assertEquals(listOf(0), diff.map { it.ordinal }, "Single-command ChangeLog must start at ordinal zero.")
+            assertEquals(committed.operation.orderedMutations.single().entityId, diff.single().entityId)
+        }
+        assertEquals(updatedEvent, events.get(event.id)); assertEquals(updatedTask, tasks.getTask(task.id))
         val viewport = CalendarViewport(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11), TimeZone.UTC)
         val projection = RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(firstDatabase)).observe(viewport).first()
-        assertTrue(projection.items.any { it.title == event.title })
+        assertTrue(projection.items.any { it.title == updatedEvent.title })
         assertTrue(tasks.observeFocusBlocks().first().isEmpty())
         firstDatabase.close()
 
         val secondDatabase = openDesktopDatabase(path.toString())
         val reloadedEvents = RoomEventRepository(secondDatabase)
         val reloadedTasks = RoomTaskRepository(secondDatabase)
-        assertEquals(event, reloadedEvents.get(event.id))
-        assertEquals(task, reloadedTasks.getTask(task.id))
+        assertEquals(updatedEvent, reloadedEvents.get(event.id))
+        assertEquals(updatedTask, reloadedTasks.getTask(task.id))
         secondDatabase.close(); Files.deleteIfExists(path); Unit
     }
 
@@ -375,7 +396,7 @@ class PersistenceIntegrationTest {
         val journal = RoomMutationJournalRepository(database)
         val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
         val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), FailingJournal(journal), ids, MutationWallClock { 1 })
-        val editor = EventEditingService(events, RoomApplicationTransactionRunner(database), ids, coordinator)
+        val editor = EventEditingService(events, ids, coordinator)
         assertFailsWith<IllegalStateException> { editor.create(CreateEventInput("rollback", EventTimeInput.AllDay(LocalDate(2026, 1, 1), LocalDate(2026, 1, 2)), Flexibility.HARD, PinState.UNPINNED)) }
         assertEquals(emptyList(), events.observeAll().first())
         assertEquals(emptyList(), database.mutationJournalDao().timeline())

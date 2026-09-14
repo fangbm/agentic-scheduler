@@ -4,7 +4,6 @@ import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.AcademicRepository
-import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.PlanningProfileRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
@@ -33,11 +32,10 @@ class DogfoodPlannerService(
     private val events: EventRepository,
     private val profiles: PlanningProfileRepository,
     private val academics: AcademicRepository,
-    private val transactions: ApplicationTransactionRunner,
     private val uuidV7: UuidV7Generator,
     private val planner: DeterministicPlanner = DeterministicPlanner(),
     private val snapshotAssembler: PlanningSnapshotAssembler = PlanningSnapshotAssembler(),
-    private val mutations: MutationCoordinator? = null,
+    private val mutations: MutationCoordinator,
 ) {
     private val previews = PlannerPreviewService(planner, PlanBranchFactory(uuidV7))
 
@@ -66,7 +64,6 @@ class DogfoodPlannerService(
             return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
         return PlanBranchApplier(
-            transactions = transactions,
             tasks = tasks,
             uuidV7 = uuidV7,
             currentSnapshot = {
@@ -154,9 +151,8 @@ class DogfoodPlannerService(
 /** Profile settings writes use the application transaction boundary, never a platform DAO. */
 class PlanningProfileSettingsService(
     private val profiles: PlanningProfileRepository,
-    private val transactions: ApplicationTransactionRunner,
     private val uuidV7: UuidV7Generator,
-    private val mutations: MutationCoordinator? = null,
+    private val mutations: MutationCoordinator,
 ) {
     suspend fun createUnconfigured(name: String): PlanningProfile {
         val profile = PlanningProfile(
@@ -164,22 +160,19 @@ class PlanningProfileSettingsService(
             name,
             dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured,
         )
-        return mutations?.execute(MutationOrigin.User) {
+        return mutations.execute(MutationOrigin.User) {
             profiles.upsert(profile)
             record(PlanningProfilePut(null, profile.toSemanticImage()))
             profile
-        }?.value ?: transactions.inWriteTransaction { profiles.upsert(profile); profile }
+        }.value
     }
 
     suspend fun save(profile: PlanningProfile): PlanningProfile {
-        if (mutations != null) {
-            return mutations.execute(MutationOrigin.User) {
-                val before = profiles.get(profile.id)
-                profiles.upsert(profile)
-                record(PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage()))
-                profile
-            }.value
-        }
-        return transactions.inWriteTransaction { profiles.upsert(profile); profile }
+        return mutations.execute(MutationOrigin.User) {
+            val before = profiles.get(profile.id)
+            profiles.upsert(profile)
+            record(PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage()))
+            profile
+        }.value
     }
 }

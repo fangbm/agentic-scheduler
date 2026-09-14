@@ -100,10 +100,10 @@ class MainActivity : ComponentActivity() {
     private val calendarQueryService: CalendarQueryService by lazy {
         RepositoryCalendarQueryService(events, tasks, academics)
     }
-    private val eventEditor by lazy { EventEditingService(events, transactionRunner, ids, mutations) }
-    private val taskEditor by lazy { TaskEditingService(tasks, transactionRunner, ids, mutations) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, transactionRunner, ids, mutations = mutations) }
-    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, transactionRunner, ids, mutations) }
+    private val eventEditor by lazy { EventEditingService(events, ids, mutations) }
+    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

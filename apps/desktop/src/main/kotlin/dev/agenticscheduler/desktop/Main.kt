@@ -101,7 +101,7 @@ fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, transactions, ids, mutations = mutations), PlanningProfileSettingsService(profiles, transactions, ids, mutations), EventEditingService(events, transactions, ids, mutations), TaskEditingService(tasks, transactions, ids, mutations))
+                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations), PlanningProfileSettingsService(profiles, ids, mutations), EventEditingService(events, ids, mutations), TaskEditingService(tasks, ids, mutations))
             }
         }
     }

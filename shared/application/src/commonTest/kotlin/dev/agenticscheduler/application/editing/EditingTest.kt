@@ -3,8 +3,13 @@ package dev.agenticscheduler.application.editing
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
+import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.EventRepository
+import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
+import dev.agenticscheduler.application.persistence.MutationJournalRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
@@ -59,7 +64,7 @@ class EditingTest {
         runBlocking {
         val repository = FakeEventRepository()
         val transactions = CountingTransactions()
-        val service = EventEditingService(repository, transactions, generator())
+        val service = EventEditingService(repository, generator(), coordinator(transactions))
 
         val created = assertIs<Event>(assertIs<EditingResult.Success<*>>(service.create(eventInput(EventTimeInput.Zoned(
             LocalDateTime(2026, 9, 10, 8, 0),
@@ -110,7 +115,8 @@ class EditingTest {
     @Test
     fun `Event validation rejects blank missing and DST transition input`() {
         runBlocking {
-        val service = EventEditingService(FakeEventRepository(), CountingTransactions(), generator())
+        val transactions = CountingTransactions()
+        val service = EventEditingService(FakeEventRepository(), generator(), coordinator(transactions))
 
         assertIs<EditingResult.Invalid>(service.create(eventInput(null, title = " ")))
         assertIs<EditingResult.Invalid>(service.create(eventInput(null)))
@@ -136,7 +142,7 @@ class EditingTest {
     fun `Task creation defaults and edits preserve independent effort and deadline facts`() {
         runBlocking {
         val repository = FakeTaskRepository()
-        val service = TaskEditingService(repository, CountingTransactions(), generator())
+        val service = TaskEditingService(repository, generator(), coordinator(CountingTransactions()))
 
         val created = assertIs<Task>(assertIs<EditingResult.Success<*>>(service.create(CreateTaskInput(
             title = "Write report",
@@ -196,8 +202,8 @@ class EditingTest {
         runBlocking {
         val eventRepository = FakeEventRepository()
         val taskRepository = FakeTaskRepository()
-        val eventService = EventEditingService(eventRepository, CountingTransactions(), generator())
-        val taskService = TaskEditingService(taskRepository, CountingTransactions(), generator())
+        val eventService = EventEditingService(eventRepository, generator(), coordinator(CountingTransactions()))
+        val taskService = TaskEditingService(taskRepository, generator(), coordinator(CountingTransactions()))
 
         assertEquals(
             EditingResult.NotFound,
@@ -217,7 +223,7 @@ class EditingTest {
         runBlocking {
         val repository = FakeTaskRepository()
         val transactions = CountingTransactions()
-        val result = TaskEditingService(repository, transactions, generator()).create(
+        val result = TaskEditingService(repository, generator(), coordinator(transactions)).create(
             CreateTaskInput("Invalid", TaskPriority.NORMAL, (-1).hours, null, null),
         )
 
@@ -238,6 +244,13 @@ class EditingTest {
         EpochMillisecondsClock { fixedEpochMilliseconds },
         RandomBytes { size -> ByteArray(size) { (it + 1).toByte() } },
     )
+
+    private fun coordinator(transactions: ApplicationTransactionRunner) = MutationCoordinator(
+        transactions,
+        TestJournal(),
+        generator(),
+        MutationWallClock { fixedEpochMilliseconds },
+    )
 }
 
 private const val fixedEpochMilliseconds = 0x018F6E687D0C
@@ -249,6 +262,14 @@ private class CountingTransactions : ApplicationTransactionRunner {
         writes += 1
         return block()
     }
+}
+
+private class TestJournal : MutationJournalRepository {
+    private var state: LocalReplicaCausalState? = null
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = state
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) = Unit
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
 }
 
 private class FakeEventRepository : EventRepository {

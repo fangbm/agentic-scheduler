@@ -4,7 +4,6 @@ import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationScope
 import dev.agenticscheduler.application.history.toSemanticImage
-import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.domain.id.FocusBlockId
 import dev.agenticscheduler.domain.id.PlanBranchId
@@ -102,25 +101,19 @@ sealed interface PlanBranchApplyResult {
  * This makes staleness structural instead of relying on a broad database revision counter.
  */
 class PlanBranchApplier(
-    private val transactions: ApplicationTransactionRunner,
     private val tasks: TaskRepository,
     private val uuidV7: UuidV7Generator,
-    private val mutations: MutationCoordinator? = null,
+    private val mutations: MutationCoordinator,
     /** A null snapshot means the current facts cannot be resolved safely, so Apply is stale. */
     private val currentSnapshot: suspend () -> PlanningSnapshot?,
 ) {
     suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult {
-        if (mutations != null) {
-            var noMutationResult: PlanBranchApplyResult? = null
-            val execution = mutations.executeIfAny(MutationOrigin.Planner) {
-                applyWithin(branch, applyNow, this).also { noMutationResult = it }
-            }
-            return execution?.value ?: requireNotNull(noMutationResult)
-        }
-        return transactions.inWriteTransaction { applyWithin(branch, applyNow, null) }
+        var noMutationResult: PlanBranchApplyResult? = null
+        val execution = mutations.executeIfAny(MutationOrigin.Planner) { applyWithin(branch, applyNow, this).also { noMutationResult = it } }
+        return execution?.value ?: requireNotNull(noMutationResult)
     }
 
-    private suspend fun applyWithin(branch: PlanBranch, applyNow: Instant, scope: MutationScope?): PlanBranchApplyResult {
+    private suspend fun applyWithin(branch: PlanBranch, applyNow: Instant, scope: MutationScope): PlanBranchApplyResult {
         if (branch.status != PlanBranchStatus.DRAFT || currentSnapshot()?.withoutReferenceNow() != branch.baseFacts.withoutReferenceNow()) {
             return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
@@ -153,18 +146,18 @@ class PlanBranchApplier(
                 flexibility = Flexibility.SOFT, pinState = PinState.UNPINNED,
                 )
                 tasks.upsertFocusBlock(created)
-                scope?.record(FocusBlockPut(null, created.toSemanticImage()))
+                scope.record(FocusBlockPut(null, created.toSemanticImage()))
             }
             is FocusBlockMutation.Move -> {
                 val before = requireNotNull(existing[mutation.id]); val after = before.copy(time = mutation.time)
-                tasks.upsertFocusBlock(after); scope?.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
+                tasks.upsertFocusBlock(after); scope.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
             }
             is FocusBlockMutation.Resize -> {
                 val before = requireNotNull(existing[mutation.id]); val after = before.copy(time = mutation.time)
-                tasks.upsertFocusBlock(after); scope?.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
+                tasks.upsertFocusBlock(after); scope.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
             }
             is FocusBlockMutation.Delete -> {
-                val before = requireNotNull(existing[mutation.id]); tasks.deleteFocusBlock(mutation.id); scope?.record(FocusBlockDelete(before.toSemanticImage()))
+                val before = requireNotNull(existing[mutation.id]); tasks.deleteFocusBlock(mutation.id); scope.record(FocusBlockDelete(before.toSemanticImage()))
             }
         } }
         return PlanBranchApplyResult.Applied(branch.copy(status = PlanBranchStatus.APPLIED))

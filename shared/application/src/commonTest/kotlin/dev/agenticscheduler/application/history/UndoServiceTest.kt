@@ -21,8 +21,12 @@ import dev.agenticscheduler.domain.id.TaskDependencyId
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.id.WorkLogId
 import dev.agenticscheduler.domain.planning.PlanningProfile
+import dev.agenticscheduler.domain.planning.PlanningProfileConfiguration
 import dev.agenticscheduler.domain.task.FocusBlock
 import dev.agenticscheduler.domain.task.Task
+import dev.agenticscheduler.domain.task.TaskEffort
+import dev.agenticscheduler.domain.task.TaskPriority
+import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.domain.task.TaskDependency
 import dev.agenticscheduler.domain.task.WorkLog
 import dev.agenticscheduler.sync.DotSnapshot
@@ -32,16 +36,22 @@ import dev.agenticscheduler.sync.EventPut
 import dev.agenticscheduler.sync.FocusBlockImage
 import dev.agenticscheduler.sync.FocusBlockPut
 import dev.agenticscheduler.sync.FocusBlockPutAgainstTombstone
+import dev.agenticscheduler.sync.FocusBlockDelete
 import dev.agenticscheduler.sync.HlcSnapshot
 import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityMutation
+import dev.agenticscheduler.sync.PlanningProfilePut
+import dev.agenticscheduler.sync.TaskPut
+import dev.agenticscheduler.sync.WorkLogAppend
+import dev.agenticscheduler.sync.GenericFactImage
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNull
 
 class UndoServiceTest {
     @Test fun `event update undo is a new compensating mutation`() = kotlinx.coroutines.runBlocking {
@@ -72,6 +82,79 @@ class UndoServiceTest {
         assertEquals(emptyList(), journal.mutations)
     }
 
+    @Test fun `task and PlanningProfile updates undo through one compensating mutation each`() = kotlinx.coroutines.runBlocking {
+        val taskId = TaskId("00000000-0000-7000-8000-000000000040")
+        val taskBefore = task(taskId, "before"); val taskAfter = task(taskId, "after")
+        val taskJournal = MemoryJournalForUndo()
+        val tasks = MemoryTasksForUndo(taskAfter)
+        val taskResult = UndoService(coordinator(taskJournal), MemoryHistory("00000000-0000-7000-8000-000000000041", TaskPut(taskBefore.toSemanticImage(), taskAfter.toSemanticImage())), MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000042"), "unused")), tasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000041")
+        assertIs<UndoResult.Applied>(taskResult)
+        assertEquals(taskBefore, tasks.task)
+        assertIs<TaskPut>(taskJournal.mutations.single().operation.orderedMutations.single())
+
+        val profileId = PlanningProfileId("00000000-0000-7000-8000-000000000043")
+        val profileBefore = PlanningProfile(profileId, "before", PlanningProfileConfiguration.Unconfigured)
+        val profileAfter = PlanningProfile(profileId, "after", PlanningProfileConfiguration.Unconfigured)
+        val profiles = MemoryProfiles(profileAfter); val profileJournal = MemoryJournalForUndo()
+        val profileResult = UndoService(coordinator(profileJournal), MemoryHistory("00000000-0000-7000-8000-000000000044", PlanningProfilePut(profileBefore.toSemanticImage(), profileAfter.toSemanticImage())), MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000045"), "unused")), MemoryTasksForUndo(), profiles).undo("00000000-0000-7000-8000-000000000044")
+        assertIs<UndoResult.Applied>(profileResult)
+        assertEquals(profileBefore, profiles.value)
+        assertIs<PlanningProfilePut>(profileJournal.mutations.single().operation.orderedMutations.single())
+        Unit
+    }
+
+    @Test fun `FocusBlock create move resize and delete undo with their frozen inverse semantics`() = kotlinx.coroutines.runBlocking {
+        val original = focus("00000000-0000-7000-8000-000000000050", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
+        val moved = focus(original.id.value, "2026-01-01T11:00:00Z", "2026-01-01T12:00:00Z")
+        val resized = focus(original.id.value, "2026-01-01T11:00:00Z", "2026-01-01T13:00:00Z")
+
+        val createTasks = MemoryTasksForUndo(focus = original)
+        val createJournal = MemoryJournalForUndo()
+        assertIs<UndoResult.Applied>(UndoService(coordinator(createJournal), MemoryHistory("00000000-0000-7000-8000-000000000051", FocusBlockPut(null, original.toSemanticImage())), unusedEvents(), createTasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000051"))
+        assertNull(createTasks.focus)
+        assertIs<FocusBlockDelete>(createJournal.mutations.single().operation.orderedMutations.single())
+
+        val moveTasks = MemoryTasksForUndo(focus = moved)
+        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), MemoryHistory("00000000-0000-7000-8000-000000000052", FocusBlockPut(original.toSemanticImage(), moved.toSemanticImage())), unusedEvents(), moveTasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000052"))
+        assertEquals(original, moveTasks.focus)
+
+        val resizeTasks = MemoryTasksForUndo(focus = resized)
+        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), MemoryHistory("00000000-0000-7000-8000-000000000053", FocusBlockPut(moved.toSemanticImage(), resized.toSemanticImage())), unusedEvents(), resizeTasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000053"))
+        assertEquals(moved, resizeTasks.focus)
+
+        val deleteId = "00000000-0000-7000-8000-000000000054"
+        val deleteTasks = MemoryTasksForUndo()
+        val deleteHistory = MemoryHistory(deleteId, FocusBlockDelete(original.toSemanticImage()), tombstone = FocusBlockTombstone(original.id.value, dev.agenticscheduler.sync.MutationId(deleteId), DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1))))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), deleteHistory, unusedEvents(), deleteTasks, MemoryProfiles()).undo(deleteId))
+        assertEquals(original, deleteTasks.focus)
+    }
+
+    @Test fun `grouped Planner undo is all or nothing`() = kotlinx.coroutines.runBlocking {
+        val first = focus("00000000-0000-7000-8000-000000000060", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z")
+        val second = focus("00000000-0000-7000-8000-000000000061", "2026-01-01T11:00:00Z", "2026-01-01T12:00:00Z")
+        val id = "00000000-0000-7000-8000-000000000062"
+        val successTasks = MemoryTasksForUndo(focus = first, extraFocus = second)
+        val successJournal = MemoryJournalForUndo()
+        val original = MemoryHistory(id, FocusBlockPut(null, first.toSemanticImage()), extraMutations = listOf(FocusBlockPut(null, second.toSemanticImage())))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(successJournal), original, unusedEvents(), successTasks, MemoryProfiles()).undo(id))
+        assertNull(successTasks.focus); assertNull(successTasks.extraFocus)
+        assertEquals(2, successJournal.mutations.single().operation.orderedMutations.size)
+
+        val diverged = second.copy(flexibility = dev.agenticscheduler.domain.planning.Flexibility.HARD)
+        val failedTasks = MemoryTasksForUndo(focus = first, extraFocus = diverged)
+        val failedJournal = MemoryJournalForUndo()
+        assertEquals(UndoResult.Conflict(listOf(second.id.value)), UndoService(coordinator(failedJournal), original, unusedEvents(), failedTasks, MemoryProfiles()).undo(id))
+        assertEquals(first, failedTasks.focus); assertEquals(diverged, failedTasks.extraFocus); assertEquals(emptyList(), failedJournal.mutations)
+    }
+
+    @Test fun `unsupported D7 undo reports a structured result without writing`() = kotlinx.coroutines.runBlocking {
+        val journal = MemoryJournalForUndo()
+        val operation = WorkLogAppend(GenericFactImage("00000000-0000-7000-8000-000000000070", emptyList()))
+        val result = UndoService(coordinator(journal), MemoryHistory("00000000-0000-7000-8000-000000000071", operation), unusedEvents(), MemoryTasksForUndo(), MemoryProfiles()).undo("00000000-0000-7000-8000-000000000071")
+        assertIs<UndoResult.Unsupported>(result)
+        assertEquals(emptyList(), journal.mutations)
+    }
+
     @Test fun `replay journals an older focus put without resurrecting its tombstone`() = kotlinx.coroutines.runBlocking {
         val replica = "00000000-0000-7000-8000-000000000001"
         val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000030", "00000000-0000-7000-8000-000000000031", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED"))
@@ -86,35 +169,62 @@ class UndoServiceTest {
         assertEquals(listOf(operation), journal.mutations.map(CommittedMutation::operation))
     }
 
+    @Test fun `older replayed delete is journaled but never downgrades a newer tombstone`() = kotlinx.coroutines.runBlocking {
+        val replica = "00000000-0000-7000-8000-000000000001"
+        val image = FocusBlockImage("00000000-0000-7000-8000-000000000080", "00000000-0000-7000-8000-000000000081", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED")
+        val newer = SyncOperation("00000000-0000-7000-8000-000000000082", DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(replica, 1)), DotSnapshot(replica, 2)), HlcSnapshot(2, 0, replica), MutationOrigin.User, listOf(FocusBlockDelete(image)))
+        val journal = MemoryJournalForUndo()
+        val history = MemoryHistory("irrelevant", FocusBlockDelete(image), present = false, tombstoneProvider = { journal.tombstones[image.id] })
+        val replayer = FocusBlockOperationReplayer(IdentityTransactionsForUndo, journal, history, MemoryTasksForUndo(), RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 })
+        assertEquals(FocusBlockReplayResult.Applied, replayer.replay(newer))
+        val older = SyncOperation("00000000-0000-7000-8000-000000000083", DvvSnapshot(emptyList(), DotSnapshot(replica, 1)), HlcSnapshot(1, 0, replica), MutationOrigin.User, listOf(FocusBlockDelete(image)))
+        assertEquals(FocusBlockReplayResult.SuppressedByTombstone, replayer.replay(older))
+        assertEquals(newer.mutationId, journal.tombstones.getValue(image.id).deletionMutationId.value)
+        assertEquals(listOf(newer, older), journal.mutations.map(CommittedMutation::operation))
+    }
+
+    @Test fun `replay duplicate is idempotent and does not append a second journal entry`() = kotlinx.coroutines.runBlocking {
+        val put = FocusBlockPut(null, FocusBlockImage("00000000-0000-7000-8000-000000000090", "00000000-0000-7000-8000-000000000091", "2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC", "SOFT", "UNPINNED"))
+        val operation = SyncOperation("00000000-0000-7000-8000-000000000092", DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(put))
+        val journal = MemoryJournalForUndo()
+        val history = MemoryHistory(operation.mutationId, put)
+        val result = FocusBlockOperationReplayer(IdentityTransactionsForUndo, journal, history, MemoryTasksForUndo(), RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 }).replay(operation)
+        assertEquals(FocusBlockReplayResult.Duplicate, result); assertEquals(emptyList(), journal.mutations)
+    }
+
     private fun event(id: EventId, title: String) = Event(id, title, dev.agenticscheduler.domain.time.AllDayRange(kotlinx.datetime.LocalDate(2026, 1, 1), kotlinx.datetime.LocalDate(2026, 1, 2)), dev.agenticscheduler.domain.planning.Flexibility.HARD, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
+    private fun task(id: TaskId, title: String) = Task(id, title, TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null)
+    private fun focus(id: String, start: String, end: String) = FocusBlock(FocusBlockId(id), TaskId("00000000-0000-7000-8000-000000000099"), dev.agenticscheduler.domain.time.ZonedTimeRange(kotlin.time.Instant.parse(start), kotlin.time.Instant.parse(end), kotlinx.datetime.TimeZone.UTC), dev.agenticscheduler.domain.planning.Flexibility.SOFT, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
+    private fun unusedEvents() = MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000098"), "unused"))
     private fun coordinator(journal: MemoryJournalForUndo) = MutationCoordinator(IdentityTransactionsForUndo, journal, RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 })
 }
 
 private object IdentityTransactionsForUndo : ApplicationTransactionRunner { override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = block() }
 private class MemoryJournalForUndo : MutationJournalRepository {
-    var state: LocalReplicaCausalState? = null; val mutations = mutableListOf<CommittedMutation>()
+    var state: LocalReplicaCausalState? = null; val mutations = mutableListOf<CommittedMutation>(); val tombstones = mutableMapOf<String, FocusBlockTombstone>()
     override suspend fun localReplicaState() = state
     override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
     override suspend fun appendCommittedMutation(mutation: CommittedMutation) { mutations += mutation }
-    override suspend fun advanceFocusBlockTombstones(operation: SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
+    override suspend fun advanceFocusBlockTombstones(operation: SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) { acceptedDeletes.forEach { delete -> tombstones[delete.entityId] = FocusBlockTombstone(delete.entityId, dev.agenticscheduler.sync.MutationId(operation.mutationId), operation.dvv) } }
 }
-private class MemoryHistory(val id: String, mutation: EntityMutation, private val tombstone: FocusBlockTombstone? = null, private val present: Boolean = true) : HistoryRepository {
-    private val value = CommittedMutation(SyncOperation(id, DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 0)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(mutation)), 1)
+private class MemoryHistory(val id: String, mutation: EntityMutation, private val tombstone: FocusBlockTombstone? = null, private val present: Boolean = true, extraMutations: List<EntityMutation> = emptyList(), private val tombstoneProvider: (() -> FocusBlockTombstone?)? = null) : HistoryRepository {
+    private val value = CommittedMutation(SyncOperation(id, DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 0)), HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"), MutationOrigin.User, listOf(mutation) + extraMutations), 1)
     override suspend fun timeline() = listOf(value); override suspend fun mutation(mutationId: String) = value.takeIf { present && it.operation.mutationId == mutationId }
     override suspend fun entityChanges(entityKind: EntityKind, entityId: String) = emptyList<HistoryChange>(); override suspend fun diff(mutationId: String) = emptyList<HistoryChange>()
-    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = tombstone?.takeIf { it.focusBlockId == focusBlockId }
+    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = (tombstoneProvider?.invoke() ?: tombstone)?.takeIf { it.focusBlockId == focusBlockId }
 }
 private class MemoryEvents(initial: Event) : EventRepository {
     var value = initial; override fun observeAll(): Flow<kotlinx.collections.immutable.ImmutableList<Event>> = flowOf(listOf(value).toImmutableList())
     override suspend fun get(id: EventId) = value.takeIf { it.id == id }; override suspend fun upsert(event: Event) { value = event }
 }
-private class MemoryTasksForUndo : TaskRepository {
-    var focus: FocusBlock? = null
-    override fun observeTasks() = flowOf(emptyList<Task>().toImmutableList()); override suspend fun getTask(id: TaskId): Task? = null; override suspend fun upsertTask(task: Task) = Unit
-    override fun observeFocusBlocks() = flowOf(listOfNotNull(focus).toImmutableList()); override suspend fun getFocusBlock(id: FocusBlockId): FocusBlock? = focus?.takeIf { it.id == id }; override suspend fun upsertFocusBlock(focusBlock: FocusBlock) { focus = focusBlock }; override suspend fun deleteFocusBlock(id: FocusBlockId) { if (focus?.id == id) focus = null }
+private class MemoryTasksForUndo(initialTask: Task? = null, focus: FocusBlock? = null, extraFocus: FocusBlock? = null) : TaskRepository {
+    var task: Task? = initialTask; var focus: FocusBlock? = focus; var extraFocus: FocusBlock? = extraFocus
+    override fun observeTasks() = flowOf(listOfNotNull(task).toImmutableList()); override suspend fun getTask(id: TaskId): Task? = task?.takeIf { it.id == id }; override suspend fun upsertTask(task: Task) { this.task = task }
+    override fun observeFocusBlocks() = flowOf(listOfNotNull(focus, extraFocus).toImmutableList()); override suspend fun getFocusBlock(id: FocusBlockId): FocusBlock? = listOfNotNull(focus, extraFocus).firstOrNull { it.id == id }; override suspend fun upsertFocusBlock(focusBlock: FocusBlock) { if (focus?.id == focusBlock.id || extraFocus == null) focus = focusBlock else extraFocus = focusBlock }; override suspend fun deleteFocusBlock(id: FocusBlockId) { if (focus?.id == id) focus = null; if (extraFocus?.id == id) extraFocus = null }
     override fun observeWorkLogs() = flowOf(emptyList<WorkLog>().toImmutableList()); override suspend fun getWorkLog(id: WorkLogId): WorkLog? = null; override suspend fun upsertWorkLog(workLog: WorkLog) = Unit
     override fun observeDependencies() = flowOf(emptyList<TaskDependency>().toImmutableList()); override suspend fun getDependency(id: TaskDependencyId): TaskDependency? = null; override suspend fun upsertDependency(dependency: TaskDependency) = Unit
 }
-private class MemoryProfiles : PlanningProfileRepository {
-    override fun observeAll() = flowOf(emptyList<PlanningProfile>().toImmutableList()); override suspend fun get(id: PlanningProfileId): PlanningProfile? = null; override suspend fun upsert(profile: PlanningProfile) = Unit
+private class MemoryProfiles(initial: PlanningProfile? = null) : PlanningProfileRepository {
+    var value: PlanningProfile? = initial
+    override fun observeAll() = flowOf(listOfNotNull(value).toImmutableList()); override suspend fun get(id: PlanningProfileId): PlanningProfile? = value?.takeIf { it.id == id }; override suspend fun upsert(profile: PlanningProfile) { value = profile }
 }

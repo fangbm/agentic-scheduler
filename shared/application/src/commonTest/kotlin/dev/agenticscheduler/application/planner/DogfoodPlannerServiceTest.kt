@@ -3,11 +3,16 @@ package dev.agenticscheduler.application.planner
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
+import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.PlanningProfileRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
+import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
+import dev.agenticscheduler.application.persistence.MutationJournalRepository
 import dev.agenticscheduler.domain.academic.*
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.*
@@ -44,8 +49,8 @@ class DogfoodPlannerServiceTest {
             events = MemoryEvents(),
             profiles = MemoryProfiles(profile),
             academics = EmptyAcademics,
-            transactions = IdentityTransactions,
             uuidV7 = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+            mutations = coordinator(),
         )
         val referenceNow = Instant.parse("2026-01-05T08:00:00Z")
         val preview = assertIs<PlannerPreview.Applicable>(service.fullReplan(
@@ -118,6 +123,23 @@ class DogfoodPlannerServiceTest {
         Unit
     }
 
+    @Test fun `PlanningProfile commands journal create and update through the mandatory coordinator`() = runBlocking {
+        val profiles = MemoryProfiles(configuredProfile())
+        val journal = DogfoodJournal()
+        val settings = PlanningProfileSettingsService(
+            profiles,
+            RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+            coordinator(journal),
+        )
+        val created = settings.createUnconfigured("Draft")
+        val saved = settings.save(created.copy(name = "Ready"))
+        assertEquals(saved, profiles.get(saved.id))
+        assertEquals(2, journal.mutations.size)
+        val puts = journal.mutations.map { it.operation.orderedMutations.single() as dev.agenticscheduler.sync.PlanningProfilePut }
+        assertEquals(null, puts.first().before)
+        assertEquals(created.id.value, puts.last().before?.id)
+    }
+
     private fun task() = Task(TaskId(id(2)), "Read", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(1.hours, ZERO, 1.hours), null)
     private fun configuredProfile(endHour: Int = 17) = PlanningProfile(
         PlanningProfileId(id(1)), "Study", PlanningProfileConfiguration.Configured(
@@ -140,8 +162,16 @@ class DogfoodPlannerServiceTest {
     )
     private fun horizon(referenceNow: Instant) = PlanningHorizon(referenceNow, Instant.parse("2026-01-05T12:00:00Z"))
     private fun service(tasks: MemoryTasks, events: MemoryEvents, profile: PlanningProfile) = DogfoodPlannerService(
-        tasks, events, MemoryProfiles(profile), EmptyAcademics, IdentityTransactions,
+        tasks, events, MemoryProfiles(profile), EmptyAcademics,
         RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+        mutations = coordinator(),
+    )
+
+    private fun coordinator(journal: DogfoodJournal = DogfoodJournal()) = MutationCoordinator(
+        IdentityTransactions,
+        journal,
+        RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+        MutationWallClock { 1 },
     )
 
     private fun id(number: Int) = "018f6e68-7d0c-7000-8000-${number.toString().padStart(12, '0')}"
@@ -149,6 +179,15 @@ class DogfoodPlannerServiceTest {
 
 private object IdentityTransactions : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = block()
+}
+
+private class DogfoodJournal : MutationJournalRepository {
+    private var state: LocalReplicaCausalState? = null
+    val mutations = mutableListOf<CommittedMutation>()
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = state
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { mutations += mutation }
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
 }
 
 private class MemoryTasks(private val task: Task, initialBlocks: Collection<FocusBlock> = emptyList()) : TaskRepository {
@@ -174,10 +213,10 @@ private class MemoryEvents(var values: List<Event> = emptyList()) : EventReposit
     override suspend fun upsert(event: Event) = Unit
 }
 
-private class MemoryProfiles(private val profile: PlanningProfile) : PlanningProfileRepository {
+private class MemoryProfiles(private var profile: PlanningProfile) : PlanningProfileRepository {
     override fun observeAll(): Flow<ImmutableList<PlanningProfile>> = flowOf(listOf(profile).toImmutableList())
     override suspend fun get(id: PlanningProfileId): PlanningProfile? = profile.takeIf { it.id == id }
-    override suspend fun upsert(profile: PlanningProfile) = Unit
+    override suspend fun upsert(profile: PlanningProfile) { this.profile = profile }
 }
 
 private object EmptyAcademics : AcademicRepository {
