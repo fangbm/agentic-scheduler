@@ -19,6 +19,8 @@ sealed interface SyncReceiveResult {
     data class Duplicate(val mutationId: MutationId) : SyncReceiveResult
     data class IgnoredCausallyKnown(val mutationId: MutationId) : SyncReceiveResult
     data class RequiresSemanticMerge(val mutationId: MutationId) : SyncReceiveResult
+    /** Valid operation retained locally until every DVV-context dependency has been durably handled. */
+    data class PendingCausalGap(val mutationId: MutationId, val missingPrerequisites: List<Dot>) : SyncReceiveResult
     data class Conflicted(val conflictId: String, val kind: SyncConflictKind) : SyncReceiveResult
     data class Quarantined(val mutationId: String, val reason: ProtocolQuarantineReason) : SyncReceiveResult
 }
@@ -36,7 +38,9 @@ class SyncEngine(
     private val ids: UuidV7Generator,
     private val wallClock: MutationWallClock,
 ) {
-    suspend fun receive(receipt: DecryptedPayloadReceipt): SyncReceiveResult {
+    suspend fun receive(receipt: DecryptedPayloadReceipt): SyncReceiveResult = receiveInternal(receipt, drainPending = true)
+
+    private suspend fun receiveInternal(receipt: DecryptedPayloadReceipt, drainPending: Boolean): SyncReceiveResult {
         val decoded = SyncWireCodec.decodePayload(receipt.payloadJson)
         val operation = when (decoded) {
             is PayloadDecodeResult.Supported -> decoded.payload.operation
@@ -45,20 +49,51 @@ class SyncEngine(
             is PayloadDecodeResult.Invalid -> return quarantine(receipt, ProtocolQuarantineReason.INVALID_PAYLOAD, decoded.reason)
         }
         if (operation.mutationId != receipt.mutationId) return quarantine(receipt, ProtocolQuarantineReason.INVALID_PAYLOAD, "Payload MutationId does not match its envelope.")
-        return try {
+        val result = try {
             transactions.inWriteTransaction {
                 if (history.mutation(operation.mutationId) != null) {
+                    receiveState.removePending(receipt.syncSpaceId, operation.mutationId)
                     advanceCursor(receipt)
                     return@inWriteTransaction SyncReceiveResult.Duplicate(MutationId(operation.mutationId))
+                }
+                val dot = operation.dvv.dot
+                val replicaId = ReplicaId(dot.replicaId)
+                receiveState.handledDot(receipt.syncSpaceId, replicaId, dot.counter)?.let { existing ->
+                    if (existing.mutationId != operation.mutationId) {
+                        receiveState.quarantine(ProtocolQuarantine(
+                            receipt.syncSpaceId,
+                            receipt.mutationId,
+                            receipt.serverCursor,
+                            ProtocolQuarantineReason.INVALID_PAYLOAD,
+                            "Causal dot is already bound to another MutationId.",
+                        ))
+                        advanceCursor(receipt)
+                        return@inWriteTransaction SyncReceiveResult.Quarantined(receipt.mutationId, ProtocolQuarantineReason.INVALID_PAYLOAD)
+                    }
+                }
+                val missingPrerequisites = missingCausalPrerequisites(receipt.syncSpaceId, operation)
+                if (missingPrerequisites.isNotEmpty()) {
+                    val pending = receiveState.pending(receipt.syncSpaceId, operation.mutationId)
+                    require(pending == null || pending.payloadJson == receipt.payloadJson) { "A pending MutationId must retain one payload." }
+                    receiveState.savePending(PendingSyncReceive(
+                        receipt.syncSpaceId,
+                        operation.mutationId,
+                        receipt.serverCursor,
+                        receipt.payloadJson,
+                    ))
+                    return@inWriteTransaction SyncReceiveResult.PendingCausalGap(MutationId(operation.mutationId), missingPrerequisites)
                 }
                 integrityConflict(receipt.syncSpaceId, operation)?.let { conflict ->
                     receiveState.saveConflict(conflict)
                     saveReceivedCausality(operation)
+                    markHandled(receipt.syncSpaceId, operation)
                     advanceCursor(receipt)
                     return@inWriteTransaction SyncReceiveResult.Conflicted(conflict.conflictId, conflict.kind)
                 }
                 when (relationToLocal(operation)) {
                     CausalRelation.BEFORE, CausalRelation.EQUAL -> {
+                        saveReceivedCausality(operation)
+                        markHandled(receipt.syncSpaceId, operation)
                         advanceCursor(receipt)
                         SyncReceiveResult.IgnoredCausallyKnown(MutationId(operation.mutationId))
                     }
@@ -66,6 +101,7 @@ class SyncEngine(
                         is SemanticMergeOutcome.Conflicted -> {
                             receiveState.saveConflict(outcome.conflict)
                             saveReceivedCausality(operation)
+                            markHandled(receipt.syncSpaceId, operation)
                             advanceCursor(receipt)
                             SyncReceiveResult.Conflicted(outcome.conflict.conflictId, outcome.conflict.kind)
                         }
@@ -79,12 +115,15 @@ class SyncEngine(
         } catch (failure: IllegalArgumentException) {
             quarantine(receipt, ProtocolQuarantineReason.INVALID_PAYLOAD, failure.message)
         }
+        if (drainPending && result !is SyncReceiveResult.PendingCausalGap) drainPending(receipt.syncSpaceId)
+        return result
     }
 
     private suspend fun quarantine(receipt: DecryptedPayloadReceipt, reason: ProtocolQuarantineReason, detail: String?): SyncReceiveResult = transactions.inWriteTransaction {
         if (receiveState.quarantine(receipt.syncSpaceId, receipt.mutationId) == null) {
             receiveState.quarantine(ProtocolQuarantine(receipt.syncSpaceId, receipt.mutationId, receipt.serverCursor, reason, detail))
         }
+        receiveState.removePending(receipt.syncSpaceId, receipt.mutationId)
         advanceCursor(receipt)
         SyncReceiveResult.Quarantined(receipt.mutationId, reason)
     }
@@ -137,8 +176,51 @@ class SyncEngine(
         journal.appendCommittedMutation(CommittedMutation(original, wallClock.nowEpochMillis()))
         journal.advanceFocusBlockTombstones(original, original.orderedMutations.filterIsInstance<FocusBlockDelete>())
         saveReceivedCausality(original)
+        markHandled(receipt.syncSpaceId, original)
         advanceCursor(receipt)
         return SyncReceiveResult.Applied(MutationId(original.mutationId))
+    }
+
+    /**
+     * D8 out-of-order delivery guard. A received DVV context proves only that a sender observed
+     * a dot; it does not prove this replica has durably handled that operation. Local journal
+     * entries and explicit receive outcomes form the independent handled frontier.
+     */
+    private suspend fun missingCausalPrerequisites(syncSpaceId: SyncSpaceId, operation: SyncOperation): List<Dot> {
+        val handled = mutableMapOf<ReplicaId, Long>()
+        history.timeline().forEach { committed ->
+            val dot = committed.operation.dvv.dot
+            val replica = ReplicaId(dot.replicaId)
+            handled[replica] = maxOf(handled[replica] ?: -1L, dot.counter)
+        }
+        receiveState.handledDots(syncSpaceId).forEach { handledDot ->
+            handled[handledDot.replicaId] = maxOf(handled[handledDot.replicaId] ?: -1L, handledDot.counter)
+        }
+        return operation.dvv.context.mapNotNull { component ->
+            val replica = ReplicaId(component.replicaId)
+            if ((handled[replica] ?: -1L) < component.counter) Dot(replica, component.counter) else null
+        }
+    }
+
+    private suspend fun markHandled(syncSpaceId: SyncSpaceId, operation: SyncOperation) {
+        val dot = operation.dvv.dot
+        receiveState.saveHandledDot(HandledReceiveDot(syncSpaceId, ReplicaId(dot.replicaId), dot.counter, operation.mutationId))
+        receiveState.removePending(syncSpaceId, operation.mutationId)
+    }
+
+    /** Drains persisted receipts in cursor/MutationId order without recursively re-entering receive. */
+    private suspend fun drainPending(syncSpaceId: SyncSpaceId) {
+        while (true) {
+            var progressed = false
+            receiveState.pending(syncSpaceId).forEach { pending ->
+                val result = receiveInternal(
+                    DecryptedPayloadReceipt(pending.syncSpaceId, pending.mutationId, pending.serverCursor, pending.payloadJson),
+                    drainPending = false,
+                )
+                if (result !is SyncReceiveResult.PendingCausalGap) progressed = true
+            }
+            if (!progressed) return
+        }
     }
 
     private sealed interface SemanticMergeOutcome {

@@ -186,7 +186,10 @@ private fun mergeExam(current: ExamImage, incoming: ExamPut): ExamImage {
 private fun mergeProfile(current: PlanningProfileImage, incoming: PlanningProfilePut): PlanningProfileImage {
     val names = incoming.changedSemanticGroups().map(SemanticGroupValue::name).toSet()
     val incomingConfiguration = incoming.after.configuration
-    if ("configuration.mode" in names) return incoming.after
+    if ("configuration.mode" in names) return current.copy(
+        name = if ("name" in names) incoming.after.name else current.name,
+        configuration = incoming.after.configuration,
+    )
     val currentConfigured = current.configuration as? PlanningProfileConfigurationImage.Configured ?: return incoming.after
     val incomingConfigured = incomingConfiguration as? PlanningProfileConfigurationImage.Configured ?: return incoming.after
     val currentByDay = currentConfigured.weeklyAvailability.groupBy { it.dayOfWeek }

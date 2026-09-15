@@ -24,3 +24,19 @@ data class SyncConflictRecord(
     @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
     @ColumnInfo(name = "conflict_json") val conflictJson: String,
 )
+
+@Entity(tableName = "pending_sync_receive", primaryKeys = ["sync_space_id", "mutation_id"])
+data class PendingSyncReceiveRecord(
+    @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
+    @ColumnInfo(name = "mutation_id") val mutationId: String,
+    @ColumnInfo(name = "server_cursor") val serverCursor: Long,
+    @ColumnInfo(name = "payload_json") val payloadJson: String,
+)
+
+@Entity(tableName = "handled_receive_dot", primaryKeys = ["sync_space_id", "replica_id", "counter"])
+data class HandledReceiveDotRecord(
+    @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
+    @ColumnInfo(name = "replica_id") val replicaId: String,
+    val counter: Long,
+    @ColumnInfo(name = "mutation_id") val mutationId: String,
+)
