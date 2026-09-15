@@ -479,6 +479,7 @@ class PersistenceIntegrationTest {
         )
         repository.saveConflict(conflict)
         assertEquals(conflict, repository.conflict(conflict.conflictId))
+        assertEquals(listOf(conflict), repository.conflicts(space))
         database.close()
     }
 
