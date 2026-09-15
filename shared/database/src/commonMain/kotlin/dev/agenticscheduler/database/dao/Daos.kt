@@ -41,6 +41,13 @@ import kotlinx.coroutines.flow.Flow
 @Dao interface SyncReceiveDao {
     @Query("SELECT * FROM sync_space_cursor WHERE sync_space_id = :syncSpaceId") suspend fun cursor(syncSpaceId: String): SyncSpaceCursorRecord?
     @Upsert suspend fun saveCursor(value: SyncSpaceCursorRecord)
+    @Query("SELECT * FROM pending_sync_receive WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun pending(syncSpaceId: String, mutationId: String): PendingSyncReceiveRecord?
+    @Query("SELECT * FROM pending_sync_receive WHERE sync_space_id = :syncSpaceId ORDER BY server_cursor ASC, mutation_id ASC") suspend fun pending(syncSpaceId: String): List<PendingSyncReceiveRecord>
+    @Upsert suspend fun savePending(value: PendingSyncReceiveRecord)
+    @Query("DELETE FROM pending_sync_receive WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun removePending(syncSpaceId: String, mutationId: String)
+    @Query("SELECT * FROM handled_receive_dot WHERE sync_space_id = :syncSpaceId AND replica_id = :replicaId AND counter = :counter") suspend fun handledDot(syncSpaceId: String, replicaId: String, counter: Long): HandledReceiveDotRecord?
+    @Query("SELECT * FROM handled_receive_dot WHERE sync_space_id = :syncSpaceId ORDER BY replica_id ASC, counter ASC") suspend fun handledDots(syncSpaceId: String): List<HandledReceiveDotRecord>
+    @Upsert suspend fun saveHandledDot(value: HandledReceiveDotRecord)
     @Query("SELECT * FROM protocol_quarantine WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun quarantine(syncSpaceId: String, mutationId: String): ProtocolQuarantineRecord?
     @Upsert suspend fun saveQuarantine(value: ProtocolQuarantineRecord)
     @Query("SELECT * FROM sync_conflict WHERE conflict_id = :conflictId") suspend fun conflict(conflictId: String): SyncConflictRecord?

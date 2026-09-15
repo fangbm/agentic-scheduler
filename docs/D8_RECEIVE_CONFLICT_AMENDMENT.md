@@ -181,3 +181,43 @@ D8-01b/01c is not complete until:
 [ ] whole-MutationId conflict atomicity is tested
 [ ] repository CI is green
 ```
+
+---
+
+## D8-A09 — Out-of-order causal-gap receive
+
+An operation's DVV context proves what its sender observed. It does **not** prove
+that this replica has durably handled each referenced operation. Receive must
+therefore maintain a durable handled-dot frontier separate from
+`LocalReplicaCausalState.observedContext`.
+
+For a valid decoded operation whose DVV context requires a dot outside that
+frontier:
+
+```text
+do not apply any child Active State change
+→ persist the exact receipt as pending receive state
+→ do not advance the server cursor past that receipt
+→ accept/durably handle missing ancestors
+→ drain eligible pending receipts in stable server-cursor / MutationId order
+```
+
+A remote dot joins the handled frontier only after its operation has a durable
+receive outcome: applied/coalesced, a durable structured conflict, or an
+explicit causal acknowledgement. Protocol quarantine does not make a causal
+ancestor handled.
+
+The pending receipt must retain one immutable payload for its MutationId. A
+conflicting payload under the same MutationId is invalid protocol input; it may
+not silently replace a pending operation.
+
+D8-01 requires a regression equivalent to:
+
+```text
+B:1 creates Event E
+B:2 creates Task T with B:1 in its DVV context
+A receives B:2 first
+    -> T is not active; B:2 is durable pending; cursor does not advance
+A receives B:1
+    -> E applies; B:2 drains; T applies; cursor advances through B:2
+```
