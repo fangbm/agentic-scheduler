@@ -146,6 +146,9 @@ class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) 
 
     override suspend fun conflict(conflictId: String): SyncConflict? =
         database.syncReceiveDao().conflict(conflictId)?.let { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+
+    override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> =
+        database.syncReceiveDao().conflicts(syncSpaceId.value).map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
 }
 
 private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))
