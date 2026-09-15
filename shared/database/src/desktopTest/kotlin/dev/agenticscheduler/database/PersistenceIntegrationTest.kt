@@ -15,6 +15,7 @@ import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.history.HistoryQueryService
 import dev.agenticscheduler.application.history.DecryptedPayloadReceipt
 import dev.agenticscheduler.application.history.SyncEngine
@@ -241,7 +242,7 @@ class PersistenceIntegrationTest {
         val tasks = RoomTaskRepository(firstDatabase)
         val runner = RoomApplicationTransactionRunner(firstDatabase)
         val coordinator = MutationCoordinator(runner, RoomMutationJournalRepository(firstDatabase), ids, MutationWallClock { 1 })
-        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator).create(
+        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator, NoActiveSyncSpaceWritePolicy).create(
             CreateEventInput(
                 "Created event",
                 EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)),
@@ -249,13 +250,13 @@ class PersistenceIntegrationTest {
                 PinState.UNPINNED,
             ),
         )).value)
-        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator).create(
+        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy).create(
             CreateTaskInput("Created task", TaskPriority.NORMAL, null, null, null),
         )).value)
-        val updatedEvent = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator).update(
+        val updatedEvent = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator, NoActiveSyncSpaceWritePolicy).update(
             UpdateEventInput(event.id, "Updated event", EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)), Flexibility.HARD, PinState.UNPINNED),
         )).value)
-        val updatedTask = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator).update(
+        val updatedTask = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy).update(
             UpdateTaskInput(task.id, "Updated task", TaskStatus.IN_PROGRESS, TaskPriority.HIGH, null, kotlin.time.Duration.ZERO, null, null),
         )).value)
         val history = RoomMutationJournalRepository(firstDatabase)
@@ -775,7 +776,7 @@ class PersistenceIntegrationTest {
         val journal = RoomMutationJournalRepository(database)
         val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
         val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), FailingJournal(journal), ids, MutationWallClock { 1 })
-        val editor = EventEditingService(events, ids, coordinator)
+        val editor = EventEditingService(events, ids, coordinator, NoActiveSyncSpaceWritePolicy)
         assertFailsWith<IllegalStateException> { editor.create(CreateEventInput("rollback", EventTimeInput.AllDay(LocalDate(2026, 1, 1), LocalDate(2026, 1, 2)), Flexibility.HARD, PinState.UNPINNED)) }
         assertEquals(emptyList(), events.observeAll().first())
         assertEquals(emptyList(), database.mutationJournalDao().timeline())

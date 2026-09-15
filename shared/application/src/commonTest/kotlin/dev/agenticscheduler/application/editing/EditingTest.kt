@@ -5,6 +5,9 @@ import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.SyncConflictWriteBlock
+import dev.agenticscheduler.application.history.SyncConflictWritePolicy
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.EventRepository
@@ -34,6 +37,7 @@ import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
@@ -64,7 +68,7 @@ class EditingTest {
         runBlocking {
         val repository = FakeEventRepository()
         val transactions = CountingTransactions()
-        val service = EventEditingService(repository, generator(), coordinator(transactions))
+        val service = EventEditingService(repository, generator(), coordinator(transactions), NoActiveSyncSpaceWritePolicy)
 
         val created = assertIs<Event>(assertIs<EditingResult.Success<*>>(service.create(eventInput(EventTimeInput.Zoned(
             LocalDateTime(2026, 9, 10, 8, 0),
@@ -116,7 +120,7 @@ class EditingTest {
     fun `Event validation rejects blank missing and DST transition input`() {
         runBlocking {
         val transactions = CountingTransactions()
-        val service = EventEditingService(FakeEventRepository(), generator(), coordinator(transactions))
+        val service = EventEditingService(FakeEventRepository(), generator(), coordinator(transactions), NoActiveSyncSpaceWritePolicy)
 
         assertIs<EditingResult.Invalid>(service.create(eventInput(null, title = " ")))
         assertIs<EditingResult.Invalid>(service.create(eventInput(null)))
@@ -142,7 +146,7 @@ class EditingTest {
     fun `Task creation defaults and edits preserve independent effort and deadline facts`() {
         runBlocking {
         val repository = FakeTaskRepository()
-        val service = TaskEditingService(repository, generator(), coordinator(CountingTransactions()))
+        val service = TaskEditingService(repository, generator(), coordinator(CountingTransactions()), NoActiveSyncSpaceWritePolicy)
 
         val created = assertIs<Task>(assertIs<EditingResult.Success<*>>(service.create(CreateTaskInput(
             title = "Write report",
@@ -202,8 +206,8 @@ class EditingTest {
         runBlocking {
         val eventRepository = FakeEventRepository()
         val taskRepository = FakeTaskRepository()
-        val eventService = EventEditingService(eventRepository, generator(), coordinator(CountingTransactions()))
-        val taskService = TaskEditingService(taskRepository, generator(), coordinator(CountingTransactions()))
+        val eventService = EventEditingService(eventRepository, generator(), coordinator(CountingTransactions()), NoActiveSyncSpaceWritePolicy)
+        val taskService = TaskEditingService(taskRepository, generator(), coordinator(CountingTransactions()), NoActiveSyncSpaceWritePolicy)
 
         assertEquals(
             EditingResult.NotFound,
@@ -223,7 +227,7 @@ class EditingTest {
         runBlocking {
         val repository = FakeTaskRepository()
         val transactions = CountingTransactions()
-        val result = TaskEditingService(repository, generator(), coordinator(transactions)).create(
+        val result = TaskEditingService(repository, generator(), coordinator(transactions), NoActiveSyncSpaceWritePolicy).create(
             CreateTaskInput("Invalid", TaskPriority.NORMAL, (-1).hours, null, null),
         )
 
@@ -231,6 +235,27 @@ class EditingTest {
         assertEquals(0, transactions.writes)
         assertEquals(0, repository.taskCount())
         }
+    }
+
+    @Test
+    fun `user edit intersecting an open conflict is blocked before Active State or journal`() = runBlocking {
+        val repository = FakeEventRepository()
+        val journal = TestJournal()
+        val policy = SyncConflictWritePolicy {
+            listOf(SyncConflictWriteBlock("conflict-1", dev.agenticscheduler.sync.EntityKind.EVENT, "any", listOf("title")))
+        }
+        val service = EventEditingService(
+            repository,
+            generator(),
+            MutationCoordinator(CountingTransactions(), journal, generator(), MutationWallClock { fixedEpochMilliseconds }),
+            policy,
+        )
+
+        val result = service.create(eventInput(EventTimeInput.AllDay(LocalDate(2026, 9, 1), LocalDate(2026, 9, 2))))
+
+        assertIs<EditingResult.BlockedBySyncConflict>(result)
+        assertEquals(0, repository.observeAll().first().size)
+        assertEquals(0, journal.appended)
     }
 
     private fun eventInput(time: EventTimeInput?, title: String = "Meeting") = CreateEventInput(
@@ -266,9 +291,10 @@ private class CountingTransactions : ApplicationTransactionRunner {
 
 private class TestJournal : MutationJournalRepository {
     private var state: LocalReplicaCausalState? = null
+    var appended = 0
     override suspend fun localReplicaState(): LocalReplicaCausalState? = state
     override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
-    override suspend fun appendCommittedMutation(mutation: CommittedMutation) = Unit
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { appended += 1 }
     override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
 }
 

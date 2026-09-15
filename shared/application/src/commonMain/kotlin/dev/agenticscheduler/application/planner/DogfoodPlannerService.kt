@@ -2,6 +2,8 @@ package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.SyncConflictWriteBlock
+import dev.agenticscheduler.application.history.SyncConflictWritePolicy
 import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.EventRepository
@@ -36,6 +38,7 @@ class DogfoodPlannerService(
     private val planner: DeterministicPlanner = DeterministicPlanner(),
     private val snapshotAssembler: PlanningSnapshotAssembler = PlanningSnapshotAssembler(),
     private val mutations: MutationCoordinator,
+    private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
     private val previews = PlannerPreviewService(planner, PlanBranchFactory(uuidV7))
 
@@ -73,6 +76,7 @@ class DogfoodPlannerService(
                 }
             },
             mutations = mutations,
+            conflictWritePolicy = conflictWritePolicy,
         ).apply(branch, applyNow)
     }
 
@@ -148,31 +152,55 @@ class DogfoodPlannerService(
     }
 }
 
+sealed interface PlanningProfileSettingsResult {
+    data class Success(val profile: PlanningProfile) : PlanningProfileSettingsResult
+    data class BlockedBySyncConflict(val blocks: kotlinx.collections.immutable.ImmutableList<SyncConflictWriteBlock>) : PlanningProfileSettingsResult
+}
+
 /** Profile settings writes use the application transaction boundary, never a platform DAO. */
 class PlanningProfileSettingsService(
     private val profiles: PlanningProfileRepository,
     private val uuidV7: UuidV7Generator,
     private val mutations: MutationCoordinator,
+    private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
-    suspend fun createUnconfigured(name: String): PlanningProfile {
+    suspend fun createUnconfigured(name: String): PlanningProfileSettingsResult {
         val profile = PlanningProfile(
             PlanningProfileId(uuidV7.next()),
             name,
             dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured,
         )
-        return mutations.execute(MutationOrigin.User) {
-            profiles.upsert(profile)
-            record(PlanningProfilePut(null, profile.toSemanticImage()))
-            profile
-        }.value
+        var result: PlanningProfileSettingsResult? = null
+        val execution = mutations.executeIfAny(MutationOrigin.User) {
+            val proposed = PlanningProfilePut(null, profile.toSemanticImage())
+            val blocks = conflictWritePolicy.blocks(listOf(proposed))
+            result = if (blocks.isEmpty()) {
+                profiles.upsert(profile)
+                record(proposed)
+                PlanningProfileSettingsResult.Success(profile)
+            } else {
+                PlanningProfileSettingsResult.BlockedBySyncConflict(blocks.toImmutableList())
+            }
+            requireNotNull(result)
+        }
+        return execution?.value ?: requireNotNull(result)
     }
 
-    suspend fun save(profile: PlanningProfile): PlanningProfile {
-        return mutations.execute(MutationOrigin.User) {
+    suspend fun save(profile: PlanningProfile): PlanningProfileSettingsResult {
+        var result: PlanningProfileSettingsResult? = null
+        val execution = mutations.executeIfAny(MutationOrigin.User) {
             val before = profiles.get(profile.id)
-            profiles.upsert(profile)
-            record(PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage()))
-            profile
-        }.value
+            val proposed = PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage())
+            val blocks = conflictWritePolicy.blocks(listOf(proposed))
+            result = if (blocks.isEmpty()) {
+                profiles.upsert(profile)
+                record(proposed)
+                PlanningProfileSettingsResult.Success(profile)
+            } else {
+                PlanningProfileSettingsResult.BlockedBySyncConflict(blocks.toImmutableList())
+            }
+            requireNotNull(result)
+        }
+        return execution?.value ?: requireNotNull(result)
     }
 }

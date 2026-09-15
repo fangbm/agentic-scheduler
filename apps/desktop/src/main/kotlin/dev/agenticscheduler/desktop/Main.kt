@@ -39,6 +39,7 @@ import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
 import dev.agenticscheduler.application.planner.PlannerPreview
@@ -101,7 +102,7 @@ fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations), PlanningProfileSettingsService(profiles, ids, mutations), EventEditingService(events, ids, mutations), TaskEditingService(tasks, ids, mutations))
+                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy))
             }
         }
     }
@@ -202,6 +203,7 @@ private fun EventEditorDialog(existing: Event?, selectedDate: LocalDate, display
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Event no longer exists."
+                        is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
             }) { Text("Save") }
@@ -259,6 +261,7 @@ private fun TaskEditorDialog(existing: Task?, editor: TaskEditingService, onSave
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Task no longer exists."
+                        is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
             }) { Text("Save") }
@@ -325,6 +328,7 @@ private fun PlannerDogfoodPanel(
                     Button(onClick = { scope.launch { when (val applied = planner.apply(result.branch, Clock.System.now())) {
                         is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
                         is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
+                        is PlanBranchApplyResult.BlockedBySyncConflict -> message = "PlanBranch intersects an unresolved sync conflict. Resolve it before applying."
                     } } }) { Text("Apply PlanBranch") }
                     Button(onClick = { preview = null; message = "PlanBranch cancelled; Active State was unchanged." }) { Text("Cancel preview") }
                 }
