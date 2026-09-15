@@ -85,6 +85,25 @@ class ConflictAwareProjection(private val receiveState: SyncReceiveRepository) {
     }
 }
 
+/** The single D8-P03 source-fact projection boundary for application readers. */
+fun interface ConflictAwareSourceFactQuery {
+    suspend fun project(durable: EntityMutation): ConflictProjection
+}
+
+class ActiveConflictAwareSourceFactQuery(
+    private val projection: ConflictAwareProjection,
+    private val syncSpaceId: SyncSpaceId,
+) : ConflictAwareSourceFactQuery {
+    override suspend fun project(durable: EntityMutation): ConflictProjection =
+        projection.project(syncSpaceId, durable.entityKind, durable.entityId, durable)
+}
+
+/** Before D8-02 enrollment there is no remote conflict state to overlay. */
+data object NoActiveSyncSpaceSourceFactQuery : ConflictAwareSourceFactQuery {
+    override suspend fun project(durable: EntityMutation): ConflictProjection =
+        ConflictProjection.Projected(durable, emptyList())
+}
+
 /** Applies only [groups], never a candidate's unrelated historical fields. */
 private sealed interface OverlayResult {
     /** A null mutation is the explicit, valid projection of a FocusBlock delete. */
@@ -95,10 +114,13 @@ private sealed interface OverlayResult {
 private fun overlayConflictedGroups(current: EntityMutation?, candidate: EntityMutation, groups: Set<String>): OverlayResult {
     // Absence is not enough information to synthesize a complete typed entity
     // image. The sole exception is an explicit delete, which projects absence.
-    if (current == null) return if (candidate is FocusBlockDelete && groups == setOf("existence")) {
-        OverlayResult.Value(null)
-    } else {
-        OverlayResult.Invalid
+    if (current == null) return when {
+        candidate is FocusBlockDelete && groups == setOf("existence") -> OverlayResult.Value(null)
+        // A FocusBlockPut carries a complete typed image. For the explicit
+        // put-vs-delete existence conflict, an absent replica can therefore
+        // render the same provisional Put without materializing it.
+        candidate is FocusBlockPut && groups == setOf("existence") -> OverlayResult.Value(candidate)
+        else -> OverlayResult.Invalid
     }
     if (current.entityKind != candidate.entityKind || current.entityId != candidate.entityId) return OverlayResult.Invalid
     return when {

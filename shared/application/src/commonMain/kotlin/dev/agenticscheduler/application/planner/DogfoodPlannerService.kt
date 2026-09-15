@@ -2,8 +2,11 @@ package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictProjection
 import dev.agenticscheduler.application.history.SyncConflictWriteBlock
 import dev.agenticscheduler.application.history.SyncConflictWritePolicy
+import dev.agenticscheduler.application.history.toDomain
 import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.EventRepository
@@ -20,6 +23,7 @@ import dev.agenticscheduler.planner.PlanningHorizon
 import dev.agenticscheduler.planner.PlanningSnapshot
 import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.PlanningProfilePut
+import dev.agenticscheduler.sync.*
 import kotlin.time.Instant
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.first
@@ -39,6 +43,7 @@ class DogfoodPlannerService(
     private val snapshotAssembler: PlanningSnapshotAssembler = PlanningSnapshotAssembler(),
     private val mutations: MutationCoordinator,
     private val conflictWritePolicy: SyncConflictWritePolicy,
+    private val sourceFacts: ConflictAwareSourceFactQuery,
 ) {
     private val previews = PlannerPreviewService(planner, PlanBranchFactory(uuidV7))
 
@@ -97,12 +102,20 @@ class DogfoodPlannerService(
     ): SnapshotAssembly {
         val profile = profiles.get(profileId)
             ?: return SnapshotAssembly.Invalid("PlanningProfile ${profileId.value} no longer exists.")
-        val semesters = academics.observeSemesters().first()
-        val courses = academics.observeCourses().first()
-        val rules = academics.observeCourseScheduleRules().first()
-        val templates = academics.observePeriodTemplates().first()
-        val holidays = academics.observeAcademicHolidays().first()
-        val exceptions = academics.observeCourseOccurrenceExceptions().first()
+        val projectedProfile = projectOne(PlanningProfilePut(null, profile.toSemanticImage())) { (it as? PlanningProfilePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("PlanningProfile ${profileId.value} has an unresolved sync conflict projection.")
+        val semesters = projectList(academics.observeSemesters().first(), { SemesterPut(null, it.toSemanticImage()) }) { (it as? SemesterPut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Semester source facts have an unresolved sync conflict projection.")
+        val courses = projectList(academics.observeCourses().first(), { CoursePut(null, it.toSemanticImage()) }) { (it as? CoursePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Course source facts have an unresolved sync conflict projection.")
+        val rules = projectList(academics.observeCourseScheduleRules().first(), { CourseScheduleRulePut(null, it.toSemanticImage()) }) { (it as? CourseScheduleRulePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Course schedule source facts have an unresolved sync conflict projection.")
+        val templates = projectList(academics.observePeriodTemplates().first(), { PeriodTemplatePut(null, it.toSemanticImage()) }) { (it as? PeriodTemplatePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Period template source facts have an unresolved sync conflict projection.")
+        val holidays = projectList(academics.observeAcademicHolidays().first(), { AcademicHolidayPut(null, it.toSemanticImage()) }) { (it as? AcademicHolidayPut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Academic holiday source facts have an unresolved sync conflict projection.")
+        val exceptions = projectList(academics.observeCourseOccurrenceExceptions().first(), { CourseOccurrenceExceptionPut(null, it.toSemanticImage()) }) { (it as? CourseOccurrenceExceptionPut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Course occurrence source facts have an unresolved sync conflict projection.")
         val academicIssues = mutableListOf<String>()
         val sessions = courses.flatMap { course ->
             val semester = semesters.firstOrNull { it.id == course.semesterId }
@@ -131,16 +144,51 @@ class DogfoodPlannerService(
         return SnapshotAssembly.Ready(snapshotAssembler.assemble(
             referenceNow = referenceNow,
             horizon = horizon,
-            profile = profile,
-            tasks = tasks.observeTasks().first(),
-            dependencies = tasks.observeDependencies().first(),
-            focusBlocks = tasks.observeFocusBlocks().first(),
-            events = events.observeAll().first(),
+            profile = projectedProfile,
+            tasks = projectList(tasks.observeTasks().first(), { TaskPut(null, it.toSemanticImage()) }) { (it as? TaskPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Task source facts have an unresolved sync conflict projection."),
+            dependencies = projectList(tasks.observeDependencies().first(), { TaskDependencyPut(null, it.toSemanticImage()) }) { (it as? TaskDependencyPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Task dependency source facts have an unresolved sync conflict projection."),
+            focusBlocks = projectList(tasks.observeFocusBlocks().first(), { FocusBlockPut(null, it.toSemanticImage()) }, allowDeletion = true) { (it as? FocusBlockPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("FocusBlock source facts have an unresolved sync conflict projection."),
+            events = projectList(events.observeAll().first(), { EventPut(null, it.toSemanticImage()) }) { (it as? EventPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Event source facts have an unresolved sync conflict projection."),
             courseSessions = sessions,
-            exams = academics.observeExams().first(),
+            exams = projectList(academics.observeExams().first(), { ExamPut(null, it.toSemanticImage()) }) { (it as? ExamPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Exam source facts have an unresolved sync conflict projection."),
             constraints = emptyList(),
             askOverflowAuthorizedTaskIds = emptyList(),
         ))
+    }
+
+    private suspend fun <T> projectOne(
+        durable: EntityMutation,
+        decode: (EntityMutation) -> T?,
+    ): T? = when (val projected = sourceFacts.project(durable)) {
+        is ConflictProjection.Projected -> projected.mutation?.let(decode)
+        is ConflictProjection.Unprojectable -> null
+    }
+
+    private suspend fun <T> projectList(
+        values: List<T>,
+        durable: (T) -> EntityMutation,
+        allowDeletion: Boolean = false,
+        decode: (EntityMutation) -> T?,
+    ): List<T>? {
+        val projected = mutableListOf<T>()
+        values.forEach { value ->
+            when (val result = sourceFacts.project(durable(value))) {
+                is ConflictProjection.Projected -> {
+                    if (result.mutation == null) {
+                        if (!allowDeletion) return null
+                    } else {
+                        projected += decode(result.mutation) ?: return null
+                    }
+                }
+                is ConflictProjection.Unprojectable -> return null
+            }
+        }
+        return projected
     }
 
     private sealed interface SnapshotAssembly {
