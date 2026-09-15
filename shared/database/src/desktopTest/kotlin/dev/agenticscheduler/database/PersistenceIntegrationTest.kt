@@ -581,6 +581,54 @@ class PersistenceIntegrationTest {
         assertEquals(SyncConflictKind.INTEGRITY, receive.conflict(result.conflictId)?.kind)
         assertEquals(1L, journal.localReplicaState()?.observedContext?.get(ReplicaId(competingReplica)), "A future resolution must observe the received conflicting operation.")
         assertEquals(result, engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 4, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
+
+        val thirdReplica = id(79)
+        val third = SyncOperation(id(80), DvvSnapshot(emptyList(), DotSnapshot(thirdReplica, 1)), HlcSnapshot(3, 0, thirdReplica), MutationOrigin.User, listOf(
+            WorkLogAppend(WorkLogImage(logId, taskId, ZonedTimeRangeImage("2026-01-01T14:00:00Z", "2026-01-01T15:00:00Z", "UTC"))),
+        ))
+        val expanded = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, third.mutationId, 5, SyncWireCodec.encodePayload(SyncPayloadV1(operation = third)))))
+        assertEquals(SyncConflictKind.INTEGRITY, expanded.kind)
+        assertNotEquals(result.conflictId, expanded.conflictId, "D8-A06 identity must expand with the complete WorkLog component.")
+        assertEquals(SyncConflictStatus.SUPERSEDED, receive.conflict(result.conflictId)?.status)
+        assertEquals(expanded.conflictId, receive.conflict(result.conflictId)?.supersededByConflictId)
+        val component = requireNotNull(receive.conflict(expanded.conflictId))
+        assertEquals(listOf(equalAppend.mutationId, divergent.mutationId, third.mutationId).sorted(), component.participants.map { it.mutationId.value })
+        assertEquals(MutationId(listOf(equalAppend.mutationId, divergent.mutationId, third.mutationId).min()), component.provisionalMutationId, "The WorkLog provisional candidate is the global MutationId minimum.")
+        assertEquals(listOf(expanded.conflictId), receive.conflicts(space).filter { it.status == SyncConflictStatus.OPEN }.map { it.conflictId })
+        assertEquals(original.start, requireNotNull(RoomTaskRepository(database).getWorkLog(WorkLogId(logId))).time.start.toString(), "The immutable durable WorkLog remains untouched after expansion.")
+        assertEquals(null, RoomEventRepository(database).get(EventId(eventId)), "The original grouped operation remains all-or-none blocked.")
+        assertEquals(5L, receive.serverCursor(space))
+
+        val reverseDatabase = openInMemoryDesktopDatabase()
+        val reverseJournal = RoomMutationJournalRepository(reverseDatabase)
+        val reverseReceive = RoomSyncReceiveRepository(reverseDatabase)
+        val reverseEngine = SyncEngine(
+            RoomApplicationTransactionRunner(reverseDatabase),
+            reverseJournal,
+            reverseJournal,
+            reverseReceive,
+            RoomEventRepository(reverseDatabase),
+            RoomTaskRepository(reverseDatabase),
+            RoomPlanningProfileRepository(reverseDatabase),
+            RoomAcademicRepository(reverseDatabase),
+            ids,
+            MutationWallClock { 1 },
+        )
+        fun receipt(operation: SyncOperation, cursor: Long) = DecryptedPayloadReceipt(
+            space,
+            operation.mutationId,
+            cursor,
+            SyncWireCodec.encodePayload(SyncPayloadV1(operation = operation)),
+        )
+        assertEquals(SyncReceiveResult.Applied(MutationId(initial.mutationId)), reverseEngine.receive(receipt(initial, 1)))
+        assertEquals(SyncReceiveResult.Applied(MutationId(equalAppend.mutationId)), reverseEngine.receive(receipt(equalAppend, 2)))
+        assertIs<SyncReceiveResult.Conflicted>(reverseEngine.receive(receipt(third, 3)))
+        val reverseExpanded = assertIs<SyncReceiveResult.Conflicted>(reverseEngine.receive(receipt(divergent, 4)))
+        assertEquals(expanded.conflictId, reverseExpanded.conflictId, "Two arrival orders converge to one canonical N-way WorkLog conflict.")
+        assertEquals(component.participants, requireNotNull(reverseReceive.conflict(reverseExpanded.conflictId)).participants)
+        assertEquals(original.start, requireNotNull(RoomTaskRepository(reverseDatabase).getWorkLog(WorkLogId(logId))).time.start.toString())
+        assertEquals(null, RoomEventRepository(reverseDatabase).get(EventId(eventId)))
+        reverseDatabase.close()
         database.close()
     }
 
@@ -642,11 +690,11 @@ class PersistenceIntegrationTest {
             RoomAcademicRepository(database),
         )
         val chosen = baseImage.copy(title = "Chosen title")
-        val resolution = assertIs<SyncConflictResolutionResult.Resolved>(resolver.resolve(result.conflictId, listOf(EventPut(baseImage, chosen))))
+        val resolution = assertIs<SyncConflictResolutionResult.Resolved>(resolver.resolve(expanded.conflictId, listOf(EventPut(baseImage, chosen))))
         assertEquals("Chosen title", events.get(EventId(eventId))?.title)
         assertEquals("2026-01-03", (events.get(EventId(eventId))?.time as AllDayRange).startDate.toString(), "Resolution retains previously merged non-conflicting groups.")
-        assertEquals(resolution.mutationId, requireNotNull(receive.conflict(result.conflictId)).resolutionMutationId)
-        assertEquals(SyncConflictStatus.RESOLVED, receive.conflict(result.conflictId)?.status)
+        assertEquals(resolution.mutationId, requireNotNull(receive.conflict(expanded.conflictId)).resolutionMutationId)
+        assertEquals(SyncConflictStatus.RESOLVED, receive.conflict(expanded.conflictId)?.status)
         database.close()
     }
 

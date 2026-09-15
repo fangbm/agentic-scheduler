@@ -83,12 +83,12 @@ class SyncEngine(
                     ))
                     return@inWriteTransaction SyncReceiveResult.PendingCausalGap(MutationId(operation.mutationId), missingPrerequisites)
                 }
-                integrityConflict(receipt.syncSpaceId, operation)?.let { conflict ->
-                    receiveState.saveConflict(conflict)
+                integrityConflict(receipt.syncSpaceId, operation)?.let { outcome ->
+                    persistConflictComponent(outcome.conflict, outcome.supersededConflictIds)
                     saveReceivedCausality(operation)
                     markHandled(receipt.syncSpaceId, operation)
                     advanceCursor(receipt)
-                    return@inWriteTransaction SyncReceiveResult.Conflicted(conflict.conflictId, conflict.kind)
+                    return@inWriteTransaction SyncReceiveResult.Conflicted(outcome.conflict.conflictId, outcome.conflict.kind)
                 }
                 when (relationToLocal(operation)) {
                     CausalRelation.BEFORE, CausalRelation.EQUAL -> {
@@ -99,16 +99,7 @@ class SyncEngine(
                     }
                     CausalRelation.CONCURRENT -> when (val outcome = semanticMerge(receipt.syncSpaceId, operation)) {
                         is SemanticMergeOutcome.Conflicted -> {
-                            receiveState.saveConflict(outcome.conflict)
-                            outcome.supersededConflictIds.forEach { conflictId ->
-                                val prior = receiveState.conflict(conflictId)
-                                if (prior?.status == SyncConflictStatus.OPEN) {
-                                    receiveState.saveConflict(prior.copy(
-                                        status = SyncConflictStatus.SUPERSEDED,
-                                        supersededByConflictId = outcome.conflict.conflictId,
-                                    ))
-                                }
-                            }
+                            persistConflictComponent(outcome.conflict, outcome.supersededConflictIds)
                             saveReceivedCausality(operation)
                             markHandled(receipt.syncSpaceId, operation)
                             advanceCursor(receipt)
@@ -260,10 +251,16 @@ class SyncEngine(
             SyncConflictEntityRef(pairing.incomingMutation.entityKind, pairing.incomingMutation.entityId, groups)
         }
         val directOperations = conflicts.map { it.first.localOperation } + incoming
-        val coalesced = coalesceOpenSemanticComponent(syncSpaceId, incoming, directOperations, directRefs)
+        val coalesced = coalesceOpenConflictComponent(
+            syncSpaceId,
+            SyncConflictKind.SEMANTIC,
+            incoming,
+            directOperations,
+            directRefs,
+        )
         if (coalesced != null) {
             val conflict = SyncConflict(
-                conflictId = semanticConflictId(syncSpaceId, coalesced.refs, coalesced.participants),
+                conflictId = conflictId(SyncConflictKind.SEMANTIC, syncSpaceId, coalesced.refs, coalesced.participants),
                 syncSpaceId = syncSpaceId,
                 entityRefs = coalesced.refs,
                 participants = coalesced.participants,
@@ -286,18 +283,19 @@ class SyncEngine(
     }
 
     /**
-     * SYN-013 conflict state is a connected N-way component, never a sequence
-     * of pairwise records. Existing OPEN participants are retained even though
-     * they were deliberately not accepted into Active State or the journal.
+     * D8 conflict state is a connected N-way component, never a sequence of pairwise records.
+     * The caller supplies the kind-specific direct conflict; component growth and lifecycle are
+     * deliberately shared by semantic and immutable-value integrity conflicts.
      */
-    private suspend fun coalesceOpenSemanticComponent(
+    private suspend fun coalesceOpenConflictComponent(
         syncSpaceId: SyncSpaceId,
+        kind: SyncConflictKind,
         incoming: SyncOperation,
         directOperations: List<SyncOperation>,
         directRefs: List<SyncConflictEntityRef>,
-    ): SemanticConflictComponent? {
+    ): ConflictComponent? {
         val open = receiveState.conflicts(syncSpaceId)
-            .filter { it.status == SyncConflictStatus.OPEN && it.kind == SyncConflictKind.SEMANTIC }
+            .filter { it.status == SyncConflictStatus.OPEN && it.kind == kind }
         val operations = directOperations.associateBy(SyncOperation::mutationId).toMutableMap()
         val refs = directRefs.toMutableList()
         val selected = mutableSetOf<String>()
@@ -328,7 +326,7 @@ class SyncEngine(
         val participants = operations.values.sortedBy(SyncOperation::mutationId).map { operation ->
             SyncConflictParticipant(MutationId(operation.mutationId), operation.dvv, LocalJournalCodec.encode(operation))
         }
-        return SemanticConflictComponent(
+        return ConflictComponent(
             participants = participants,
             refs = refs.groupBy { it.entityKind to it.entityId }
                 .map { (entity, values) ->
@@ -339,20 +337,21 @@ class SyncEngine(
         )
     }
 
-    private data class SemanticConflictComponent(
+    private data class ConflictComponent(
         val participants: List<SyncConflictParticipant>,
         val refs: List<SyncConflictEntityRef>,
         val absorbedConflictIds: List<String>,
     )
 
-    /** D8-A06: identity is exactly the canonical participant set plus semantic target. */
-    private fun semanticConflictId(
+    /** D8-A06: identity is exactly the canonical participant set plus the conflict target. */
+    private fun conflictId(
+        kind: SyncConflictKind,
         syncSpaceId: SyncSpaceId,
         refs: List<SyncConflictEntityRef>,
         participants: List<SyncConflictParticipant>,
     ): String = listOf(
         syncSpaceId.value,
-        SyncConflictKind.SEMANTIC.name,
+        kind.name,
         refs.joinToString(",") { "${it.entityKind.name}:${it.entityId}:${it.groups.joinToString("+")}" },
         participants.joinToString(",") { it.mutationId.value },
     ).joinToString("|")
@@ -385,8 +384,8 @@ class SyncEngine(
         }
     }
 
-    /** D8-A02/A05 preflight: a single immutable WorkLog divergence conflicts the whole incoming MutationId. */
-    private suspend fun integrityConflict(syncSpaceId: SyncSpaceId, incoming: SyncOperation): SyncConflict? {
+    /** D8-A02/A05 preflight: an immutable WorkLog divergence conflicts the whole incoming MutationId. */
+    private suspend fun integrityConflict(syncSpaceId: SyncSpaceId, incoming: SyncOperation): IntegrityConflictOutcome? {
         val divergent = incoming.orderedMutations.filterIsInstance<WorkLogAppend>().mapNotNull { mutation ->
             val current = tasks.getWorkLog(WorkLogId(mutation.entityId)) ?: return@mapNotNull null
             if (current.toSemanticImage() == mutation.after) return@mapNotNull null
@@ -395,23 +394,49 @@ class SyncEngine(
             mutation.entityId to local
         }
         if (divergent.isEmpty()) return null
-        val localOperations = divergent.map { it.second }.distinctBy(SyncOperation::mutationId)
-        val participants = (localOperations + incoming).sortedBy(SyncOperation::mutationId).map { operation ->
-            SyncConflictParticipant(MutationId(operation.mutationId), operation.dvv, LocalJournalCodec.encode(operation))
-        }
-        val refs = divergent.map { (workLogId, _) -> SyncConflictEntityRef(EntityKind.WORK_LOG, workLogId, listOf("append")) }
+        val directOperations = divergent.map { it.second } + incoming
+        val directRefs = divergent.map { (workLogId, _) -> SyncConflictEntityRef(EntityKind.WORK_LOG, workLogId, listOf("append")) }
             .distinctBy { it.entityId }.sortedBy { it.entityId }
-        val conflictId = listOf(syncSpaceId.value, SyncConflictKind.INTEGRITY.name, refs.joinToString(",") { "${it.entityKind.name}:${it.entityId}" }, participants.joinToString(",") { it.mutationId.value }).joinToString("|")
-        return SyncConflict(
-            conflictId = conflictId,
+        val coalesced = requireNotNull(coalesceOpenConflictComponent(
+            syncSpaceId,
+            SyncConflictKind.INTEGRITY,
+            incoming,
+            directOperations,
+            directRefs,
+        ))
+        val conflict = SyncConflict(
+            conflictId = conflictId(SyncConflictKind.INTEGRITY, syncSpaceId, coalesced.refs, coalesced.participants),
             syncSpaceId = syncSpaceId,
-            entityRefs = refs,
-            participants = participants,
-            provisionalMutationId = participants.minBy { it.mutationId.value }.mutationId,
+            entityRefs = coalesced.refs,
+            participants = coalesced.participants,
+            provisionalMutationId = coalesced.participants.minBy { it.mutationId.value }.mutationId,
             kind = SyncConflictKind.INTEGRITY,
-            commonCausalContext = commonCausalContextOf(participants),
+            commonCausalContext = commonCausalContextOf(coalesced.participants),
             status = SyncConflictStatus.OPEN,
         )
+        return IntegrityConflictOutcome(
+            conflict,
+            coalesced.absorbedConflictIds.filter { it != conflict.conflictId }.sorted(),
+        )
+    }
+
+    private data class IntegrityConflictOutcome(
+        val conflict: SyncConflict,
+        val supersededConflictIds: List<String>,
+    )
+
+    /** Replaces every absorbed OPEN component atomically with its canonical expansion. */
+    private suspend fun persistConflictComponent(conflict: SyncConflict, supersededConflictIds: List<String>) {
+        receiveState.saveConflict(conflict)
+        supersededConflictIds.forEach { conflictId ->
+            val prior = receiveState.conflict(conflictId)
+            if (prior?.status == SyncConflictStatus.OPEN) {
+                receiveState.saveConflict(prior.copy(
+                    status = SyncConflictStatus.SUPERSEDED,
+                    supersededByConflictId = conflict.conflictId,
+                ))
+            }
+        }
     }
 
     private suspend fun saveReceivedCausality(operation: SyncOperation) {
