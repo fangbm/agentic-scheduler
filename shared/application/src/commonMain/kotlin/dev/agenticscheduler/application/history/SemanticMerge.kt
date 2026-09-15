@@ -51,6 +51,16 @@ internal fun mergeWithCurrent(current: EntityMutation, incoming: EntityMutation)
     else -> incoming
 }
 
+/** Rebase an explicit resolution onto current state, retaining only its requested semantic groups. */
+internal fun rebaseOnCurrent(current: EntityMutation, requested: EntityMutation): EntityMutation = when (val merged = mergeWithCurrent(current, requested)) {
+    is EventPut -> merged.copy(before = (current as? EventPut)?.after)
+    is TaskPut -> merged.copy(before = (current as? TaskPut)?.after)
+    is PlanningProfilePut -> merged.copy(before = (current as? PlanningProfilePut)?.after)
+    is FocusBlockPut -> merged.copy(before = (current as? FocusBlockPut)?.after)
+    is ExamPut -> merged.copy(before = (current as? ExamPut)?.after)
+    else -> merged
+}
+
 private fun changedEventGroups(before: EventImage?, after: EventImage): List<SemanticGroupValue> = buildList {
     addIfChanged("title", before?.title, after.title, before == null)
     addIfChanged("time", before?.time, after.time, before == null)
