@@ -86,6 +86,14 @@ import dev.agenticscheduler.sync.EventTimeImage
 import dev.agenticscheduler.sync.AllDayRangeImage
 import dev.agenticscheduler.sync.FlexibilityImage
 import dev.agenticscheduler.sync.PinStateImage
+import dev.agenticscheduler.sync.TaskPut
+import dev.agenticscheduler.sync.TaskImage
+import dev.agenticscheduler.sync.TaskStatusImage
+import dev.agenticscheduler.sync.TaskPriorityImage
+import dev.agenticscheduler.sync.TaskEffortImage
+import dev.agenticscheduler.sync.WorkLogAppend
+import dev.agenticscheduler.sync.WorkLogImage
+import dev.agenticscheduler.sync.ZonedTimeRangeImage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -500,6 +508,35 @@ class PersistenceIntegrationTest {
         assertEquals(SyncReceiveResult.RequiresSemanticMerge(MutationId(concurrent.mutationId)), engine.receive(DecryptedPayloadReceipt(space, concurrent.mutationId, 9, SyncWireCodec.encodePayload(SyncPayloadV1(operation = concurrent)))))
         assertEquals(8L, receive.serverCursor(space))
         assertEquals(null, journal.mutation(concurrent.mutationId))
+        database.close()
+    }
+
+    @Test fun `D8 WorkLog divergence becomes one durable integrity conflict without overwrite`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, RoomEventRepository(database), RoomTaskRepository(database), RoomPlanningProfileRepository(database), RoomAcademicRepository(database), ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val taskId = id(70); val logId = id(71); val replica = id(72)
+        val original = ZonedTimeRangeImage("2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC")
+        val initial = SyncOperation(id(73), DvvSnapshot(emptyList(), DotSnapshot(replica, 1)), HlcSnapshot(1, 0, replica), MutationOrigin.User, listOf(
+            TaskPut(null, TaskImage(taskId, "task", TaskStatusImage.OPEN, TaskPriorityImage.NORMAL, TaskEffortImage(null, "PT0S", null), null)),
+            WorkLogAppend(WorkLogImage(logId, taskId, original)),
+        ))
+        assertEquals(SyncReceiveResult.Applied(MutationId(initial.mutationId)), engine.receive(DecryptedPayloadReceipt(space, initial.mutationId, 1, SyncWireCodec.encodePayload(SyncPayloadV1(operation = initial)))))
+        val competingReplica = id(75)
+        val divergent = SyncOperation(id(74), DvvSnapshot(emptyList(), DotSnapshot(competingReplica, 1)), HlcSnapshot(2, 0, competingReplica), MutationOrigin.User, listOf(
+            WorkLogAppend(WorkLogImage(logId, taskId, ZonedTimeRangeImage("2026-01-01T12:00:00Z", "2026-01-01T13:00:00Z", "UTC"))),
+        ))
+        val result = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 2, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
+        assertEquals(SyncConflictKind.INTEGRITY, result.kind)
+        val preserved = requireNotNull(RoomTaskRepository(database).getWorkLog(WorkLogId(logId)))
+        assertEquals(original.start, preserved.time.start.toString())
+        assertEquals(original.endExclusive, preserved.time.endExclusive.toString())
+        assertEquals(original.timeZone, preserved.time.timeZone.id)
+        assertEquals(2L, receive.serverCursor(space))
+        assertEquals(SyncConflictKind.INTEGRITY, receive.conflict(result.conflictId)?.kind)
+        assertEquals(result, engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 3, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
         database.close()
     }
 
