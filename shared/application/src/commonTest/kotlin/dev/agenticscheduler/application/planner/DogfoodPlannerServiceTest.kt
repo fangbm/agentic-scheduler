@@ -5,6 +5,7 @@ import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.CommittedMutation
@@ -51,6 +52,7 @@ class DogfoodPlannerServiceTest {
             academics = EmptyAcademics,
             uuidV7 = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
             mutations = coordinator(),
+            conflictWritePolicy = NoActiveSyncSpaceWritePolicy,
         )
         val referenceNow = Instant.parse("2026-01-05T08:00:00Z")
         val preview = assertIs<PlannerPreview.Applicable>(service.fullReplan(
@@ -130,9 +132,10 @@ class DogfoodPlannerServiceTest {
             profiles,
             RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
             coordinator(journal),
+            NoActiveSyncSpaceWritePolicy,
         )
-        val created = settings.createUnconfigured("Draft")
-        val saved = settings.save(created.copy(name = "Ready"))
+        val created = assertIs<PlanningProfileSettingsResult.Success>(settings.createUnconfigured("Draft")).profile
+        val saved = assertIs<PlanningProfileSettingsResult.Success>(settings.save(created.copy(name = "Ready"))).profile
         assertEquals(saved, profiles.get(saved.id))
         assertEquals(2, journal.mutations.size)
         val puts = journal.mutations.map { it.operation.orderedMutations.single() as dev.agenticscheduler.sync.PlanningProfilePut }
@@ -165,6 +168,7 @@ class DogfoodPlannerServiceTest {
         tasks, events, MemoryProfiles(profile), EmptyAcademics,
         RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
         mutations = coordinator(),
+        conflictWritePolicy = NoActiveSyncSpaceWritePolicy,
     )
 
     private fun coordinator(journal: DogfoodJournal = DogfoodJournal()) = MutationCoordinator(

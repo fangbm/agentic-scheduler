@@ -40,6 +40,7 @@ import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranch
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
@@ -100,10 +101,10 @@ class MainActivity : ComponentActivity() {
     private val calendarQueryService: CalendarQueryService by lazy {
         RepositoryCalendarQueryService(events, tasks, academics)
     }
-    private val eventEditor by lazy { EventEditingService(events, ids, mutations) }
-    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations) }
-    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations) }
+    private val eventEditor by lazy { EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy) }
+    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -240,6 +241,7 @@ private fun EventEditorDialog(
                             is EditingResult.Success -> onSaved()
                             is EditingResult.Invalid -> error = result.issues.joinToString()
                             EditingResult.NotFound -> error = "Event no longer exists."
+                            is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                         }
                     }
                 }
@@ -312,6 +314,7 @@ private fun TaskEditorDialog(
                             is EditingResult.Success -> onSaved()
                             is EditingResult.Invalid -> error = result.issues.joinToString()
                             EditingResult.NotFound -> error = "Task no longer exists."
+                            is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                         }
                     }
                 }
@@ -389,6 +392,7 @@ private fun PlannerDogfoodPanel(
                             when (val applied = planner.apply(result.branch, Clock.System.now())) {
                                 is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
                                 is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
+                                is PlanBranchApplyResult.BlockedBySyncConflict -> message = "PlanBranch intersects an unresolved sync conflict. Resolve it before applying."
                             }
                         }
                     }) { Text("Apply PlanBranch") }
