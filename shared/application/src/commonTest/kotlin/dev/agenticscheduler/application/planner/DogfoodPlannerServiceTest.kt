@@ -131,9 +131,12 @@ class DogfoodPlannerServiceTest {
 
     @Test fun `Planner preview fails closed when a synchronized source fact is unprojectable`() = runBlocking {
         val profile = configuredProfile()
-        val sourceFacts = ConflictAwareSourceFactQuery { durable ->
-            if (durable is dev.agenticscheduler.sync.EventPut) ConflictProjection.Unprojectable(listOf("conflict-1"), "Event conflict cannot be projected.")
-            else ConflictProjection.Projected(durable, emptyList())
+        val sourceFacts = object : ConflictAwareSourceFactQuery {
+            override suspend fun project(durable: dev.agenticscheduler.sync.EntityMutation) =
+                if (durable is dev.agenticscheduler.sync.EventPut) ConflictProjection.Unprojectable(listOf("conflict-1"), "Event conflict cannot be projected.")
+                else ConflictProjection.Projected(durable, emptyList())
+            override suspend fun projectCollection(entityKind: dev.agenticscheduler.sync.EntityKind, durable: Collection<dev.agenticscheduler.sync.EntityMutation>) =
+                dev.agenticscheduler.application.history.ConflictCollectionProjection.Projected(durable.toList())
         }
         val service = DogfoodPlannerService(
             tasks = MemoryTasks(task()),

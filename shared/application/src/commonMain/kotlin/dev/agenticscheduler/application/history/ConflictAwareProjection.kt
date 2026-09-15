@@ -83,11 +83,38 @@ class ConflictAwareProjection(private val receiveState: SyncReceiveRepository) {
         }
         return ConflictProjection.Projected(projected, conflicts.map(SyncConflict::conflictId))
     }
+
+    suspend fun projectCollection(
+        syncSpaceId: SyncSpaceId,
+        entityKind: EntityKind,
+        durable: Collection<EntityMutation>,
+    ): ConflictCollectionProjection {
+        require(durable.all { it.entityKind == entityKind })
+        val durableById = durable.associateBy(EntityMutation::entityId)
+        val ids = (durableById.keys + receiveState.conflicts(syncSpaceId)
+            .filter { it.status == SyncConflictStatus.OPEN }
+            .flatMap { conflict -> conflict.entityRefs.filter { it.entityKind == entityKind }.map(SyncConflictEntityRef::entityId) })
+            .toSortedSet()
+        val projected = mutableListOf<EntityMutation>()
+        ids.forEach { entityId ->
+            when (val value = project(syncSpaceId, entityKind, entityId, durableById[entityId])) {
+                is ConflictProjection.Projected -> value.mutation?.let(projected::add)
+                is ConflictProjection.Unprojectable -> return ConflictCollectionProjection.Unprojectable(value.conflictIds, value.reason)
+            }
+        }
+        return ConflictCollectionProjection.Projected(projected.sortedBy(EntityMutation::entityId))
+    }
+}
+
+sealed interface ConflictCollectionProjection {
+    data class Projected(val mutations: List<EntityMutation>) : ConflictCollectionProjection
+    data class Unprojectable(val conflictIds: List<String>, val reason: String) : ConflictCollectionProjection
 }
 
 /** The single D8-P03 source-fact projection boundary for application readers. */
-fun interface ConflictAwareSourceFactQuery {
+interface ConflictAwareSourceFactQuery {
     suspend fun project(durable: EntityMutation): ConflictProjection
+    suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>): ConflictCollectionProjection
 }
 
 class ActiveConflictAwareSourceFactQuery(
@@ -96,12 +123,16 @@ class ActiveConflictAwareSourceFactQuery(
 ) : ConflictAwareSourceFactQuery {
     override suspend fun project(durable: EntityMutation): ConflictProjection =
         projection.project(syncSpaceId, durable.entityKind, durable.entityId, durable)
+    override suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>): ConflictCollectionProjection =
+        projection.projectCollection(syncSpaceId, entityKind, durable)
 }
 
 /** Before D8-02 enrollment there is no remote conflict state to overlay. */
 data object NoActiveSyncSpaceSourceFactQuery : ConflictAwareSourceFactQuery {
     override suspend fun project(durable: EntityMutation): ConflictProjection =
         ConflictProjection.Projected(durable, emptyList())
+    override suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>): ConflictCollectionProjection =
+        ConflictCollectionProjection.Projected(durable.sortedBy(EntityMutation::entityId))
 }
 
 /** Applies only [groups], never a candidate's unrelated historical fields. */

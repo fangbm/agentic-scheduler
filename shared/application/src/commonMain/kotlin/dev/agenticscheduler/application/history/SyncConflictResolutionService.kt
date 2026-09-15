@@ -8,6 +8,7 @@ sealed interface SyncConflictResolutionResult {
     data class Resolved(val mutationId: MutationId) : SyncConflictResolutionResult
     data object NotFound : SyncConflictResolutionResult
     data object AlreadyResolved : SyncConflictResolutionResult
+    data class Superseded(val replacementConflictId: String) : SyncConflictResolutionResult
     data class InvalidResolution(val reason: String) : SyncConflictResolutionResult
 }
 
@@ -29,6 +30,7 @@ class SyncConflictResolutionService(
         when (receiveState.conflict(conflictId)?.status) {
             null -> return SyncConflictResolutionResult.NotFound
             SyncConflictStatus.RESOLVED -> return SyncConflictResolutionResult.AlreadyResolved
+            SyncConflictStatus.SUPERSEDED -> return SyncConflictResolutionResult.Superseded(requireNotNull(receiveState.conflict(conflictId)?.supersededByConflictId))
             SyncConflictStatus.OPEN -> Unit
         }
         return try {
