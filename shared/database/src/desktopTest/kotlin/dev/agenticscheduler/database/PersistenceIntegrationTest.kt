@@ -19,6 +19,8 @@ import dev.agenticscheduler.application.history.HistoryQueryService
 import dev.agenticscheduler.application.history.DecryptedPayloadReceipt
 import dev.agenticscheduler.application.history.SyncEngine
 import dev.agenticscheduler.application.history.SyncReceiveResult
+import dev.agenticscheduler.application.history.SyncConflictResolutionService
+import dev.agenticscheduler.application.history.SyncConflictResolutionResult
 import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
 import dev.agenticscheduler.application.persistence.MutationJournalRepository
@@ -592,6 +594,21 @@ class PersistenceIntegrationTest {
         assertEquals(1L, commonContext.components.single().counter)
         assertEquals("Local title", events.get(EventId(eventId))?.title, "A semantic conflict must not partially overwrite Active State.")
         assertEquals(4L, receive.serverCursor(space))
+        val resolver = SyncConflictResolutionService(
+            MutationCoordinator(RoomApplicationTransactionRunner(database), journal, ids, MutationWallClock { 10 }),
+            journal,
+            receive,
+            events,
+            RoomTaskRepository(database),
+            RoomPlanningProfileRepository(database),
+            RoomAcademicRepository(database),
+        )
+        val chosen = baseImage.copy(title = "Chosen title")
+        val resolution = assertIs<SyncConflictResolutionResult.Resolved>(resolver.resolve(result.conflictId, listOf(EventPut(baseImage, chosen))))
+        assertEquals("Chosen title", events.get(EventId(eventId))?.title)
+        assertEquals("2026-01-03", (events.get(EventId(eventId))?.time as AllDayRange).startDate.toString(), "Resolution retains previously merged non-conflicting groups.")
+        assertEquals(resolution.mutationId, requireNotNull(receive.conflict(result.conflictId)).resolutionMutationId)
+        assertEquals(SyncConflictStatus.RESOLVED, receive.conflict(result.conflictId)?.status)
         database.close()
     }
 
