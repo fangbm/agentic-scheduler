@@ -94,6 +94,10 @@ import dev.agenticscheduler.sync.TaskImage
 import dev.agenticscheduler.sync.TaskStatusImage
 import dev.agenticscheduler.sync.TaskPriorityImage
 import dev.agenticscheduler.sync.TaskEffortImage
+import dev.agenticscheduler.sync.TaskDeadlineImage
+import dev.agenticscheduler.sync.DeadlineImage
+import dev.agenticscheduler.sync.DeadlinePolicyImage
+import dev.agenticscheduler.sync.OverflowPolicyImage
 import dev.agenticscheduler.sync.PlanningProfilePut
 import dev.agenticscheduler.sync.PlanningProfileImage
 import dev.agenticscheduler.sync.PlanningProfileConfigurationImage
@@ -454,6 +458,22 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
+    @Test fun `exported v4 schema migrates to v5 with durable causal-gap state`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(4)
+        legacy.prepare("INSERT INTO sync_space_cursor (sync_space_id, server_cursor) VALUES (?, ?)").use { statement ->
+            statement.bindText(1, "personal-space"); statement.bindLong(2, 7); statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(5, emptyList())
+        migrated.prepare("SELECT server_cursor FROM sync_space_cursor WHERE sync_space_id = ?").use { statement ->
+            statement.bindText(1, "personal-space"); assertEquals(true, statement.step()); assertEquals(7L, statement.getLong(0))
+        }
+        listOf("pending_sync_receive", "handled_receive_dot").forEach { table ->
+            migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").use { statement -> statement.bindText(1, table); assertEquals(true, statement.step(), table) }
+        }
+        migrated.close()
+    }
+
     @Test fun `D8 receive metadata persists cursor quarantine and structured conflict`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val repository = RoomSyncReceiveRepository(database)
@@ -633,6 +653,88 @@ class PersistenceIntegrationTest {
         }
         val configuration = assertIs<dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Configured>(requireNotNull(profiles.get(PlanningProfileId(profileId))).configuration)
         assertEquals(listOf("10:00", "11:00"), configuration.weeklyAvailability.map { it.start.toString() })
+        database.close()
+    }
+
+    @Test fun `D8 merges PlanningProfile name with concurrent unconfigure transition`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val profiles = RoomPlanningProfileRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, RoomEventRepository(database), RoomTaskRepository(database), profiles, RoomAcademicRepository(database), ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val profileId = id(10); val localReplica = id(11); val remoteReplica = id(12)
+        val configured = PlanningProfileConfigurationImage.Configured(
+            "UTC",
+            listOf(CanonicalAvailabilityWindowImage(DayOfWeekImage.MONDAY, "09:00", "10:00")),
+            "PT30M", "PT1H", "PT2H", AllDayEventPolicyImage.NON_BLOCKING,
+        )
+        val base = PlanningProfileImage(profileId, "Profile", configured)
+        val local = base.copy(name = "Work")
+        val remote = base.copy(configuration = PlanningProfileConfigurationImage.Unconfigured)
+        val first = SyncOperation(id(13), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(PlanningProfilePut(null, base)))
+        val localUpdate = SyncOperation(id(14), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(localReplica, 2)), HlcSnapshot(2, 0, localReplica), MutationOrigin.User, listOf(PlanningProfilePut(base, local)))
+        val remoteUpdate = SyncOperation(id(15), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(remoteReplica, 1)), HlcSnapshot(3, 0, remoteReplica), MutationOrigin.User, listOf(PlanningProfilePut(base, remote)))
+        listOf(first to 1L, localUpdate to 2L, remoteUpdate to 3L).forEach { (operation, cursor) ->
+            assertEquals(SyncReceiveResult.Applied(MutationId(operation.mutationId)), engine.receive(DecryptedPayloadReceipt(space, operation.mutationId, cursor, SyncWireCodec.encodePayload(SyncPayloadV1(operation = operation)))))
+        }
+        val merged = requireNotNull(profiles.get(PlanningProfileId(profileId)))
+        assertEquals("Work", merged.name)
+        assertEquals(dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured, merged.configuration)
+        database.close()
+    }
+
+    @Test fun `D8 holds an out-of-order descendant then drains it after its ancestor`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val events = RoomEventRepository(database); val tasks = RoomTaskRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, events, tasks, RoomPlanningProfileRepository(database), RoomAcademicRepository(database), ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val remoteReplica = id(20); val eventId = id(21); val taskId = id(22)
+        val ancestor = SyncOperation(id(23), DvvSnapshot(emptyList(), DotSnapshot(remoteReplica, 1)), HlcSnapshot(1, 0, remoteReplica), MutationOrigin.User, listOf(
+            EventPut(null, EventImage(eventId, "ancestor", EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED)),
+        ))
+        val descendant = SyncOperation(id(24), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(remoteReplica, 1)), DotSnapshot(remoteReplica, 2)), HlcSnapshot(2, 0, remoteReplica), MutationOrigin.User, listOf(
+            TaskPut(null, TaskImage(taskId, "descendant", TaskStatusImage.OPEN, TaskPriorityImage.NORMAL, TaskEffortImage(null, "PT0S", null), null)),
+        ))
+        val pending = assertIs<SyncReceiveResult.PendingCausalGap>(engine.receive(DecryptedPayloadReceipt(space, descendant.mutationId, 2, SyncWireCodec.encodePayload(SyncPayloadV1(operation = descendant)))))
+        assertEquals(listOf(dev.agenticscheduler.sync.Dot(ReplicaId(remoteReplica), 1)), pending.missingPrerequisites)
+        assertEquals(null, events.get(EventId(eventId))); assertEquals(null, tasks.getTask(TaskId(taskId)))
+        assertEquals(0L, receive.serverCursor(space)); assertEquals(descendant.mutationId, receive.pending(space, descendant.mutationId)?.mutationId)
+        assertEquals(SyncReceiveResult.Applied(MutationId(ancestor.mutationId)), engine.receive(DecryptedPayloadReceipt(space, ancestor.mutationId, 1, SyncWireCodec.encodePayload(SyncPayloadV1(operation = ancestor)))))
+        assertEquals("ancestor", events.get(EventId(eventId))?.title)
+        assertEquals("descendant", tasks.getTask(TaskId(taskId))?.title)
+        assertEquals(null, receive.pending(space, descendant.mutationId))
+        assertEquals(2L, receive.serverCursor(space))
+        assertEquals(MutationId(descendant.mutationId), journal.mutation(descendant.mutationId)?.operation?.let { MutationId(it.mutationId) })
+        database.close()
+    }
+
+    @Test fun `D8 merges disjoint Task effort and deadline but conflicts on concurrent effort`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val tasks = RoomTaskRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, RoomEventRepository(database), tasks, RoomPlanningProfileRepository(database), RoomAcademicRepository(database), ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val taskId = id(30); val localReplica = id(31); val deadlineReplica = id(32); val effortReplica = id(33)
+        val base = TaskImage(taskId, "Task", TaskStatusImage.OPEN, TaskPriorityImage.NORMAL, TaskEffortImage("PT1H", "PT0S", "PT1H"), null)
+        val localEffort = base.copy(effort = TaskEffortImage("PT2H", "PT0S", "PT2H"))
+        val remoteDeadline = base.copy(deadline = TaskDeadlineImage(DeadlineImage.DateOnly("2026-02-01"), DeadlinePolicyImage.HARD, OverflowPolicyImage.NEVER))
+        val conflictingEffort = base.copy(effort = TaskEffortImage("PT3H", "PT0S", "PT3H"))
+        val first = SyncOperation(id(34), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(TaskPut(null, base)))
+        val localUpdate = SyncOperation(id(35), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(localReplica, 2)), HlcSnapshot(2, 0, localReplica), MutationOrigin.User, listOf(TaskPut(base, localEffort)))
+        val deadlineUpdate = SyncOperation(id(36), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(deadlineReplica, 1)), HlcSnapshot(3, 0, deadlineReplica), MutationOrigin.User, listOf(TaskPut(base, remoteDeadline)))
+        listOf(first to 1L, localUpdate to 2L, deadlineUpdate to 3L).forEach { (operation, cursor) ->
+            assertEquals(SyncReceiveResult.Applied(MutationId(operation.mutationId)), engine.receive(DecryptedPayloadReceipt(space, operation.mutationId, cursor, SyncWireCodec.encodePayload(SyncPayloadV1(operation = operation)))))
+        }
+        val merged = requireNotNull(tasks.getTask(TaskId(taskId)))
+        assertEquals("PT2H", merged.effort.estimated?.toIsoString())
+        assertEquals("2026-02-01", (requireNotNull(merged.deadline).deadline as Deadline.DateOnly).date.toString())
+        val conflictingUpdate = SyncOperation(id(37), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(effortReplica, 1)), HlcSnapshot(4, 0, effortReplica), MutationOrigin.User, listOf(TaskPut(base, conflictingEffort)))
+        assertEquals(SyncConflictKind.SEMANTIC, assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, conflictingUpdate.mutationId, 4, SyncWireCodec.encodePayload(SyncPayloadV1(operation = conflictingUpdate))))).kind)
+        assertEquals("PT2H", tasks.getTask(TaskId(taskId))?.effort?.estimated?.toIsoString())
         database.close()
     }
 

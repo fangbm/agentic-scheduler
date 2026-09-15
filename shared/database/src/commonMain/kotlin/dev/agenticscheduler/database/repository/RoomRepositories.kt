@@ -33,6 +33,8 @@ import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.database.record.ProtocolQuarantineRecord
 import dev.agenticscheduler.database.record.SyncConflictRecord
 import dev.agenticscheduler.database.record.SyncSpaceCursorRecord
+import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
+import dev.agenticscheduler.database.record.HandledReceiveDotRecord
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
@@ -123,6 +125,42 @@ class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) 
     override suspend fun saveServerCursor(syncSpaceId: SyncSpaceId, cursor: Long) {
         require(cursor >= 0)
         database.syncReceiveDao().saveCursor(SyncSpaceCursorRecord(syncSpaceId.value, cursor))
+    }
+
+    override suspend fun pending(syncSpaceId: SyncSpaceId, mutationId: String): PendingSyncReceive? =
+        database.syncReceiveDao().pending(syncSpaceId.value, mutationId)?.let { record ->
+            PendingSyncReceive(SyncSpaceId(record.syncSpaceId), record.mutationId, record.serverCursor, record.payloadJson)
+        }
+
+    override suspend fun pending(syncSpaceId: SyncSpaceId): List<PendingSyncReceive> =
+        database.syncReceiveDao().pending(syncSpaceId.value).map { record ->
+            PendingSyncReceive(SyncSpaceId(record.syncSpaceId), record.mutationId, record.serverCursor, record.payloadJson)
+        }
+
+    override suspend fun savePending(value: PendingSyncReceive) {
+        database.syncReceiveDao().savePending(PendingSyncReceiveRecord(
+            value.syncSpaceId.value, value.mutationId, value.serverCursor, value.payloadJson,
+        ))
+    }
+
+    override suspend fun removePending(syncSpaceId: SyncSpaceId, mutationId: String) {
+        database.syncReceiveDao().removePending(syncSpaceId.value, mutationId)
+    }
+
+    override suspend fun handledDot(syncSpaceId: SyncSpaceId, replicaId: ReplicaId, counter: Long): HandledReceiveDot? =
+        database.syncReceiveDao().handledDot(syncSpaceId.value, replicaId.value, counter)?.let { record ->
+            HandledReceiveDot(SyncSpaceId(record.syncSpaceId), ReplicaId(record.replicaId), record.counter, record.mutationId)
+        }
+
+    override suspend fun handledDots(syncSpaceId: SyncSpaceId): List<HandledReceiveDot> =
+        database.syncReceiveDao().handledDots(syncSpaceId.value).map { record ->
+            HandledReceiveDot(SyncSpaceId(record.syncSpaceId), ReplicaId(record.replicaId), record.counter, record.mutationId)
+        }
+
+    override suspend fun saveHandledDot(value: HandledReceiveDot) {
+        database.syncReceiveDao().saveHandledDot(HandledReceiveDotRecord(
+            value.syncSpaceId.value, value.replicaId.value, value.counter, value.mutationId,
+        ))
     }
 
     override suspend fun quarantine(value: ProtocolQuarantine) {
