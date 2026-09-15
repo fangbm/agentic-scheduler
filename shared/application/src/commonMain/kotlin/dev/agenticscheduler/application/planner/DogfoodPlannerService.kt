@@ -149,7 +149,7 @@ class DogfoodPlannerService(
                 ?: return SnapshotAssembly.Invalid("Task source facts have an unresolved sync conflict projection."),
             dependencies = projectList(tasks.observeDependencies().first(), { TaskDependencyPut(null, it.toSemanticImage()) }) { (it as? TaskDependencyPut)?.after?.toDomain() }
                 ?: return SnapshotAssembly.Invalid("Task dependency source facts have an unresolved sync conflict projection."),
-            focusBlocks = projectList(tasks.observeFocusBlocks().first(), { FocusBlockPut(null, it.toSemanticImage()) }, allowDeletion = true) { (it as? FocusBlockPut)?.after?.toDomain() }
+            focusBlocks = projectFocusBlocks(tasks.observeFocusBlocks().first())
                 ?: return SnapshotAssembly.Invalid("FocusBlock source facts have an unresolved sync conflict projection."),
             events = projectList(events.observeAll().first(), { EventPut(null, it.toSemanticImage()) }) { (it as? EventPut)?.after?.toDomain() }
                 ?: return SnapshotAssembly.Invalid("Event source facts have an unresolved sync conflict projection."),
@@ -190,6 +190,14 @@ class DogfoodPlannerService(
         }
         return projected
     }
+
+    private suspend fun projectFocusBlocks(values: List<dev.agenticscheduler.domain.task.FocusBlock>): List<dev.agenticscheduler.domain.task.FocusBlock>? =
+        when (val result = sourceFacts.projectCollection(EntityKind.FOCUS_BLOCK, values.map { FocusBlockPut(null, it.toSemanticImage()) })) {
+            is dev.agenticscheduler.application.history.ConflictCollectionProjection.Projected -> result.mutations.map { mutation ->
+                (mutation as? FocusBlockPut)?.after?.toDomain() ?: return null
+            }
+            is dev.agenticscheduler.application.history.ConflictCollectionProjection.Unprojectable -> null
+        }
 
     private sealed interface SnapshotAssembly {
         data class Ready(val snapshot: PlanningSnapshot) : SnapshotAssembly

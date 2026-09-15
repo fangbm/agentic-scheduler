@@ -17,7 +17,7 @@ data class ProtocolQuarantine(
 ) { init { require(serverCursor >= 0) } }
 
 @Serializable
-enum class SyncConflictStatus { OPEN, RESOLVED }
+enum class SyncConflictStatus { OPEN, RESOLVED, SUPERSEDED }
 
 /** D8-A03: semantic merge collisions and immutable-identity violations are distinct user-resolvable states. */
 @Serializable
@@ -44,6 +44,8 @@ data class SyncConflict(
     val commonCausalContext: CausalContextSnapshot?,
     val status: SyncConflictStatus,
     val resolutionMutationId: MutationId? = null,
+    /** D8-01c component expansion replaces an older OPEN participant set atomically. */
+    val supersededByConflictId: String? = null,
 ) {
     init {
         require(conflictId.isNotBlank())
@@ -52,7 +54,11 @@ data class SyncConflict(
         require(participants.map(SyncConflictParticipant::mutationId).distinct().size == participants.size)
         require(provisionalMutationId == participants.minBy { it.mutationId.value }.mutationId) { "Provisional MutationId must be the lexicographically smallest participant." }
         require(commonCausalContext == commonCausalContextOf(participants)) { "Known participant DVVs require their computed common causal context." }
-        require((status == SyncConflictStatus.RESOLVED) == (resolutionMutationId != null))
+        when (status) {
+            SyncConflictStatus.OPEN -> require(resolutionMutationId == null && supersededByConflictId == null)
+            SyncConflictStatus.RESOLVED -> require(resolutionMutationId != null && supersededByConflictId == null)
+            SyncConflictStatus.SUPERSEDED -> require(resolutionMutationId == null && !supersededByConflictId.isNullOrBlank() && supersededByConflictId != conflictId)
+        }
     }
 }
 

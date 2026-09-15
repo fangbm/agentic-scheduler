@@ -100,6 +100,15 @@ class SyncEngine(
                     CausalRelation.CONCURRENT -> when (val outcome = semanticMerge(receipt.syncSpaceId, operation)) {
                         is SemanticMergeOutcome.Conflicted -> {
                             receiveState.saveConflict(outcome.conflict)
+                            outcome.supersededConflictIds.forEach { conflictId ->
+                                val prior = receiveState.conflict(conflictId)
+                                if (prior?.status == SyncConflictStatus.OPEN) {
+                                    receiveState.saveConflict(prior.copy(
+                                        status = SyncConflictStatus.SUPERSEDED,
+                                        supersededByConflictId = outcome.conflict.conflictId,
+                                    ))
+                                }
+                            }
                             saveReceivedCausality(operation)
                             markHandled(receipt.syncSpaceId, operation)
                             advanceCursor(receipt)
@@ -225,7 +234,7 @@ class SyncEngine(
 
     private sealed interface SemanticMergeOutcome {
         data class Merged(val effectiveOperation: SyncOperation) : SemanticMergeOutcome
-        data class Conflicted(val conflict: SyncConflict) : SemanticMergeOutcome
+        data class Conflicted(val conflict: SyncConflict, val supersededConflictIds: List<String>) : SemanticMergeOutcome
     }
 
     /**
@@ -253,7 +262,7 @@ class SyncEngine(
         val directOperations = conflicts.map { it.first.localOperation } + incoming
         val coalesced = coalesceOpenSemanticComponent(syncSpaceId, incoming, directOperations, directRefs)
         if (coalesced != null) {
-            return SemanticMergeOutcome.Conflicted(SyncConflict(
+            val conflict = SyncConflict(
                 conflictId = semanticConflictId(syncSpaceId, coalesced.refs, coalesced.participants),
                 syncSpaceId = syncSpaceId,
                 entityRefs = coalesced.refs,
@@ -262,7 +271,11 @@ class SyncEngine(
                 kind = SyncConflictKind.SEMANTIC,
                 commonCausalContext = commonCausalContextOf(coalesced.participants),
                 status = SyncConflictStatus.OPEN,
-            ))
+            )
+            return SemanticMergeOutcome.Conflicted(
+                conflict,
+                coalesced.absorbedConflictIds.filter { it != conflict.conflictId }.sorted(),
+            )
         }
         val concurrentEntityKeys = pairings.map { it.incomingMutation.entityKind to it.incomingMutation.entityId }.toSet()
         val effective = incoming.copy(orderedMutations = incoming.orderedMutations.map { mutation ->
@@ -322,15 +335,17 @@ class SyncEngine(
                     SyncConflictEntityRef(entity.first, entity.second, values.flatMap(SyncConflictEntityRef::groups).distinct().sorted())
                 }
                 .sortedWith(compareBy(SyncConflictEntityRef::entityKind, SyncConflictEntityRef::entityId)),
+            absorbedConflictIds = selected.toList().sorted(),
         )
     }
 
     private data class SemanticConflictComponent(
         val participants: List<SyncConflictParticipant>,
         val refs: List<SyncConflictEntityRef>,
+        val absorbedConflictIds: List<String>,
     )
 
-    /** Participant growth must not change the component's durable identity. */
+    /** D8-A06: identity is exactly the canonical participant set plus semantic target. */
     private fun semanticConflictId(
         syncSpaceId: SyncSpaceId,
         refs: List<SyncConflictEntityRef>,
@@ -339,7 +354,7 @@ class SyncEngine(
         syncSpaceId.value,
         SyncConflictKind.SEMANTIC.name,
         refs.joinToString(",") { "${it.entityKind.name}:${it.entityId}:${it.groups.joinToString("+")}" },
-        commonCausalContextOf(participants).components.joinToString(",") { "${it.replicaId}:${it.counter}" },
+        participants.joinToString(",") { it.mutationId.value },
     ).joinToString("|")
 
     private suspend fun currentMutation(incoming: EntityMutation): EntityMutation? = when (incoming) {

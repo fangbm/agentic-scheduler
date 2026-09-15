@@ -116,6 +116,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFails
 import kotlin.test.assertIs
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CompletableDeferred
@@ -625,8 +626,10 @@ class PersistenceIntegrationTest {
             listOf(EventPut(baseImage, thirdTitle)),
         )
         val expanded = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, third.mutationId, 5, SyncWireCodec.encodePayload(SyncPayloadV1(operation = third)))))
-        assertEquals(result.conflictId, expanded.conflictId, "A third concurrent title edit must expand the existing semantic component, not create a pairwise conflict.")
-        val component = requireNotNull(receive.conflict(result.conflictId))
+        assertNotEquals(result.conflictId, expanded.conflictId, "D8-A06 identity includes the expanded participant set.")
+        assertEquals(SyncConflictStatus.SUPERSEDED, receive.conflict(result.conflictId)?.status)
+        assertEquals(expanded.conflictId, receive.conflict(result.conflictId)?.supersededByConflictId)
+        val component = requireNotNull(receive.conflict(expanded.conflictId))
         assertEquals(listOf(localUpdate.mutationId, conflict.mutationId, third.mutationId).sorted(), component.participants.map { it.mutationId.value })
         assertEquals(MutationId(localUpdate.mutationId), component.provisionalMutationId, "The provisional winner is the global MutationId minimum, independent of HLC and arrival order.")
         val resolver = SyncConflictResolutionService(
