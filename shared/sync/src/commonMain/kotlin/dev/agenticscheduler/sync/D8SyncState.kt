@@ -19,6 +19,19 @@ data class ProtocolQuarantine(
 @Serializable
 enum class SyncConflictStatus { OPEN, RESOLVED }
 
+/** D8-A03: semantic merge collisions and immutable-identity violations are distinct user-resolvable states. */
+@Serializable
+enum class SyncConflictKind { SEMANTIC, INTEGRITY }
+
+/** D8-A04's context-only common ancestry; it is never a dotted operation or an HLC-derived winner. */
+@Serializable
+data class CausalContextSnapshot(val components: List<VersionComponent>) {
+    init {
+        require(components == components.sortedBy(VersionComponent::replicaId)) { "Causal context must be ReplicaId canonical." }
+        require(components.map(VersionComponent::replicaId).distinct().size == components.size) { "Causal context replicas must be unique." }
+    }
+}
+
 /** SYN-015's structured, durable local conflict state. */
 @Serializable
 data class SyncConflict(
@@ -27,6 +40,8 @@ data class SyncConflict(
     val entityRefs: List<SyncConflictEntityRef>,
     val participants: List<SyncConflictParticipant>,
     val provisionalMutationId: MutationId,
+    val kind: SyncConflictKind,
+    val commonCausalContext: CausalContextSnapshot?,
     val status: SyncConflictStatus,
     val resolutionMutationId: MutationId? = null,
 ) {
@@ -35,6 +50,8 @@ data class SyncConflict(
         require(entityRefs.isNotEmpty())
         require(participants.size >= 2)
         require(participants.map(SyncConflictParticipant::mutationId).distinct().size == participants.size)
+        require(provisionalMutationId == participants.minBy { it.mutationId.value }.mutationId) { "Provisional MutationId must be the lexicographically smallest participant." }
+        require(commonCausalContext == commonCausalContextOf(participants)) { "Known participant DVVs require their computed common causal context." }
         require((status == SyncConflictStatus.RESOLVED) == (resolutionMutationId != null))
     }
 }
@@ -51,6 +68,16 @@ data class SyncConflictParticipant(
     val dvv: DvvSnapshot,
     val candidateValuesJson: String,
 ) { init { require(candidateValuesJson.isNotBlank()) } }
+
+/** Component-wise minimum of complete participant DVVs, with absent components omitted. */
+fun commonCausalContextOf(participants: List<SyncConflictParticipant>): CausalContextSnapshot {
+    require(participants.isNotEmpty())
+    val vectors = participants.map { participant -> participant.dvv.toDottedVersionVector().observedContext() }
+    val sharedReplicas = vectors.map(Map<ReplicaId, Long>::keys).reduce(Set<ReplicaId>::intersect)
+    return CausalContextSnapshot(sharedReplicas.sortedBy(ReplicaId::value).map { replica ->
+        VersionComponent(replica.value, vectors.minOf { vector -> requireNotNull(vector[replica]) })
+    })
+}
 
 /** Explicit codec for D8 trusted-local state; this is never a server payload codec. */
 object SyncReceiveStateCodec {
