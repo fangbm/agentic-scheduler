@@ -19,6 +19,7 @@ sealed interface SyncReceiveResult {
     data class Duplicate(val mutationId: MutationId) : SyncReceiveResult
     data class IgnoredCausallyKnown(val mutationId: MutationId) : SyncReceiveResult
     data class RequiresSemanticMerge(val mutationId: MutationId) : SyncReceiveResult
+    data class Conflicted(val conflictId: String, val kind: SyncConflictKind) : SyncReceiveResult
     data class Quarantined(val mutationId: String, val reason: ProtocolQuarantineReason) : SyncReceiveResult
 }
 
@@ -52,6 +53,11 @@ class SyncEngine(
                 if (history.mutation(operation.mutationId) != null) {
                     advanceCursor(receipt)
                     return@inWriteTransaction SyncReceiveResult.Duplicate(MutationId(operation.mutationId))
+                }
+                integrityConflict(receipt.syncSpaceId, operation)?.let { conflict ->
+                    receiveState.saveConflict(conflict)
+                    advanceCursor(receipt)
+                    return@inWriteTransaction SyncReceiveResult.Conflicted(conflict.conflictId, conflict.kind)
                 }
                 when (relationToLocal(operation)) {
                     CausalRelation.BEFORE, CausalRelation.EQUAL -> {
@@ -111,7 +117,6 @@ class SyncEngine(
             is FocusBlockDelete -> tasks.deleteFocusBlock(FocusBlockId(mutation.entityId))
             is WorkLogAppend -> {
                 val current = tasks.getWorkLog(WorkLogId(mutation.entityId))
-                check(current == null || current.toSemanticImage() == mutation.after) { "WorkLog IDs are append-only." }
                 if (current == null) tasks.upsertWorkLog(mutation.after.toDomain())
             }
             is TaskDependencyPut -> tasks.upsertDependency(mutation.after.toDomain())
@@ -124,6 +129,35 @@ class SyncEngine(
             is CourseOccurrenceExceptionPut -> academics.upsertCourseOccurrenceException(mutation.after.toDomain())
             is ExamPut -> academics.upsertExam(mutation.after.toDomain())
         } }
+    }
+
+    /** D8-A02/A05 preflight: a single immutable WorkLog divergence conflicts the whole incoming MutationId. */
+    private suspend fun integrityConflict(syncSpaceId: SyncSpaceId, incoming: SyncOperation): SyncConflict? {
+        val divergent = incoming.orderedMutations.filterIsInstance<WorkLogAppend>().mapNotNull { mutation ->
+            val current = tasks.getWorkLog(WorkLogId(mutation.entityId)) ?: return@mapNotNull null
+            if (current.toSemanticImage() == mutation.after) return@mapNotNull null
+            val change = history.entityChanges(EntityKind.WORK_LOG, mutation.entityId).lastOrNull() ?: return@mapNotNull null
+            val local = history.mutation(change.mutationId)?.operation ?: return@mapNotNull null
+            mutation.entityId to local
+        }
+        if (divergent.isEmpty()) return null
+        val localOperations = divergent.map { it.second }.distinctBy(SyncOperation::mutationId)
+        val participants = (localOperations + incoming).sortedBy(SyncOperation::mutationId).map { operation ->
+            SyncConflictParticipant(MutationId(operation.mutationId), operation.dvv, LocalJournalCodec.encode(operation))
+        }
+        val refs = divergent.map { (workLogId, _) -> SyncConflictEntityRef(EntityKind.WORK_LOG, workLogId, listOf("append")) }
+            .distinctBy { it.entityId }.sortedBy { it.entityId }
+        val conflictId = listOf(syncSpaceId.value, SyncConflictKind.INTEGRITY.name, refs.joinToString(",") { "${it.entityKind.name}:${it.entityId}" }, participants.joinToString(",") { it.mutationId.value }).joinToString("|")
+        return SyncConflict(
+            conflictId = conflictId,
+            syncSpaceId = syncSpaceId,
+            entityRefs = refs,
+            participants = participants,
+            provisionalMutationId = participants.minBy { it.mutationId.value }.mutationId,
+            kind = SyncConflictKind.INTEGRITY,
+            commonCausalContext = commonCausalContextOf(participants),
+            status = SyncConflictStatus.OPEN,
+        )
     }
 
     private suspend fun saveReceivedCausality(operation: SyncOperation) {
