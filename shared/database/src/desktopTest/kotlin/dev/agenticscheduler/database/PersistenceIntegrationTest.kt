@@ -70,6 +70,8 @@ import dev.agenticscheduler.sync.SyncConflict
 import dev.agenticscheduler.sync.SyncConflictEntityRef
 import dev.agenticscheduler.sync.SyncConflictParticipant
 import dev.agenticscheduler.sync.SyncConflictStatus
+import dev.agenticscheduler.sync.SyncConflictKind
+import dev.agenticscheduler.sync.commonCausalContextOf
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.DvvSnapshot
 import dev.agenticscheduler.sync.DotSnapshot
@@ -443,15 +445,18 @@ class PersistenceIntegrationTest {
         repository.quarantine(quarantine)
         assertEquals(quarantine, repository.quarantine(space, id(40)))
         val first = MutationId(id(41)); val second = MutationId(id(42))
+        val participants = listOf(
+            SyncConflictParticipant(first, DvvSnapshot(emptyList(), DotSnapshot(id(45), 1)), "{\"time\":\"first\"}"),
+            SyncConflictParticipant(second, DvvSnapshot(emptyList(), DotSnapshot(id(46), 1)), "{\"time\":\"second\"}"),
+        )
         val conflict = SyncConflict(
             conflictId = id(43),
             syncSpaceId = space,
             entityRefs = listOf(SyncConflictEntityRef(EntityKind.EVENT, id(44), listOf("time"))),
-            participants = listOf(
-                SyncConflictParticipant(first, DvvSnapshot(emptyList(), DotSnapshot(id(45), 1)), "{\"time\":\"first\"}"),
-                SyncConflictParticipant(second, DvvSnapshot(emptyList(), DotSnapshot(id(46), 1)), "{\"time\":\"second\"}"),
-            ),
+            participants = participants,
             provisionalMutationId = first,
+            kind = SyncConflictKind.SEMANTIC,
+            commonCausalContext = commonCausalContextOf(participants),
             status = SyncConflictStatus.OPEN,
         )
         repository.saveConflict(conflict)
