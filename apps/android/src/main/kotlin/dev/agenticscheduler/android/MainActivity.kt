@@ -41,6 +41,7 @@ import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranch
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
@@ -103,7 +104,7 @@ class MainActivity : ComponentActivity() {
     }
     private val eventEditor by lazy { EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy) }
     private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery) }
     private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy) }
 
     override fun onCreate(savedInstanceState: Bundle?) {

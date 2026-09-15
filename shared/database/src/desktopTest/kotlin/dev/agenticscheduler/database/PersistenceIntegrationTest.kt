@@ -615,6 +615,20 @@ class PersistenceIntegrationTest {
         assertEquals(1L, commonContext.components.single().counter)
         assertEquals("Local title", events.get(EventId(eventId))?.title, "A semantic conflict must not partially overwrite Active State.")
         assertEquals(4L, receive.serverCursor(space))
+        val thirdReplica = id(88)
+        val thirdTitle = baseImage.copy(title = "Third title")
+        val third = SyncOperation(
+            id(89),
+            DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(thirdReplica, 1)),
+            HlcSnapshot(0, 0, thirdReplica),
+            MutationOrigin.User,
+            listOf(EventPut(baseImage, thirdTitle)),
+        )
+        val expanded = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, third.mutationId, 5, SyncWireCodec.encodePayload(SyncPayloadV1(operation = third)))))
+        assertEquals(result.conflictId, expanded.conflictId, "A third concurrent title edit must expand the existing semantic component, not create a pairwise conflict.")
+        val component = requireNotNull(receive.conflict(result.conflictId))
+        assertEquals(listOf(localUpdate.mutationId, conflict.mutationId, third.mutationId).sorted(), component.participants.map { it.mutationId.value })
+        assertEquals(MutationId(localUpdate.mutationId), component.provisionalMutationId, "The provisional winner is the global MutationId minimum, independent of HLC and arrival order.")
         val resolver = SyncConflictResolutionService(
             MutationCoordinator(RoomApplicationTransactionRunner(database), journal, ids, MutationWallClock { 10 }),
             journal,

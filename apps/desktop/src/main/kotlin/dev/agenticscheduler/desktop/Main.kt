@@ -40,6 +40,7 @@ import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
 import dev.agenticscheduler.application.planner.PlannerPreview
@@ -102,7 +103,7 @@ fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy))
+                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy))
             }
         }
     }

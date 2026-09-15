@@ -247,29 +247,20 @@ class SyncEngine(
         }
         val conflicts = pairings.map { pairing -> pairing to conflictingGroupNames(pairing.localMutation, pairing.incomingMutation) }
             .filter { (_, groups) -> groups.isNotEmpty() }
-        if (conflicts.isNotEmpty()) {
-            val participants = (conflicts.map { it.first.localOperation } + incoming)
-                .distinctBy(SyncOperation::mutationId)
-                .sortedBy(SyncOperation::mutationId)
-                .map { operation -> SyncConflictParticipant(MutationId(operation.mutationId), operation.dvv, LocalJournalCodec.encode(operation)) }
-            val refs = conflicts.map { (pairing, groups) -> SyncConflictEntityRef(pairing.incomingMutation.entityKind, pairing.incomingMutation.entityId, groups) }
-                .groupBy { it.entityKind to it.entityId }
-                .map { (entity, values) -> SyncConflictEntityRef(entity.first, entity.second, values.flatMap(SyncConflictEntityRef::groups).distinct().sorted()) }
-                .sortedWith(compareBy(SyncConflictEntityRef::entityKind, SyncConflictEntityRef::entityId))
-            val conflictId = listOf(
-                syncSpaceId.value,
-                SyncConflictKind.SEMANTIC.name,
-                refs.joinToString(",") { "${it.entityKind.name}:${it.entityId}:${it.groups.joinToString("+")}" },
-                participants.joinToString(",") { it.mutationId.value },
-            ).joinToString("|")
+        val directRefs = conflicts.map { (pairing, groups) ->
+            SyncConflictEntityRef(pairing.incomingMutation.entityKind, pairing.incomingMutation.entityId, groups)
+        }
+        val directOperations = conflicts.map { it.first.localOperation } + incoming
+        val coalesced = coalesceOpenSemanticComponent(syncSpaceId, incoming, directOperations, directRefs)
+        if (coalesced != null) {
             return SemanticMergeOutcome.Conflicted(SyncConflict(
-                conflictId = conflictId,
+                conflictId = semanticConflictId(syncSpaceId, coalesced.refs, coalesced.participants),
                 syncSpaceId = syncSpaceId,
-                entityRefs = refs,
-                participants = participants,
-                provisionalMutationId = participants.minBy { it.mutationId.value }.mutationId,
+                entityRefs = coalesced.refs,
+                participants = coalesced.participants,
+                provisionalMutationId = coalesced.participants.minBy { it.mutationId.value }.mutationId,
                 kind = SyncConflictKind.SEMANTIC,
-                commonCausalContext = commonCausalContextOf(participants),
+                commonCausalContext = commonCausalContextOf(coalesced.participants),
                 status = SyncConflictStatus.OPEN,
             ))
         }
@@ -280,6 +271,76 @@ class SyncEngine(
         })
         return SemanticMergeOutcome.Merged(effective)
     }
+
+    /**
+     * SYN-013 conflict state is a connected N-way component, never a sequence
+     * of pairwise records. Existing OPEN participants are retained even though
+     * they were deliberately not accepted into Active State or the journal.
+     */
+    private suspend fun coalesceOpenSemanticComponent(
+        syncSpaceId: SyncSpaceId,
+        incoming: SyncOperation,
+        directOperations: List<SyncOperation>,
+        directRefs: List<SyncConflictEntityRef>,
+    ): SemanticConflictComponent? {
+        val open = receiveState.conflicts(syncSpaceId)
+            .filter { it.status == SyncConflictStatus.OPEN && it.kind == SyncConflictKind.SEMANTIC }
+        val operations = directOperations.associateBy(SyncOperation::mutationId).toMutableMap()
+        val refs = directRefs.toMutableList()
+        val selected = mutableSetOf<String>()
+        var expanded: Boolean
+        do {
+            expanded = false
+            open.filterNot { it.conflictId in selected }.forEach { conflict ->
+                val participantOperations = conflict.participants.map { participant ->
+                    LocalJournalCodec.decode(participant.candidateValuesJson)
+                }
+                val sharesParticipant = participantOperations.any { it.mutationId in operations }
+                val overlapsIncoming = conflict.entityRefs.any { ref ->
+                    incoming.orderedMutations.any { mutation ->
+                        mutation.entityKind == ref.entityKind &&
+                            mutation.entityId == ref.entityId &&
+                            mutation.changedSemanticGroups().map(SemanticGroupValue::name).any(ref.groups::contains)
+                    }
+                } && participantOperations.any { relationBetween(it.dvv, incoming.dvv) == CausalRelation.CONCURRENT }
+                if (sharesParticipant || overlapsIncoming) {
+                    selected += conflict.conflictId
+                    participantOperations.forEach { operations[it.mutationId] = it }
+                    refs += conflict.entityRefs
+                    expanded = true
+                }
+            }
+        } while (expanded)
+        if (directRefs.isEmpty() && selected.isEmpty()) return null
+        val participants = operations.values.sortedBy(SyncOperation::mutationId).map { operation ->
+            SyncConflictParticipant(MutationId(operation.mutationId), operation.dvv, LocalJournalCodec.encode(operation))
+        }
+        return SemanticConflictComponent(
+            participants = participants,
+            refs = refs.groupBy { it.entityKind to it.entityId }
+                .map { (entity, values) ->
+                    SyncConflictEntityRef(entity.first, entity.second, values.flatMap(SyncConflictEntityRef::groups).distinct().sorted())
+                }
+                .sortedWith(compareBy(SyncConflictEntityRef::entityKind, SyncConflictEntityRef::entityId)),
+        )
+    }
+
+    private data class SemanticConflictComponent(
+        val participants: List<SyncConflictParticipant>,
+        val refs: List<SyncConflictEntityRef>,
+    )
+
+    /** Participant growth must not change the component's durable identity. */
+    private fun semanticConflictId(
+        syncSpaceId: SyncSpaceId,
+        refs: List<SyncConflictEntityRef>,
+        participants: List<SyncConflictParticipant>,
+    ): String = listOf(
+        syncSpaceId.value,
+        SyncConflictKind.SEMANTIC.name,
+        refs.joinToString(",") { "${it.entityKind.name}:${it.entityId}:${it.groups.joinToString("+")}" },
+        commonCausalContextOf(participants).components.joinToString(",") { "${it.replicaId}:${it.counter}" },
+    ).joinToString("|")
 
     private suspend fun currentMutation(incoming: EntityMutation): EntityMutation? = when (incoming) {
         is EventPut -> events.get(dev.agenticscheduler.domain.id.EventId(incoming.entityId))?.toSemanticImage()?.let { EventPut(null, it) }

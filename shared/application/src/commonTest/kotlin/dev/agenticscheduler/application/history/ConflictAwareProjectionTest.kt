@@ -57,11 +57,33 @@ class ConflictAwareProjectionTest {
         Unit
     }
 
+    @Test fun `FocusBlock put delete projection is deterministic from either durable branch`() = kotlinx.coroutines.runBlocking {
+        val block = FocusBlockImage(id(50), id(51), ZonedTimeRangeImage("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", "UTC"), FlexibilityImage.SOFT, PinStateImage.UNPINNED)
+        val putWins = focusConflict(block, putMutationId = id(52), deleteMutationId = id(53))
+        val deletedSide = assertIs<ConflictProjection.Projected>(ConflictAwareProjection(MemoryReceive(listOf(putWins))).project(
+            SyncSpaceId("personal-space"), EntityKind.FOCUS_BLOCK, block.id, null,
+        ))
+        assertEquals(block, assertIs<FocusBlockPut>(deletedSide.mutation).after)
+
+        val deleteWins = focusConflict(block, putMutationId = id(55), deleteMutationId = id(54))
+        val putSide = assertIs<ConflictProjection.Projected>(ConflictAwareProjection(MemoryReceive(listOf(deleteWins))).project(
+            SyncSpaceId("personal-space"), EntityKind.FOCUS_BLOCK, block.id, FocusBlockPut(null, block),
+        ))
+        assertEquals(null, putSide.mutation)
+    }
+
     private fun conflict(eventId: String, localReplica: String, remoteReplica: String, provisional: EventImage): SyncConflict {
         val local = SyncOperation(id(20), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(EventPut(null, provisional.copy(title = "Local"))))
         val remote = SyncOperation(id(19), DvvSnapshot(emptyList(), DotSnapshot(remoteReplica, 1)), HlcSnapshot(999, 0, remoteReplica), MutationOrigin.User, listOf(EventPut(null, provisional)))
         val participants = listOf(local, remote).sortedBy(SyncOperation::mutationId).map { SyncConflictParticipant(MutationId(it.mutationId), it.dvv, LocalJournalCodec.encode(it)) }
         return SyncConflict("conflict-$eventId", SyncSpaceId("personal-space"), listOf(SyncConflictEntityRef(EntityKind.EVENT, eventId, listOf("title"))), participants, MutationId(remote.mutationId), SyncConflictKind.SEMANTIC, commonCausalContextOf(participants), SyncConflictStatus.OPEN)
+    }
+
+    private fun focusConflict(block: FocusBlockImage, putMutationId: String, deleteMutationId: String): SyncConflict {
+        val put = SyncOperation(putMutationId, DvvSnapshot(emptyList(), DotSnapshot(id(56), 1)), HlcSnapshot(10, 0, id(56)), MutationOrigin.User, listOf(FocusBlockPut(null, block)))
+        val delete = SyncOperation(deleteMutationId, DvvSnapshot(emptyList(), DotSnapshot(id(57), 1)), HlcSnapshot(1, 0, id(57)), MutationOrigin.User, listOf(FocusBlockDelete(block)))
+        val participants = listOf(put, delete).sortedBy(SyncOperation::mutationId).map { SyncConflictParticipant(MutationId(it.mutationId), it.dvv, LocalJournalCodec.encode(it)) }
+        return SyncConflict("focus-${putMutationId}-${deleteMutationId}", SyncSpaceId("personal-space"), listOf(SyncConflictEntityRef(EntityKind.FOCUS_BLOCK, block.id, listOf("existence"))), participants, participants.first().mutationId, SyncConflictKind.SEMANTIC, commonCausalContextOf(participants), SyncConflictStatus.OPEN)
     }
 
     private fun id(number: Int) = "00000000-0000-7000-8000-0000000000${number.toString().padStart(2, '0')}"
