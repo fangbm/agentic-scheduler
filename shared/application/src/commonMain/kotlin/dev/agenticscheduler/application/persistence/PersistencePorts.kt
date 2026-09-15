@@ -69,6 +69,7 @@ interface SyncReceiveRepository {
     suspend fun quarantine(syncSpaceId: SyncSpaceId, mutationId: String): ProtocolQuarantine?
     suspend fun saveConflict(value: SyncConflict)
     suspend fun conflict(conflictId: String): SyncConflict?
+    suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict>
 }
 
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }

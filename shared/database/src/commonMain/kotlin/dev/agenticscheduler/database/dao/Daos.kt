@@ -44,5 +44,6 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM protocol_quarantine WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun quarantine(syncSpaceId: String, mutationId: String): ProtocolQuarantineRecord?
     @Upsert suspend fun saveQuarantine(value: ProtocolQuarantineRecord)
     @Query("SELECT * FROM sync_conflict WHERE conflict_id = :conflictId") suspend fun conflict(conflictId: String): SyncConflictRecord?
+    @Query("SELECT * FROM sync_conflict WHERE sync_space_id = :syncSpaceId ORDER BY conflict_id ASC") suspend fun conflicts(syncSpaceId: String): List<SyncConflictRecord>
     @Upsert suspend fun saveConflict(value: SyncConflictRecord)
 }
