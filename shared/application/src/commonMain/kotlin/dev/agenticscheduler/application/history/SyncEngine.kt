@@ -53,6 +53,7 @@ class SyncEngine(
                 }
                 integrityConflict(receipt.syncSpaceId, operation)?.let { conflict ->
                     receiveState.saveConflict(conflict)
+                    saveReceivedCausality(operation)
                     advanceCursor(receipt)
                     return@inWriteTransaction SyncReceiveResult.Conflicted(conflict.conflictId, conflict.kind)
                 }
@@ -64,6 +65,7 @@ class SyncEngine(
                     CausalRelation.CONCURRENT -> when (val outcome = semanticMerge(receipt.syncSpaceId, operation)) {
                         is SemanticMergeOutcome.Conflicted -> {
                             receiveState.saveConflict(outcome.conflict)
+                            saveReceivedCausality(operation)
                             advanceCursor(receipt)
                             SyncReceiveResult.Conflicted(outcome.conflict.conflictId, outcome.conflict.kind)
                         }

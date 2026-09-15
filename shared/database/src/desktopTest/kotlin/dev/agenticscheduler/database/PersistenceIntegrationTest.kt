@@ -73,6 +73,7 @@ import dev.agenticscheduler.sync.SyncConflictStatus
 import dev.agenticscheduler.sync.SyncConflictKind
 import dev.agenticscheduler.sync.commonCausalContextOf
 import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.DvvSnapshot
 import dev.agenticscheduler.sync.DotSnapshot
 import dev.agenticscheduler.sync.EntityKind
@@ -91,6 +92,15 @@ import dev.agenticscheduler.sync.TaskImage
 import dev.agenticscheduler.sync.TaskStatusImage
 import dev.agenticscheduler.sync.TaskPriorityImage
 import dev.agenticscheduler.sync.TaskEffortImage
+import dev.agenticscheduler.sync.PlanningProfilePut
+import dev.agenticscheduler.sync.PlanningProfileImage
+import dev.agenticscheduler.sync.PlanningProfileConfigurationImage
+import dev.agenticscheduler.sync.CanonicalAvailabilityWindowImage
+import dev.agenticscheduler.sync.DayOfWeekImage
+import dev.agenticscheduler.sync.AllDayEventPolicyImage
+import dev.agenticscheduler.sync.FocusBlockDelete
+import dev.agenticscheduler.sync.AcademicYearPut
+import dev.agenticscheduler.sync.AcademicYearImage
 import dev.agenticscheduler.sync.WorkLogAppend
 import dev.agenticscheduler.sync.WorkLogImage
 import dev.agenticscheduler.sync.ZonedTimeRangeImage
@@ -544,6 +554,7 @@ class PersistenceIntegrationTest {
         assertEquals(null, RoomEventRepository(database).get(EventId(eventId)), "A conflicting child blocks the entire MutationId group.")
         assertEquals(3L, receive.serverCursor(space))
         assertEquals(SyncConflictKind.INTEGRITY, receive.conflict(result.conflictId)?.kind)
+        assertEquals(1L, journal.localReplicaState()?.observedContext?.get(ReplicaId(competingReplica)), "A future resolution must observe the received conflicting operation.")
         assertEquals(result, engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 4, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
         database.close()
     }
@@ -580,6 +591,61 @@ class PersistenceIntegrationTest {
         assertEquals(1L, commonContext.components.single().counter)
         assertEquals("Local title", events.get(EventId(eventId))?.title, "A semantic conflict must not partially overwrite Active State.")
         assertEquals(4L, receive.serverCursor(space))
+        database.close()
+    }
+
+    @Test fun `D8 merges PlanningProfile availability by weekday`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val profiles = RoomPlanningProfileRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, RoomEventRepository(database), RoomTaskRepository(database), profiles, RoomAcademicRepository(database), ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val profileId = id(88); val localReplica = id(89); val remoteReplica = id(90)
+        fun window(day: DayOfWeekImage, start: String) = CanonicalAvailabilityWindowImage(day, start, "${start.substring(0, 2).toInt() + 1}:00")
+        val baseConfig = PlanningProfileConfigurationImage.Configured("UTC", listOf(window(DayOfWeekImage.MONDAY, "09:00"), window(DayOfWeekImage.TUESDAY, "09:00")), "PT30M", "PT1H", "PT2H", AllDayEventPolicyImage.NON_BLOCKING)
+        val base = PlanningProfileImage(profileId, "Profile", baseConfig)
+        val local = base.copy(configuration = baseConfig.copy(weeklyAvailability = listOf(window(DayOfWeekImage.MONDAY, "10:00"), window(DayOfWeekImage.TUESDAY, "09:00"))))
+        val remote = base.copy(configuration = baseConfig.copy(weeklyAvailability = listOf(window(DayOfWeekImage.MONDAY, "09:00"), window(DayOfWeekImage.TUESDAY, "11:00"))))
+        val first = SyncOperation(id(91), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(PlanningProfilePut(null, base)))
+        val localUpdate = SyncOperation(id(92), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(localReplica, 2)), HlcSnapshot(2, 0, localReplica), MutationOrigin.User, listOf(PlanningProfilePut(base, local)))
+        val remoteUpdate = SyncOperation(id(93), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(remoteReplica, 1)), HlcSnapshot(3, 0, remoteReplica), MutationOrigin.User, listOf(PlanningProfilePut(base, remote)))
+        listOf(first to 1L, localUpdate to 2L, remoteUpdate to 3L).forEach { (operation, cursor) ->
+            assertEquals(SyncReceiveResult.Applied(MutationId(operation.mutationId)), engine.receive(DecryptedPayloadReceipt(space, operation.mutationId, cursor, SyncWireCodec.encodePayload(SyncPayloadV1(operation = operation)))))
+        }
+        val configuration = assertIs<dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Configured>(requireNotNull(profiles.get(PlanningProfileId(profileId))).configuration)
+        assertEquals(listOf("10:00", "11:00"), configuration.weeklyAvailability.map { it.start.toString() })
+        database.close()
+    }
+
+    @Test fun `D8 conflicts FocusBlock move versus concurrent delete and academic aggregate writes`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val tasks = RoomTaskRepository(database); val academics = RoomAcademicRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, RoomEventRepository(database), tasks, RoomPlanningProfileRepository(database), academics, ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val localReplica = id(94); val remoteReplica = id(95); val taskId = id(96); val blockId = id(97)
+        val block = FocusBlockImage(blockId, taskId, ZonedTimeRangeImage("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", "UTC"), FlexibilityImage.FLEXIBLE, PinStateImage.UNPINNED)
+        val first = SyncOperation(id(98), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(
+            TaskPut(null, TaskImage(taskId, "Task", TaskStatusImage.OPEN, TaskPriorityImage.NORMAL, TaskEffortImage(null, "PT0S", null), null)),
+            FocusBlockPut(null, block),
+        ))
+        val delete = SyncOperation(id(99), DvvSnapshot(emptyList(), DotSnapshot(remoteReplica, 1)), HlcSnapshot(2, 0, remoteReplica), MutationOrigin.User, listOf(FocusBlockDelete(block)))
+        assertEquals(SyncReceiveResult.Applied(MutationId(first.mutationId)), engine.receive(DecryptedPayloadReceipt(space, first.mutationId, 1, SyncWireCodec.encodePayload(SyncPayloadV1(operation = first)))))
+        val blockConflict = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, delete.mutationId, 2, SyncWireCodec.encodePayload(SyncPayloadV1(operation = delete)))))
+        assertEquals(SyncConflictKind.SEMANTIC, blockConflict.kind)
+        assertEquals(block, tasks.getFocusBlock(FocusBlockId(blockId))?.let { FocusBlockImage(blockId, it.taskId.value, ZonedTimeRangeImage(it.time.start.toString(), it.time.endExclusive.toString(), it.time.timeZone.id), FlexibilityImage.FLEXIBLE, PinStateImage.UNPINNED) })
+
+        val yearId = id(60); val yearReplica = id(61); val competingYearReplica = id(62)
+        val year = AcademicYearImage(yearId, "Year", "2026-01-01", "2027-01-01")
+        val initialYear = SyncOperation(id(63), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(yearReplica, 1)), HlcSnapshot(3, 0, yearReplica), MutationOrigin.User, listOf(AcademicYearPut(null, year)))
+        val otherYear = year.copy(name = "Other Year")
+        val competingYear = SyncOperation(id(64), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(competingYearReplica, 1)), HlcSnapshot(4, 0, competingYearReplica), MutationOrigin.User, listOf(AcademicYearPut(year, otherYear)))
+        assertEquals(SyncReceiveResult.Applied(MutationId(initialYear.mutationId)), engine.receive(DecryptedPayloadReceipt(space, initialYear.mutationId, 3, SyncWireCodec.encodePayload(SyncPayloadV1(operation = initialYear)))))
+        val academicConflict = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, competingYear.mutationId, 4, SyncWireCodec.encodePayload(SyncPayloadV1(operation = competingYear)))))
+        assertEquals(SyncConflictKind.SEMANTIC, academicConflict.kind)
+        assertEquals("Year", academics.getAcademicYear(AcademicYearId(yearId))?.name)
         database.close()
     }
 
