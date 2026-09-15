@@ -472,7 +472,7 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
-    @Test fun `D8 receive applies deduplicates quarantines and defers concurrent operations durably`() = runBlocking {
+    @Test fun `D8 receive applies deduplicates quarantines and merges concurrent disjoint operations`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
         val journal = RoomMutationJournalRepository(database)
@@ -505,9 +505,10 @@ class PersistenceIntegrationTest {
         assertEquals(ProtocolQuarantineReason.UNSUPPORTED_MUTATION, receive.quarantine(space, malformedId)?.reason)
 
         val concurrent = remoteEventOperation(id(64), id(65), id(66), "Concurrent")
-        assertEquals(SyncReceiveResult.RequiresSemanticMerge(MutationId(concurrent.mutationId)), engine.receive(DecryptedPayloadReceipt(space, concurrent.mutationId, 9, SyncWireCodec.encodePayload(SyncPayloadV1(operation = concurrent)))))
-        assertEquals(8L, receive.serverCursor(space))
-        assertEquals(null, journal.mutation(concurrent.mutationId))
+        assertEquals(SyncReceiveResult.Applied(MutationId(concurrent.mutationId)), engine.receive(DecryptedPayloadReceipt(space, concurrent.mutationId, 9, SyncWireCodec.encodePayload(SyncPayloadV1(operation = concurrent)))))
+        assertEquals("Concurrent", RoomEventRepository(database).get(EventId(id(66)))?.title)
+        assertEquals(9L, receive.serverCursor(space))
+        assertEquals(concurrent, journal.mutation(concurrent.mutationId)?.operation)
         database.close()
     }
 
@@ -517,26 +518,68 @@ class PersistenceIntegrationTest {
         val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
         val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, RoomEventRepository(database), RoomTaskRepository(database), RoomPlanningProfileRepository(database), RoomAcademicRepository(database), ids, MutationWallClock { 1 })
         val space = SyncSpaceId("personal-space")
-        val taskId = id(70); val logId = id(71); val replica = id(72)
+        val taskId = id(70); val logId = id(71); val eventId = id(76); val replica = id(72)
         val original = ZonedTimeRangeImage("2026-01-01T10:00:00Z", "2026-01-01T11:00:00Z", "UTC")
         val initial = SyncOperation(id(73), DvvSnapshot(emptyList(), DotSnapshot(replica, 1)), HlcSnapshot(1, 0, replica), MutationOrigin.User, listOf(
             TaskPut(null, TaskImage(taskId, "task", TaskStatusImage.OPEN, TaskPriorityImage.NORMAL, TaskEffortImage(null, "PT0S", null), null)),
             WorkLogAppend(WorkLogImage(logId, taskId, original)),
         ))
         assertEquals(SyncReceiveResult.Applied(MutationId(initial.mutationId)), engine.receive(DecryptedPayloadReceipt(space, initial.mutationId, 1, SyncWireCodec.encodePayload(SyncPayloadV1(operation = initial)))))
-        val competingReplica = id(75)
+        val coalescingReplica = id(75)
+        val equalAppend = SyncOperation(id(77), DvvSnapshot(emptyList(), DotSnapshot(coalescingReplica, 1)), HlcSnapshot(2, 0, coalescingReplica), MutationOrigin.User, listOf(
+            WorkLogAppend(WorkLogImage(logId, taskId, original)),
+        ))
+        assertEquals(SyncReceiveResult.Applied(MutationId(equalAppend.mutationId)), engine.receive(DecryptedPayloadReceipt(space, equalAppend.mutationId, 2, SyncWireCodec.encodePayload(SyncPayloadV1(operation = equalAppend)))))
+        val competingReplica = id(78)
         val divergent = SyncOperation(id(74), DvvSnapshot(emptyList(), DotSnapshot(competingReplica, 1)), HlcSnapshot(2, 0, competingReplica), MutationOrigin.User, listOf(
+            EventPut(null, EventImage(eventId, "must not partially apply", EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED)),
             WorkLogAppend(WorkLogImage(logId, taskId, ZonedTimeRangeImage("2026-01-01T12:00:00Z", "2026-01-01T13:00:00Z", "UTC"))),
         ))
-        val result = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 2, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
+        val result = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 3, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
         assertEquals(SyncConflictKind.INTEGRITY, result.kind)
         val preserved = requireNotNull(RoomTaskRepository(database).getWorkLog(WorkLogId(logId)))
         assertEquals(original.start, preserved.time.start.toString())
         assertEquals(original.endExclusive, preserved.time.endExclusive.toString())
         assertEquals(original.timeZone, preserved.time.timeZone.id)
-        assertEquals(2L, receive.serverCursor(space))
+        assertEquals(null, RoomEventRepository(database).get(EventId(eventId)), "A conflicting child blocks the entire MutationId group.")
+        assertEquals(3L, receive.serverCursor(space))
         assertEquals(SyncConflictKind.INTEGRITY, receive.conflict(result.conflictId)?.kind)
-        assertEquals(result, engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 3, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
+        assertEquals(result, engine.receive(DecryptedPayloadReceipt(space, divergent.mutationId, 4, SyncWireCodec.encodePayload(SyncPayloadV1(operation = divergent)))))
+        database.close()
+    }
+
+    @Test fun `D8 semantic merge preserves concurrent Event groups and persists same-group conflicts`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database); val receive = RoomSyncReceiveRepository(database)
+        val events = RoomEventRepository(database)
+        val engine = SyncEngine(RoomApplicationTransactionRunner(database), journal, journal, receive, events, RoomTaskRepository(database), RoomPlanningProfileRepository(database), RoomAcademicRepository(database), ids, MutationWallClock { 1 })
+        val space = SyncSpaceId("personal-space")
+        val eventId = id(80); val localReplica = id(81); val remoteReplica = id(82); val conflictReplica = id(83)
+        val baseImage = EventImage(eventId, "Base", EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED)
+        val initial = SyncOperation(id(84), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(EventPut(null, baseImage)))
+        val localTitle = baseImage.copy(title = "Local title")
+        val localUpdate = SyncOperation(id(85), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(localReplica, 2)), HlcSnapshot(2, 0, localReplica), MutationOrigin.User, listOf(EventPut(baseImage, localTitle)))
+        val remoteTime = baseImage.copy(time = EventTimeImage.AllDay(AllDayRangeImage("2026-01-03", "2026-01-04")))
+        val disjoint = SyncOperation(id(86), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(remoteReplica, 1)), HlcSnapshot(3, 0, remoteReplica), MutationOrigin.User, listOf(EventPut(baseImage, remoteTime)))
+        assertEquals(SyncReceiveResult.Applied(MutationId(initial.mutationId)), engine.receive(DecryptedPayloadReceipt(space, initial.mutationId, 1, SyncWireCodec.encodePayload(SyncPayloadV1(operation = initial)))))
+        assertEquals(SyncReceiveResult.Applied(MutationId(localUpdate.mutationId)), engine.receive(DecryptedPayloadReceipt(space, localUpdate.mutationId, 2, SyncWireCodec.encodePayload(SyncPayloadV1(operation = localUpdate)))))
+        assertEquals(SyncReceiveResult.Applied(MutationId(disjoint.mutationId)), engine.receive(DecryptedPayloadReceipt(space, disjoint.mutationId, 3, SyncWireCodec.encodePayload(SyncPayloadV1(operation = disjoint)))))
+        val merged = requireNotNull(events.get(EventId(eventId)))
+        assertEquals("Local title", merged.title)
+        assertEquals("2026-01-03", (merged.time as AllDayRange).startDate.toString())
+
+        val conflictingTitle = baseImage.copy(title = "Remote title")
+        val conflict = SyncOperation(id(87), DvvSnapshot(listOf(dev.agenticscheduler.sync.VersionComponent(localReplica, 1)), DotSnapshot(conflictReplica, 1)), HlcSnapshot(999_999, 0, conflictReplica), MutationOrigin.User, listOf(EventPut(baseImage, conflictingTitle)))
+        val result = assertIs<SyncReceiveResult.Conflicted>(engine.receive(DecryptedPayloadReceipt(space, conflict.mutationId, 4, SyncWireCodec.encodePayload(SyncPayloadV1(operation = conflict)))))
+        assertEquals(SyncConflictKind.SEMANTIC, result.kind)
+        val persisted = requireNotNull(receive.conflict(result.conflictId))
+        assertEquals(MutationId(localUpdate.mutationId), persisted.provisionalMutationId, "HLC never selects a semantic-conflict winner.")
+        val commonContext = requireNotNull(persisted.commonCausalContext)
+        assertEquals(localReplica, commonContext.components.single().replicaId)
+        assertEquals(1L, commonContext.components.single().counter)
+        assertEquals("Local title", events.get(EventId(eventId))?.title, "A semantic conflict must not partially overwrite Active State.")
+        assertEquals(4L, receive.serverCursor(space))
         database.close()
     }
 
