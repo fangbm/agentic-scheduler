@@ -476,6 +476,25 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
+    @Test fun `exported v5 schema migrates to v6 with opaque secure-key metadata only`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(5)
+        legacy.prepare("INSERT INTO sync_space_cursor (sync_space_id, server_cursor) VALUES (?, ?)").use { statement ->
+            statement.bindText(1, "personal-space"); statement.bindLong(2, 7); statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(6, emptyList())
+        migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_space_key_epoch'").use { statement ->
+            assertEquals(true, statement.step())
+        }
+        migrated.prepare("INSERT INTO sync_space_key_epoch (sync_space_id, accepted_key_epoch, content_key_secret_ref) VALUES (?, ?, ?)").use { statement ->
+            statement.bindText(1, "personal-space"); statement.bindLong(2, 7); statement.bindText(3, "secure://content-key/7"); statement.step()
+        }
+        migrated.prepare("SELECT accepted_key_epoch, content_key_secret_ref FROM sync_space_key_epoch WHERE sync_space_id = ?").use { statement ->
+            statement.bindText(1, "personal-space"); assertEquals(true, statement.step()); assertEquals(7L, statement.getLong(0)); assertEquals("secure://content-key/7", statement.getText(1))
+        }
+        migrated.close()
+    }
+
     @Test fun `D8 receive metadata persists cursor quarantine and structured conflict`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val repository = RoomSyncReceiveRepository(database)

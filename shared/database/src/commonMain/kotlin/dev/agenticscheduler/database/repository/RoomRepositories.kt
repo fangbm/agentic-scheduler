@@ -33,6 +33,10 @@ import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.database.record.ProtocolQuarantineRecord
 import dev.agenticscheduler.database.record.SyncConflictRecord
 import dev.agenticscheduler.database.record.SyncSpaceCursorRecord
+import dev.agenticscheduler.database.record.SyncSpaceKeyEpochRecord
+import dev.agenticscheduler.application.sync.SecretReference
+import dev.agenticscheduler.application.sync.SyncKeyMetadataRepository
+import dev.agenticscheduler.application.sync.SyncSpaceKeyEpochMetadata
 import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
 import dev.agenticscheduler.database.record.HandledReceiveDotRecord
 
@@ -187,6 +191,28 @@ class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) 
 
     override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> =
         database.syncReceiveDao().conflicts(syncSpaceId.value).map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+}
+
+/** D8-02b Room implementation; this table deliberately contains no raw secret bytes. */
+class RoomSyncKeyMetadataRepository(private val database: AgenticSchedulerDatabase) : SyncKeyMetadataRepository {
+    override suspend fun keyEpoch(syncSpaceId: SyncSpaceId): SyncSpaceKeyEpochMetadata? =
+        database.syncKeyMetadataDao().keyEpoch(syncSpaceId.value)?.let { record ->
+            SyncSpaceKeyEpochMetadata(
+                syncSpaceId = SyncSpaceId(record.syncSpaceId),
+                acceptedKeyEpoch = record.acceptedKeyEpoch,
+                contentKeyReference = SecretReference(record.contentKeySecretRef),
+            )
+        }
+
+    override suspend fun saveKeyEpoch(value: SyncSpaceKeyEpochMetadata) {
+        database.syncKeyMetadataDao().saveKeyEpoch(
+            SyncSpaceKeyEpochRecord(
+                syncSpaceId = value.syncSpaceId.value,
+                acceptedKeyEpoch = value.acceptedKeyEpoch,
+                contentKeySecretRef = value.contentKeyReference.value,
+            ),
+        )
+    }
 }
 
 private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))

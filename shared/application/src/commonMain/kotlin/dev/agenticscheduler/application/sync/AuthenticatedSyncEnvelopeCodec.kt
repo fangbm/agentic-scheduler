@@ -19,7 +19,14 @@ interface SyncPayloadAead {
 
 /** Key lookup owns platform secure storage. A missing key is not an authentication failure. */
 interface SyncPayloadKeyProvider {
-    fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadAead?
+    suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadKeyLookup
+}
+
+sealed interface SyncPayloadKeyLookup {
+    data class Available(val aead: SyncPayloadAead) : SyncPayloadKeyLookup
+    data object Missing : SyncPayloadKeyLookup
+    /** A local device that accepted N must not be downgraded by an N-1 envelope. */
+    data class RejectedRollback(val acceptedEpoch: Long) : SyncPayloadKeyLookup
 }
 
 /** Exact SYN-004 AAD identity. Its byte representation is frozen UTF-8 text. */
@@ -50,6 +57,7 @@ data class SyncEnvelopeBinding(
 sealed interface EncryptSyncPayloadResult {
     data class Encrypted(val envelope: EncryptedEnvelopeV1) : EncryptSyncPayloadResult
     data object MissingContentKey : EncryptSyncPayloadResult
+    data class RejectedKeyEpochRollback(val acceptedEpoch: Long) : EncryptSyncPayloadResult
     data class InvalidPayload(val reason: String) : EncryptSyncPayloadResult
 }
 
@@ -61,6 +69,7 @@ sealed interface DecryptSyncEnvelopeResult {
     ) : DecryptSyncEnvelopeResult
 
     data object MissingContentKey : DecryptSyncEnvelopeResult
+    data class RejectedKeyEpochRollback(val acceptedEpoch: Long) : DecryptSyncEnvelopeResult
     data object AuthenticationFailed : DecryptSyncEnvelopeResult
     data class UnsupportedEnvelopeVersion(val actual: Int?) : DecryptSyncEnvelopeResult
     data class InvalidEnvelope(val reason: String) : DecryptSyncEnvelopeResult
@@ -75,12 +84,15 @@ sealed interface DecryptSyncEnvelopeResult {
 class AuthenticatedSyncEnvelopeCodec(
     private val keys: SyncPayloadKeyProvider,
 ) {
-    fun encrypt(binding: SyncEnvelopeBinding, payload: SyncPayloadV1): EncryptSyncPayloadResult {
+    suspend fun encrypt(binding: SyncEnvelopeBinding, payload: SyncPayloadV1): EncryptSyncPayloadResult {
         if (payload.operation.mutationId != binding.mutationId) {
             return EncryptSyncPayloadResult.InvalidPayload("Outer and inner MutationId differ.")
         }
-        val key = keys.keyFor(binding.syncSpaceId, binding.keyEpoch)
-            ?: return EncryptSyncPayloadResult.MissingContentKey
+        val key = when (val lookup = keys.keyFor(binding.syncSpaceId, binding.keyEpoch)) {
+            is SyncPayloadKeyLookup.Available -> lookup.aead
+            SyncPayloadKeyLookup.Missing -> return EncryptSyncPayloadResult.MissingContentKey
+            is SyncPayloadKeyLookup.RejectedRollback -> return EncryptSyncPayloadResult.RejectedKeyEpochRollback(lookup.acceptedEpoch)
+        }
         val ciphertext = key.encryptToBase64Url(
             plaintextUtf8 = SyncWireCodec.encodePayload(payload),
             associatedDataUtf8 = binding.authenticatedAssociatedData(),
@@ -96,13 +108,13 @@ class AuthenticatedSyncEnvelopeCodec(
         )
     }
 
-    fun decrypt(encodedEnvelope: String): DecryptSyncEnvelopeResult = when (val decoded = SyncWireCodec.decodeEnvelope(encodedEnvelope)) {
+    suspend fun decrypt(encodedEnvelope: String): DecryptSyncEnvelopeResult = when (val decoded = SyncWireCodec.decodeEnvelope(encodedEnvelope)) {
         is EnvelopeDecodeResult.Supported -> decrypt(decoded.envelope)
         is EnvelopeDecodeResult.UnsupportedVersion -> DecryptSyncEnvelopeResult.UnsupportedEnvelopeVersion(decoded.actual)
         is EnvelopeDecodeResult.Invalid -> DecryptSyncEnvelopeResult.InvalidEnvelope(decoded.reason)
     }
 
-    fun decrypt(envelope: EncryptedEnvelopeV1): DecryptSyncEnvelopeResult {
+    suspend fun decrypt(envelope: EncryptedEnvelopeV1): DecryptSyncEnvelopeResult {
         val binding = try {
             SyncEnvelopeBinding.from(envelope)
         } catch (failure: IllegalArgumentException) {
@@ -111,8 +123,11 @@ class AuthenticatedSyncEnvelopeCodec(
         if (envelope.envelopeVersion != SyncWireCodec.ENVELOPE_VERSION) {
             return DecryptSyncEnvelopeResult.UnsupportedEnvelopeVersion(envelope.envelopeVersion)
         }
-        val key = keys.keyFor(binding.syncSpaceId, binding.keyEpoch)
-            ?: return DecryptSyncEnvelopeResult.MissingContentKey
+        val key = when (val lookup = keys.keyFor(binding.syncSpaceId, binding.keyEpoch)) {
+            is SyncPayloadKeyLookup.Available -> lookup.aead
+            SyncPayloadKeyLookup.Missing -> return DecryptSyncEnvelopeResult.MissingContentKey
+            is SyncPayloadKeyLookup.RejectedRollback -> return DecryptSyncEnvelopeResult.RejectedKeyEpochRollback(lookup.acceptedEpoch)
+        }
         val payloadJson = try {
             key.decryptFromBase64Url(envelope.ciphertextBase64Url, binding.authenticatedAssociatedData())
         } catch (_: Exception) {

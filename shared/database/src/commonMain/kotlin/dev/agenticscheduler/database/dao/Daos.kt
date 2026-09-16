@@ -54,3 +54,8 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM sync_conflict WHERE sync_space_id = :syncSpaceId ORDER BY conflict_id ASC") suspend fun conflicts(syncSpaceId: String): List<SyncConflictRecord>
     @Upsert suspend fun saveConflict(value: SyncConflictRecord)
 }
+
+@Dao interface SyncKeyMetadataDao {
+    @Query("SELECT * FROM sync_space_key_epoch WHERE sync_space_id = :syncSpaceId") suspend fun keyEpoch(syncSpaceId: String): SyncSpaceKeyEpochRecord?
+    @Upsert suspend fun saveKeyEpoch(value: SyncSpaceKeyEpochRecord)
+}
