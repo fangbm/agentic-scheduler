@@ -18,6 +18,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlinx.coroutines.runBlocking
 
 class AuthenticatedSyncEnvelopeCodecTest {
     private val binding = SyncEnvelopeBinding(
@@ -30,7 +31,7 @@ class AuthenticatedSyncEnvelopeCodecTest {
     private val codec = AuthenticatedSyncEnvelopeCodec(StaticKeys(binding.syncSpaceId, binding.keyEpoch, aead))
 
     @Test
-    fun `encrypts typed payload with frozen aad and decrypts it`() {
+    fun `encrypts typed payload with frozen aad and decrypts it`() = runBlocking {
         assertEquals(
             "agentic-scheduler-sync|v1|personal-space|00000000-0000-7000-8000-000000000001|desktop-device|7",
             binding.authenticatedAssociatedData(),
@@ -44,7 +45,7 @@ class AuthenticatedSyncEnvelopeCodecTest {
     }
 
     @Test
-    fun `rejects tampered ciphertext and every aad identity component`() {
+    fun `rejects tampered ciphertext and every aad identity component`() = runBlocking {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
         val alteredCiphertext = envelope.copy(ciphertextBase64Url = envelope.ciphertextBase64Url.dropLast(1) + "A")
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, codec.decrypt(alteredCiphertext))
@@ -57,7 +58,7 @@ class AuthenticatedSyncEnvelopeCodecTest {
     }
 
     @Test
-    fun `rejects wrong key and mismatched inner mutation id`() {
+    fun `rejects wrong key and mismatched inner mutation id`() = runBlocking {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
         val wrongKeyCodec = AuthenticatedSyncEnvelopeCodec(StaticKeys(binding.syncSpaceId, binding.keyEpoch, TinkSyncPayloadAead.generate()))
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, wrongKeyCodec.decrypt(envelope))
@@ -67,7 +68,7 @@ class AuthenticatedSyncEnvelopeCodecTest {
     }
 
     @Test
-    fun `leaves authenticated unknown inner protocol for SyncEngine durable quarantine`() {
+    fun `leaves authenticated unknown inner protocol for SyncEngine durable quarantine`() = runBlocking {
         val unknownPayload = """{"payloadVersion":2,"operation":{"ignored":true}}"""
         val plaintextCodec = AuthenticatedSyncEnvelopeCodec(PermissiveKeys(EchoAead(unknownPayload)))
         val envelope = EncryptedEnvelopeV1(
@@ -105,14 +106,16 @@ class AuthenticatedSyncEnvelopeCodecTest {
         private val keyEpoch: Long,
         private val key: SyncPayloadAead,
     ) : SyncPayloadKeyProvider {
-        override fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadAead? =
+        override suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadKeyLookup =
             key.takeIf { this.syncSpaceId == syncSpaceId && this.keyEpoch == keyEpoch }
+                ?.let(SyncPayloadKeyLookup::Available)
+                ?: SyncPayloadKeyLookup.Missing
     }
 
     private class PermissiveKeys(
         private val key: SyncPayloadAead,
     ) : SyncPayloadKeyProvider {
-        override fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadAead = key
+        override suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadKeyLookup = SyncPayloadKeyLookup.Available(key)
     }
 
     private class EchoAead(

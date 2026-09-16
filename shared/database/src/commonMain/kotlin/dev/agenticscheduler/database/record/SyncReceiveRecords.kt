@@ -40,3 +40,11 @@ data class HandledReceiveDotRecord(
     val counter: Long,
     @ColumnInfo(name = "mutation_id") val mutationId: String,
 )
+
+/** D8-02b stores only the opaque secure-store reference, never key material. */
+@Entity(tableName = "sync_space_key_epoch")
+data class SyncSpaceKeyEpochRecord(
+    @androidx.room3.PrimaryKey @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
+    @ColumnInfo(name = "accepted_key_epoch") val acceptedKeyEpoch: Long,
+    @ColumnInfo(name = "content_key_secret_ref") val contentKeySecretRef: String,
+)

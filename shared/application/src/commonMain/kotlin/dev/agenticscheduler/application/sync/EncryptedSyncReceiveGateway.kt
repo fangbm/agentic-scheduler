@@ -29,6 +29,7 @@ class EncryptedSyncReceiveGateway(
             )
             DecryptSyncEnvelopeResult.AuthenticationFailed -> EncryptedSyncReceiveResult.SecurityFailure.AuthenticationFailed
             DecryptSyncEnvelopeResult.MissingContentKey -> EncryptedSyncReceiveResult.SecurityFailure.MissingContentKey
+            is DecryptSyncEnvelopeResult.RejectedKeyEpochRollback -> EncryptedSyncReceiveResult.SecurityFailure.RejectedKeyEpochRollback(decrypted.acceptedEpoch)
             is DecryptSyncEnvelopeResult.UnsupportedEnvelopeVersion -> EncryptedSyncReceiveResult.ProtocolFailure.UnsupportedEnvelopeVersion(decrypted.actual)
             is DecryptSyncEnvelopeResult.InvalidEnvelope -> EncryptedSyncReceiveResult.ProtocolFailure.InvalidEnvelope(decrypted.reason)
         }
@@ -40,6 +41,7 @@ sealed interface EncryptedSyncReceiveResult {
     sealed interface SecurityFailure : EncryptedSyncReceiveResult {
         data object AuthenticationFailed : SecurityFailure
         data object MissingContentKey : SecurityFailure
+        data class RejectedKeyEpochRollback(val acceptedEpoch: Long) : SecurityFailure
     }
 
     sealed interface ProtocolFailure : EncryptedSyncReceiveResult {

@@ -1,0 +1,1801 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 6,
+    "identityHash": "54c5b361544f868fc4fc7f169a2685ec",
+    "entities": [
+      {
+        "tableName": "events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `flexibility` TEXT NOT NULL, `pin_state` TEXT NOT NULL, `time_kind` TEXT NOT NULL, `zoned_start_epoch_seconds` INTEGER, `zoned_start_nanoseconds` INTEGER, `zoned_end_epoch_seconds` INTEGER, `zoned_end_nanoseconds` INTEGER, `zoned_time_zone` TEXT, `all_day_start_date` TEXT, `all_day_end_date_exclusive` TEXT, `floating_start_local` TEXT, `floating_end_local_exclusive` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flexibility",
+            "columnName": "flexibility",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pinState",
+            "columnName": "pin_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeKind",
+            "columnName": "time_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "zonedStartSeconds",
+            "columnName": "zoned_start_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "zonedStartNanos",
+            "columnName": "zoned_start_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "zonedEndSeconds",
+            "columnName": "zoned_end_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "zonedEndNanos",
+            "columnName": "zoned_end_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "zonedTimeZone",
+            "columnName": "zoned_time_zone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "allDayStartDate",
+            "columnName": "all_day_start_date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "allDayEndDateExclusive",
+            "columnName": "all_day_end_date_exclusive",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "floatingStartLocal",
+            "columnName": "floating_start_local",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "floatingEndLocalExclusive",
+            "columnName": "floating_end_local_exclusive",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "tasks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `status` TEXT NOT NULL, `priority` TEXT NOT NULL, `effort_estimated_iso` TEXT, `effort_completed_iso` TEXT NOT NULL, `effort_remaining_iso` TEXT, `deadline_kind` TEXT, `deadline_exact_epoch_seconds` INTEGER, `deadline_exact_nanoseconds` INTEGER, `deadline_exact_time_zone` TEXT, `deadline_date` TEXT, `deadline_policy` TEXT, `overflow_policy` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "priority",
+            "columnName": "priority",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "effortEstimatedIso",
+            "columnName": "effort_estimated_iso",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "effortCompletedIso",
+            "columnName": "effort_completed_iso",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "effortRemainingIso",
+            "columnName": "effort_remaining_iso",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deadlineKind",
+            "columnName": "deadline_kind",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deadlineExactSeconds",
+            "columnName": "deadline_exact_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "deadlineExactNanos",
+            "columnName": "deadline_exact_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "deadlineTimeZone",
+            "columnName": "deadline_exact_time_zone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deadlineDate",
+            "columnName": "deadline_date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "deadlinePolicy",
+            "columnName": "deadline_policy",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "overflowPolicy",
+            "columnName": "overflow_policy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "focus_blocks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `task_id` TEXT NOT NULL, `start_epoch_seconds` INTEGER NOT NULL, `start_nanoseconds` INTEGER NOT NULL, `end_epoch_seconds` INTEGER NOT NULL, `end_nanoseconds` INTEGER NOT NULL, `time_zone` TEXT NOT NULL, `flexibility` TEXT NOT NULL, `pin_state` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`task_id`) REFERENCES `tasks`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "task_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startSeconds",
+            "columnName": "start_epoch_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startNanos",
+            "columnName": "start_nanoseconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endSeconds",
+            "columnName": "end_epoch_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endNanos",
+            "columnName": "end_nanoseconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeZone",
+            "columnName": "time_zone",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flexibility",
+            "columnName": "flexibility",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pinState",
+            "columnName": "pin_state",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_focus_blocks_task_id",
+            "unique": false,
+            "columnNames": [
+              "task_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_focus_blocks_task_id` ON `${TABLE_NAME}` (`task_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "tasks",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "task_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "work_logs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `task_id` TEXT NOT NULL, `start_epoch_seconds` INTEGER NOT NULL, `start_nanoseconds` INTEGER NOT NULL, `end_epoch_seconds` INTEGER NOT NULL, `end_nanoseconds` INTEGER NOT NULL, `time_zone` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`task_id`) REFERENCES `tasks`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "task_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startSeconds",
+            "columnName": "start_epoch_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startNanos",
+            "columnName": "start_nanoseconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endSeconds",
+            "columnName": "end_epoch_seconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endNanos",
+            "columnName": "end_nanoseconds",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeZone",
+            "columnName": "time_zone",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_work_logs_task_id",
+            "unique": false,
+            "columnNames": [
+              "task_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_work_logs_task_id` ON `${TABLE_NAME}` (`task_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "tasks",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "task_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "task_dependencies",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `prerequisite_task_id` TEXT NOT NULL, `dependent_task_id` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`prerequisite_task_id`) REFERENCES `tasks`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION , FOREIGN KEY(`dependent_task_id`) REFERENCES `tasks`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "prerequisiteTaskId",
+            "columnName": "prerequisite_task_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dependentTaskId",
+            "columnName": "dependent_task_id",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_task_dependencies_prerequisite_task_id",
+            "unique": false,
+            "columnNames": [
+              "prerequisite_task_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_task_dependencies_prerequisite_task_id` ON `${TABLE_NAME}` (`prerequisite_task_id`)"
+          },
+          {
+            "name": "index_task_dependencies_dependent_task_id",
+            "unique": false,
+            "columnNames": [
+              "dependent_task_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_task_dependencies_dependent_task_id` ON `${TABLE_NAME}` (`dependent_task_id`)"
+          },
+          {
+            "name": "index_task_dependencies_prerequisite_task_id_dependent_task_id",
+            "unique": true,
+            "columnNames": [
+              "prerequisite_task_id",
+              "dependent_task_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_task_dependencies_prerequisite_task_id_dependent_task_id` ON `${TABLE_NAME}` (`prerequisite_task_id`, `dependent_task_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "tasks",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "prerequisite_task_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "tasks",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "dependent_task_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "planning_profiles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `configuration_state` TEXT NOT NULL DEFAULT 'UNCONFIGURED', `time_zone_id` TEXT, `minimum_focus_duration_iso` TEXT, `preferred_focus_duration_iso` TEXT, `maximum_focus_duration_iso` TEXT, `all_day_event_policy` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configurationState",
+            "columnName": "configuration_state",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'UNCONFIGURED'"
+          },
+          {
+            "fieldPath": "timeZoneId",
+            "columnName": "time_zone_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "minimumFocusDurationIso",
+            "columnName": "minimum_focus_duration_iso",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "preferredFocusDurationIso",
+            "columnName": "preferred_focus_duration_iso",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "maximumFocusDurationIso",
+            "columnName": "maximum_focus_duration_iso",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "allDayEventPolicy",
+            "columnName": "all_day_event_policy",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "planning_profile_availability_windows",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`planning_profile_id` TEXT NOT NULL, `day_of_week` TEXT NOT NULL, `start_local_time` TEXT NOT NULL, `end_local_time_exclusive` TEXT NOT NULL, PRIMARY KEY(`planning_profile_id`, `day_of_week`, `start_local_time`, `end_local_time_exclusive`), FOREIGN KEY(`planning_profile_id`) REFERENCES `planning_profiles`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "planningProfileId",
+            "columnName": "planning_profile_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayOfWeek",
+            "columnName": "day_of_week",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startLocalTime",
+            "columnName": "start_local_time",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endLocalTimeExclusive",
+            "columnName": "end_local_time_exclusive",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "planning_profile_id",
+            "day_of_week",
+            "start_local_time",
+            "end_local_time_exclusive"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_planning_profile_availability_windows_planning_profile_id",
+            "unique": false,
+            "columnNames": [
+              "planning_profile_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_planning_profile_availability_windows_planning_profile_id` ON `${TABLE_NAME}` (`planning_profile_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "planning_profiles",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "planning_profile_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "academic_years",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `start_date` TEXT NOT NULL, `end_date_exclusive` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startDate",
+            "columnName": "start_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endDateExclusive",
+            "columnName": "end_date_exclusive",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "semesters",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `academic_year_id` TEXT NOT NULL, `name` TEXT NOT NULL, `start_date` TEXT NOT NULL, `end_date_exclusive` TEXT NOT NULL, `time_zone` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`academic_year_id`) REFERENCES `academic_years`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "academicYearId",
+            "columnName": "academic_year_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startDate",
+            "columnName": "start_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endDateExclusive",
+            "columnName": "end_date_exclusive",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeZone",
+            "columnName": "time_zone",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_semesters_academic_year_id",
+            "unique": false,
+            "columnNames": [
+              "academic_year_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_semesters_academic_year_id` ON `${TABLE_NAME}` (`academic_year_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "academic_years",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "academic_year_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "academic_weeks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`semester_id` TEXT NOT NULL, `week_number` INTEGER NOT NULL, `start_date` TEXT NOT NULL, `end_date_exclusive` TEXT NOT NULL, PRIMARY KEY(`semester_id`, `week_number`), FOREIGN KEY(`semester_id`) REFERENCES `semesters`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "semesterId",
+            "columnName": "semester_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weekNumber",
+            "columnName": "week_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startDate",
+            "columnName": "start_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endDateExclusive",
+            "columnName": "end_date_exclusive",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "semester_id",
+            "week_number"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_academic_weeks_semester_id",
+            "unique": false,
+            "columnNames": [
+              "semester_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_academic_weeks_semester_id` ON `${TABLE_NAME}` (`semester_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "semesters",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "semester_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "courses",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `semester_id` TEXT NOT NULL, `name` TEXT NOT NULL, `code` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`semester_id`) REFERENCES `semesters`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semesterId",
+            "columnName": "semester_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "code",
+            "columnName": "code",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_courses_semester_id",
+            "unique": false,
+            "columnNames": [
+              "semester_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_courses_semester_id` ON `${TABLE_NAME}` (`semester_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "semesters",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "semester_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "period_templates",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "academic_periods",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`period_template_id` TEXT NOT NULL, `period_number` INTEGER NOT NULL, `start_local_time` TEXT NOT NULL, `end_local_time_exclusive` TEXT NOT NULL, PRIMARY KEY(`period_template_id`, `period_number`), FOREIGN KEY(`period_template_id`) REFERENCES `period_templates`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "periodTemplateId",
+            "columnName": "period_template_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "periodNumber",
+            "columnName": "period_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startLocalTime",
+            "columnName": "start_local_time",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endLocalTimeExclusive",
+            "columnName": "end_local_time_exclusive",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "period_template_id",
+            "period_number"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_academic_periods_period_template_id",
+            "unique": false,
+            "columnNames": [
+              "period_template_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_academic_periods_period_template_id` ON `${TABLE_NAME}` (`period_template_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "period_templates",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "period_template_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "course_schedule_rules",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `course_id` TEXT NOT NULL, `day_of_week` TEXT NOT NULL, `room` TEXT, `time_kind` TEXT NOT NULL, `clock_start_local_time` TEXT, `clock_end_local_time_exclusive` TEXT, `period_template_id` TEXT, `start_period` INTEGER, `end_period_inclusive` INTEGER, PRIMARY KEY(`id`), FOREIGN KEY(`course_id`) REFERENCES `courses`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION , FOREIGN KEY(`period_template_id`) REFERENCES `period_templates`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseId",
+            "columnName": "course_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dayOfWeek",
+            "columnName": "day_of_week",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "room",
+            "columnName": "room",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "timeKind",
+            "columnName": "time_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "clockStart",
+            "columnName": "clock_start_local_time",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "clockEndExclusive",
+            "columnName": "clock_end_local_time_exclusive",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "periodTemplateId",
+            "columnName": "period_template_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startPeriod",
+            "columnName": "start_period",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endPeriodInclusive",
+            "columnName": "end_period_inclusive",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_course_schedule_rules_course_id",
+            "unique": false,
+            "columnNames": [
+              "course_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_course_schedule_rules_course_id` ON `${TABLE_NAME}` (`course_id`)"
+          },
+          {
+            "name": "index_course_schedule_rules_period_template_id",
+            "unique": false,
+            "columnNames": [
+              "period_template_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_course_schedule_rules_period_template_id` ON `${TABLE_NAME}` (`period_template_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "courses",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "course_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "period_templates",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "period_template_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "course_rule_teaching_weeks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`schedule_rule_id` TEXT NOT NULL, `week_number` INTEGER NOT NULL, PRIMARY KEY(`schedule_rule_id`, `week_number`), FOREIGN KEY(`schedule_rule_id`) REFERENCES `course_schedule_rules`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "scheduleRuleId",
+            "columnName": "schedule_rule_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "weekNumber",
+            "columnName": "week_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "schedule_rule_id",
+            "week_number"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_course_rule_teaching_weeks_schedule_rule_id",
+            "unique": false,
+            "columnNames": [
+              "schedule_rule_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_course_rule_teaching_weeks_schedule_rule_id` ON `${TABLE_NAME}` (`schedule_rule_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "course_schedule_rules",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "schedule_rule_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "academic_holidays",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `semester_id` TEXT NOT NULL, `name` TEXT NOT NULL, `start_date` TEXT NOT NULL, `end_date_exclusive` TEXT NOT NULL, `teaching_effect` TEXT NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`semester_id`) REFERENCES `semesters`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semesterId",
+            "columnName": "semester_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startDate",
+            "columnName": "start_date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endDateExclusive",
+            "columnName": "end_date_exclusive",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "teachingEffect",
+            "columnName": "teaching_effect",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_academic_holidays_semester_id",
+            "unique": false,
+            "columnNames": [
+              "semester_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_academic_holidays_semester_id` ON `${TABLE_NAME}` (`semester_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "semesters",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "semester_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "course_occurrence_exceptions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `schedule_rule_id` TEXT NOT NULL, `academic_week_number` INTEGER NOT NULL, `disposition` TEXT NOT NULL, `time_override_start_epoch_seconds` INTEGER, `time_override_start_nanoseconds` INTEGER, `time_override_end_epoch_seconds` INTEGER, `time_override_end_nanoseconds` INTEGER, `time_override_time_zone` TEXT, `room_override_kind` TEXT NOT NULL, `room_override_value` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`schedule_rule_id`) REFERENCES `course_schedule_rules`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scheduleRuleId",
+            "columnName": "schedule_rule_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "academicWeekNumber",
+            "columnName": "academic_week_number",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "disposition",
+            "columnName": "disposition",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startSeconds",
+            "columnName": "time_override_start_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "startNanos",
+            "columnName": "time_override_start_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endSeconds",
+            "columnName": "time_override_end_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endNanos",
+            "columnName": "time_override_end_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "timeZone",
+            "columnName": "time_override_time_zone",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "roomOverrideKind",
+            "columnName": "room_override_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "roomOverrideValue",
+            "columnName": "room_override_value",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_course_occurrence_exceptions_schedule_rule_id",
+            "unique": false,
+            "columnNames": [
+              "schedule_rule_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_course_occurrence_exceptions_schedule_rule_id` ON `${TABLE_NAME}` (`schedule_rule_id`)"
+          },
+          {
+            "name": "index_course_occurrence_exceptions_schedule_rule_id_academic_week_number",
+            "unique": true,
+            "columnNames": [
+              "schedule_rule_id",
+              "academic_week_number"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_course_occurrence_exceptions_schedule_rule_id_academic_week_number` ON `${TABLE_NAME}` (`schedule_rule_id`, `academic_week_number`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "course_schedule_rules",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "schedule_rule_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "exams",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `semester_id` TEXT NOT NULL, `course_id` TEXT, `title` TEXT NOT NULL, `schedule_kind` TEXT NOT NULL, `schedule_date` TEXT, `exact_start_epoch_seconds` INTEGER, `exact_start_nanoseconds` INTEGER, `exact_end_epoch_seconds` INTEGER, `exact_end_nanoseconds` INTEGER, `exact_time_zone` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`semester_id`) REFERENCES `semesters`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION , FOREIGN KEY(`course_id`) REFERENCES `courses`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "semesterId",
+            "columnName": "semester_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "courseId",
+            "columnName": "course_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scheduleKind",
+            "columnName": "schedule_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scheduleDate",
+            "columnName": "schedule_date",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "startSeconds",
+            "columnName": "exact_start_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "startNanos",
+            "columnName": "exact_start_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endSeconds",
+            "columnName": "exact_end_epoch_seconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "endNanos",
+            "columnName": "exact_end_nanoseconds",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "timeZone",
+            "columnName": "exact_time_zone",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_exams_semester_id",
+            "unique": false,
+            "columnNames": [
+              "semester_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_exams_semester_id` ON `${TABLE_NAME}` (`semester_id`)"
+          },
+          {
+            "name": "index_exams_course_id",
+            "unique": false,
+            "columnNames": [
+              "course_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_exams_course_id` ON `${TABLE_NAME}` (`course_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "semesters",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "semester_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "courses",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "course_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "mutation_record",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mutation_id` TEXT NOT NULL, `origin` TEXT NOT NULL, `dvv_json` TEXT NOT NULL, `hlc_physical_millis` INTEGER NOT NULL, `hlc_logical` INTEGER NOT NULL, `hlc_replica_id` TEXT NOT NULL, `committed_at_epoch_millis` INTEGER NOT NULL, PRIMARY KEY(`mutation_id`))",
+        "fields": [
+          {
+            "fieldPath": "mutationId",
+            "columnName": "mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "origin",
+            "columnName": "origin",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dvvJson",
+            "columnName": "dvv_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hlcPhysicalMillis",
+            "columnName": "hlc_physical_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hlcLogical",
+            "columnName": "hlc_logical",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hlcReplicaId",
+            "columnName": "hlc_replica_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "committedAtEpochMillis",
+            "columnName": "committed_at_epoch_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "mutation_id"
+          ]
+        }
+      },
+      {
+        "tableName": "change_log_entry",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`entry_id` TEXT NOT NULL, `mutation_id` TEXT NOT NULL, `ordinal` INTEGER NOT NULL, `entity_kind` TEXT NOT NULL, `entity_id` TEXT NOT NULL, `operation_kind` TEXT NOT NULL, `before_image_json` TEXT, `after_image_json` TEXT, PRIMARY KEY(`mutation_id`, `ordinal`))",
+        "fields": [
+          {
+            "fieldPath": "entryId",
+            "columnName": "entry_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mutationId",
+            "columnName": "mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ordinal",
+            "columnName": "ordinal",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "entityKind",
+            "columnName": "entity_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "entityId",
+            "columnName": "entity_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationKind",
+            "columnName": "operation_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "beforeImageJson",
+            "columnName": "before_image_json",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "afterImageJson",
+            "columnName": "after_image_json",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "mutation_id",
+            "ordinal"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_change_log_entry_entity_kind_entity_id",
+            "unique": false,
+            "columnNames": [
+              "entity_kind",
+              "entity_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_change_log_entry_entity_kind_entity_id` ON `${TABLE_NAME}` (`entity_kind`, `entity_id`)"
+          },
+          {
+            "name": "index_change_log_entry_entry_id",
+            "unique": true,
+            "columnNames": [
+              "entry_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_change_log_entry_entry_id` ON `${TABLE_NAME}` (`entry_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "sync_operation_journal",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`mutation_id` TEXT NOT NULL, `codec_version` INTEGER NOT NULL, `operation_json` TEXT NOT NULL, PRIMARY KEY(`mutation_id`))",
+        "fields": [
+          {
+            "fieldPath": "mutationId",
+            "columnName": "mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "codecVersion",
+            "columnName": "codec_version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationJson",
+            "columnName": "operation_json",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "mutation_id"
+          ]
+        }
+      },
+      {
+        "tableName": "replica_causal_state",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`state_key` TEXT NOT NULL, `replica_id` TEXT NOT NULL, `last_counter` INTEGER NOT NULL, `observed_context_json` TEXT NOT NULL, `last_hlc_physical_millis` INTEGER NOT NULL, `last_hlc_logical` INTEGER NOT NULL, `last_hlc_replica_id` TEXT NOT NULL, PRIMARY KEY(`state_key`))",
+        "fields": [
+          {
+            "fieldPath": "stateKey",
+            "columnName": "state_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "replicaId",
+            "columnName": "replica_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastCounter",
+            "columnName": "last_counter",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observedContextJson",
+            "columnName": "observed_context_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastHlcPhysicalMillis",
+            "columnName": "last_hlc_physical_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastHlcLogical",
+            "columnName": "last_hlc_logical",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastHlcReplicaId",
+            "columnName": "last_hlc_replica_id",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "state_key"
+          ]
+        }
+      },
+      {
+        "tableName": "focus_block_tombstone",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`focus_block_id` TEXT NOT NULL, `deletion_mutation_id` TEXT NOT NULL, `dvv_json` TEXT NOT NULL, `hlc_physical_millis` INTEGER NOT NULL, `hlc_logical` INTEGER NOT NULL, `hlc_replica_id` TEXT NOT NULL, PRIMARY KEY(`focus_block_id`))",
+        "fields": [
+          {
+            "fieldPath": "focusBlockId",
+            "columnName": "focus_block_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deletionMutationId",
+            "columnName": "deletion_mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dvvJson",
+            "columnName": "dvv_json",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hlcPhysicalMillis",
+            "columnName": "hlc_physical_millis",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hlcLogical",
+            "columnName": "hlc_logical",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hlcReplicaId",
+            "columnName": "hlc_replica_id",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "focus_block_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_focus_block_tombstone_deletion_mutation_id",
+            "unique": false,
+            "columnNames": [
+              "deletion_mutation_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_focus_block_tombstone_deletion_mutation_id` ON `${TABLE_NAME}` (`deletion_mutation_id`)"
+          }
+        ]
+      },
+      {
+        "tableName": "sync_space_cursor",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sync_space_id` TEXT NOT NULL, `server_cursor` INTEGER NOT NULL, PRIMARY KEY(`sync_space_id`))",
+        "fields": [
+          {
+            "fieldPath": "syncSpaceId",
+            "columnName": "sync_space_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverCursor",
+            "columnName": "server_cursor",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sync_space_id"
+          ]
+        }
+      },
+      {
+        "tableName": "protocol_quarantine",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sync_space_id` TEXT NOT NULL, `mutation_id` TEXT NOT NULL, `server_cursor` INTEGER NOT NULL, `reason` TEXT NOT NULL, `detail` TEXT, PRIMARY KEY(`sync_space_id`, `mutation_id`))",
+        "fields": [
+          {
+            "fieldPath": "syncSpaceId",
+            "columnName": "sync_space_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mutationId",
+            "columnName": "mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverCursor",
+            "columnName": "server_cursor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "reason",
+            "columnName": "reason",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "detail",
+            "columnName": "detail",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sync_space_id",
+            "mutation_id"
+          ]
+        }
+      },
+      {
+        "tableName": "sync_conflict",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`conflict_id` TEXT NOT NULL, `sync_space_id` TEXT NOT NULL, `conflict_json` TEXT NOT NULL, PRIMARY KEY(`conflict_id`))",
+        "fields": [
+          {
+            "fieldPath": "conflictId",
+            "columnName": "conflict_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncSpaceId",
+            "columnName": "sync_space_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "conflictJson",
+            "columnName": "conflict_json",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "conflict_id"
+          ]
+        }
+      },
+      {
+        "tableName": "pending_sync_receive",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sync_space_id` TEXT NOT NULL, `mutation_id` TEXT NOT NULL, `server_cursor` INTEGER NOT NULL, `payload_json` TEXT NOT NULL, PRIMARY KEY(`sync_space_id`, `mutation_id`))",
+        "fields": [
+          {
+            "fieldPath": "syncSpaceId",
+            "columnName": "sync_space_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mutationId",
+            "columnName": "mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serverCursor",
+            "columnName": "server_cursor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "payloadJson",
+            "columnName": "payload_json",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sync_space_id",
+            "mutation_id"
+          ]
+        }
+      },
+      {
+        "tableName": "handled_receive_dot",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sync_space_id` TEXT NOT NULL, `replica_id` TEXT NOT NULL, `counter` INTEGER NOT NULL, `mutation_id` TEXT NOT NULL, PRIMARY KEY(`sync_space_id`, `replica_id`, `counter`))",
+        "fields": [
+          {
+            "fieldPath": "syncSpaceId",
+            "columnName": "sync_space_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "replicaId",
+            "columnName": "replica_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "counter",
+            "columnName": "counter",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mutationId",
+            "columnName": "mutation_id",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sync_space_id",
+            "replica_id",
+            "counter"
+          ]
+        }
+      },
+      {
+        "tableName": "sync_space_key_epoch",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sync_space_id` TEXT NOT NULL, `accepted_key_epoch` INTEGER NOT NULL, `content_key_secret_ref` TEXT NOT NULL, PRIMARY KEY(`sync_space_id`))",
+        "fields": [
+          {
+            "fieldPath": "syncSpaceId",
+            "columnName": "sync_space_id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedKeyEpoch",
+            "columnName": "accepted_key_epoch",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "contentKeySecretRef",
+            "columnName": "content_key_secret_ref",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sync_space_id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '54c5b361544f868fc4fc7f169a2685ec')"
+    ]
+  }
+}
