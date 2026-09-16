@@ -37,12 +37,14 @@ class SecureKeyLifecycleTest {
             listOf(active, historical).firstOrNull { it.syncSpaceId == syncSpaceId && it.keyEpoch == keyEpoch }
         override suspend fun historicalDecryptKeys(syncSpaceId: SyncSpaceId): List<SyncSpaceContentKeyMetadata> = listOf(historical).takeIf { syncSpaceId == space }.orEmpty()
         override suspend fun installNewEpoch(syncSpaceId: SyncSpaceId, keyEpoch: Long, contentKeyReference: SecretReference): InstallSyncSpaceKeyEpochResult = error("Not used")
+        override suspend fun installKeyPackage(syncSpaceId: SyncSpaceId, activeEpoch: Long, activeReference: SecretReference, historicalReferences: List<SyncKeyPackageKeyReference>): InstallSyncSpaceKeyEpochResult = error("Not used")
     }
 
     private class MemoryKeyMaterial(
         private val expectedReferences: Set<SecretReference>,
         private val key: SyncPayloadAead,
     ) : PlatformKeyMaterialStore {
+        override suspend fun importContentKey(material: ImportedContentKeyMaterial): SecretReference = error("Not used")
         override suspend fun contentAead(reference: SecretReference): SyncPayloadAead? = key.takeIf { reference in expectedReferences }
         override suspend fun delete(reference: SecretReference) = Unit
     }

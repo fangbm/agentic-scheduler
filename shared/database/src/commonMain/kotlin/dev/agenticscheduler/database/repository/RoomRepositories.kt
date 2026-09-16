@@ -39,6 +39,7 @@ import dev.agenticscheduler.application.sync.SyncSpaceKeyState
 import dev.agenticscheduler.application.sync.SyncSpaceContentKeyMetadata
 import dev.agenticscheduler.application.sync.SyncSpaceContentKeyUsage
 import dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult
+import dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference
 import dev.agenticscheduler.database.record.SyncSpaceKeyStateRecord
 import dev.agenticscheduler.database.record.SyncSpaceContentKeyRecord
 import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
@@ -244,6 +245,27 @@ class RoomSyncKeyMetadataRepository(private val database: AgenticSchedulerDataba
                 InstallSyncSpaceKeyEpochResult.Advanced
             }
         }
+    }
+
+    override suspend fun installKeyPackage(syncSpaceId: SyncSpaceId, activeEpoch: Long, activeReference: SecretReference, historicalReferences: List<SyncKeyPackageKeyReference>): InstallSyncSpaceKeyEpochResult = database.withWriteTransaction {
+        require(historicalReferences.map(SyncKeyPackageKeyReference::keyEpoch).distinct().size == historicalReferences.size)
+        require(historicalReferences.all { it.keyEpoch < activeEpoch })
+        migrateLegacyState(syncSpaceId)
+        val state = database.syncKeyRingDao().state(syncSpaceId.value)
+        if (state != null && activeEpoch < state.activeEncryptionEpoch) return@withWriteTransaction InstallSyncSpaceKeyEpochResult.RejectedRollback(state.activeEncryptionEpoch)
+        if (state != null && activeEpoch == state.activeEncryptionEpoch) {
+            val active = requireNotNull(database.syncKeyRingDao().key(syncSpaceId.value, activeEpoch))
+            return@withWriteTransaction if (active.contentKeySecretRef == activeReference.value) InstallSyncSpaceKeyEpochResult.Idempotent else InstallSyncSpaceKeyEpochResult.IntegrityError
+        }
+        historicalReferences.forEach { historical ->
+            val existing = database.syncKeyRingDao().key(syncSpaceId.value, historical.keyEpoch)
+            if (existing != null && existing.contentKeySecretRef != historical.reference.value) return@withWriteTransaction InstallSyncSpaceKeyEpochResult.IntegrityError
+        }
+        database.syncKeyRingDao().demoteActive(syncSpaceId.value)
+        historicalReferences.forEach { historical -> database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, historical.keyEpoch, historical.reference.value, SyncSpaceContentKeyUsage.DECRYPT_ONLY.name)) }
+        database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, activeEpoch, activeReference.value, SyncSpaceContentKeyUsage.ACTIVE.name))
+        database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, activeEpoch))
+        if (state == null) InstallSyncSpaceKeyEpochResult.Installed else InstallSyncSpaceKeyEpochResult.Advanced
     }
 
     /** Converts the unmerged v6 single-key record once, preserving it as the active key. */
