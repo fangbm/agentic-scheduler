@@ -59,3 +59,12 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM sync_space_key_epoch WHERE sync_space_id = :syncSpaceId") suspend fun keyEpoch(syncSpaceId: String): SyncSpaceKeyEpochRecord?
     @Upsert suspend fun saveKeyEpoch(value: SyncSpaceKeyEpochRecord)
 }
+
+@Dao interface SyncKeyRingDao {
+    @Query("SELECT * FROM sync_space_key_state WHERE sync_space_id = :syncSpaceId") suspend fun state(syncSpaceId: String): SyncSpaceKeyStateRecord?
+    @Query("SELECT * FROM sync_space_content_key WHERE sync_space_id = :syncSpaceId AND key_epoch = :keyEpoch") suspend fun key(syncSpaceId: String, keyEpoch: Long): SyncSpaceContentKeyRecord?
+    @Query("SELECT * FROM sync_space_content_key WHERE sync_space_id = :syncSpaceId AND usage = 'DECRYPT_ONLY' ORDER BY key_epoch ASC") suspend fun historicalKeys(syncSpaceId: String): List<SyncSpaceContentKeyRecord>
+    @Query("UPDATE sync_space_content_key SET usage = 'DECRYPT_ONLY' WHERE sync_space_id = :syncSpaceId AND usage = 'ACTIVE'") suspend fun demoteActive(syncSpaceId: String)
+    @Upsert suspend fun saveState(value: SyncSpaceKeyStateRecord)
+    @Upsert suspend fun saveKey(value: SyncSpaceContentKeyRecord)
+}

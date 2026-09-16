@@ -143,7 +143,43 @@ A Recovery Secret is generated once on first-account setup, displayed/exportable
 
 Recovery Secret encoding is a lossless human-copyable base64url/grouped representation with checksum; it remains 256 bits of random entropy. Do not replace it with a user password or low-entropy PIN.
 
-Key epochs are monotonic integers. A device that has observed epoch `N` rejects a key package/envelope that attempts to move it to an older epoch.
+Key epochs are monotonic integers. A device that has observed epoch `N` rejects a **key-state/package transition** that attempts to move it to an older epoch.
+
+### SYN-005A — D8 v1 active epoch and historical decrypt ring (approved amendment)
+
+The active encryption epoch and historical decryption keys are distinct:
+
+```text
+new outgoing payloads       -> activeEncryptionEpoch only
+installed key epoch < active -> DECRYPT_ONLY
+incoming historical envelope -> decrypt normally when its retained key exists
+incoming epoch > active      -> missing future key; do not advance receive cursor
+```
+
+An old authenticated envelope is not a key-state rollback. D8 v1 retains all
+legitimately installed historical SyncSpace keys as `DECRYPT_ONLY` and performs
+no historical-key GC. Future retention/GC requires an explicit causal-stability,
+snapshot and recovery decision.
+
+Pairing and recovery packages carry the active key plus the historical
+decrypt-only key ring required to consume retained server envelopes. Revocation
+rotates only future encryption material: it does not promise to erase material
+the revoked device legitimately possessed before rotation.
+
+Installing an epoch is one durable atomic operation:
+
+```text
+no current state                              -> INSTALL
+new epoch > active epoch                      -> ADVANCED
+same epoch + same key identity                -> IDEMPOTENT
+same epoch + different key identity           -> INTEGRITY_ERROR
+new epoch < active epoch                      -> REJECTED_ROLLBACK
+```
+
+The local durable model is a `sync_space_key_state` active epoch plus one
+`sync_space_content_key` row per epoch. Rows contain only opaque secure-store
+references and an `ACTIVE` or `DECRYPT_ONLY` usage marker; they never contain
+key bytes.
 
 A malicious server can always withhold newer data from a newly recovered device; D8 does not claim global freshness/transparency guarantees against a server that suppresses all newer state.
 

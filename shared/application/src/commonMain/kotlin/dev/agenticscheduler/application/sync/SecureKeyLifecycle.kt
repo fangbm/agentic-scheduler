@@ -23,17 +23,36 @@ interface PlatformSecretStore {
 }
 
 /** Durable non-secret key metadata. A key epoch is monotonic for one SyncSpace. */
-data class SyncSpaceKeyEpochMetadata(
+enum class SyncSpaceContentKeyUsage { ACTIVE, DECRYPT_ONLY }
+
+data class SyncSpaceContentKeyMetadata(
     val syncSpaceId: SyncSpaceId,
-    val acceptedKeyEpoch: Long,
+    val keyEpoch: Long,
     val contentKeyReference: SecretReference,
+    val usage: SyncSpaceContentKeyUsage,
 ) {
-    init { require(acceptedKeyEpoch >= 0) { "Key epoch must not be negative." } }
+    init { require(keyEpoch >= 0) { "Key epoch must not be negative." } }
 }
 
-interface SyncKeyMetadataRepository {
-    suspend fun keyEpoch(syncSpaceId: SyncSpaceId): SyncSpaceKeyEpochMetadata?
-    suspend fun saveKeyEpoch(value: SyncSpaceKeyEpochMetadata)
+data class SyncSpaceKeyState(
+    val syncSpaceId: SyncSpaceId,
+    val activeEncryptionEpoch: Long,
+) { init { require(activeEncryptionEpoch >= 0) } }
+
+sealed interface InstallSyncSpaceKeyEpochResult {
+    data object Installed : InstallSyncSpaceKeyEpochResult
+    data object Advanced : InstallSyncSpaceKeyEpochResult
+    data object Idempotent : InstallSyncSpaceKeyEpochResult
+    data object IntegrityError : InstallSyncSpaceKeyEpochResult
+    data class RejectedRollback(val activeEncryptionEpoch: Long) : InstallSyncSpaceKeyEpochResult
+}
+
+interface SyncKeyRingRepository {
+    suspend fun state(syncSpaceId: SyncSpaceId): SyncSpaceKeyState?
+    suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): SyncSpaceContentKeyMetadata?
+    suspend fun decryptionKey(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncSpaceContentKeyMetadata?
+    suspend fun historicalDecryptKeys(syncSpaceId: SyncSpaceId): List<SyncSpaceContentKeyMetadata>
+    suspend fun installNewEpoch(syncSpaceId: SyncSpaceId, keyEpoch: Long, contentKeyReference: SecretReference): InstallSyncSpaceKeyEpochResult
 }
 
 /**
@@ -42,17 +61,25 @@ interface SyncKeyMetadataRepository {
  * only through the platform secure-key boundary.
  */
 class SecureSyncPayloadKeyProvider(
-    private val metadata: SyncKeyMetadataRepository,
+    private val metadata: SyncKeyRingRepository,
     private val keyMaterial: PlatformKeyMaterialStore,
 ) : SyncPayloadKeyProvider {
     override suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadKeyLookup {
-        val current = metadata.keyEpoch(syncSpaceId) ?: return SyncPayloadKeyLookup.Missing
-        return when {
-            keyEpoch < current.acceptedKeyEpoch -> SyncPayloadKeyLookup.RejectedRollback(current.acceptedKeyEpoch)
-            keyEpoch > current.acceptedKeyEpoch -> SyncPayloadKeyLookup.Missing
-            else -> keyMaterial.contentAead(current.contentKeyReference)
-                ?.let(SyncPayloadKeyLookup::Available)
-                ?: SyncPayloadKeyLookup.Missing
-        }
+        val key = metadata.decryptionKey(syncSpaceId, keyEpoch) ?: return SyncPayloadKeyLookup.Missing
+        return keyMaterial.contentAead(key.contentKeyReference)
+            ?.let(SyncPayloadKeyLookup::Available)
+            ?: SyncPayloadKeyLookup.Missing
+    }
+}
+
+class SecureCurrentEncryptionKeyProvider(
+    private val metadata: SyncKeyRingRepository,
+    private val keyMaterial: PlatformKeyMaterialStore,
+) : CurrentEncryptionKeyProvider {
+    override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): CurrentEncryptionKeyLookup {
+        val key = metadata.currentEncryptionKey(syncSpaceId) ?: return CurrentEncryptionKeyLookup.Missing
+        return keyMaterial.contentAead(key.contentKeyReference)
+            ?.let { CurrentEncryptionKeyLookup.Available(key.keyEpoch, it) }
+            ?: CurrentEncryptionKeyLookup.Missing
     }
 }

@@ -28,7 +28,10 @@ class AuthenticatedSyncEnvelopeCodecTest {
         keyEpoch = 7,
     )
     private val aead = TinkSyncPayloadAead.generate()
-    private val codec = AuthenticatedSyncEnvelopeCodec(StaticKeys(binding.syncSpaceId, binding.keyEpoch, aead))
+    private val codec = AuthenticatedSyncEnvelopeCodec(
+        StaticKeys(binding.syncSpaceId, binding.keyEpoch, aead),
+        StaticCurrentKey(binding.syncSpaceId, binding.keyEpoch, aead),
+    )
 
     @Test
     fun `encrypts typed payload with frozen aad and decrypts it`() = runBlocking {
@@ -50,7 +53,7 @@ class AuthenticatedSyncEnvelopeCodecTest {
         val alteredCiphertext = envelope.copy(ciphertextBase64Url = envelope.ciphertextBase64Url.dropLast(1) + "A")
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, codec.decrypt(alteredCiphertext))
 
-        val aadCodec = AuthenticatedSyncEnvelopeCodec(PermissiveKeys(aead))
+        val aadCodec = AuthenticatedSyncEnvelopeCodec(PermissiveKeys(aead), StaticCurrentKey(binding.syncSpaceId, binding.keyEpoch, aead))
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, aadCodec.decrypt(envelope.copy(syncSpaceId = SyncSpaceId("other-space"))))
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, aadCodec.decrypt(envelope.copy(mutationId = "00000000-0000-7000-8000-000000000002")))
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, aadCodec.decrypt(envelope.copy(senderDeviceId = DeviceId("other-device"))))
@@ -60,7 +63,10 @@ class AuthenticatedSyncEnvelopeCodecTest {
     @Test
     fun `rejects wrong key and mismatched inner mutation id`() = runBlocking {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
-        val wrongKeyCodec = AuthenticatedSyncEnvelopeCodec(StaticKeys(binding.syncSpaceId, binding.keyEpoch, TinkSyncPayloadAead.generate()))
+        val wrongKeyCodec = AuthenticatedSyncEnvelopeCodec(
+            StaticKeys(binding.syncSpaceId, binding.keyEpoch, TinkSyncPayloadAead.generate()),
+            StaticCurrentKey(binding.syncSpaceId, binding.keyEpoch, aead),
+        )
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, wrongKeyCodec.decrypt(envelope))
 
         val mismatchedBinding = binding.copy(mutationId = "00000000-0000-7000-8000-000000000002")
@@ -70,7 +76,11 @@ class AuthenticatedSyncEnvelopeCodecTest {
     @Test
     fun `leaves authenticated unknown inner protocol for SyncEngine durable quarantine`() = runBlocking {
         val unknownPayload = """{"payloadVersion":2,"operation":{"ignored":true}}"""
-        val plaintextCodec = AuthenticatedSyncEnvelopeCodec(PermissiveKeys(EchoAead(unknownPayload)))
+        val plaintextAead = EchoAead(unknownPayload)
+        val plaintextCodec = AuthenticatedSyncEnvelopeCodec(
+            PermissiveKeys(plaintextAead),
+            StaticCurrentKey(binding.syncSpaceId, binding.keyEpoch, plaintextAead),
+        )
         val envelope = EncryptedEnvelopeV1(
             syncSpaceId = binding.syncSpaceId,
             mutationId = binding.mutationId,
@@ -116,6 +126,16 @@ class AuthenticatedSyncEnvelopeCodecTest {
         private val key: SyncPayloadAead,
     ) : SyncPayloadKeyProvider {
         override suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadKeyLookup = SyncPayloadKeyLookup.Available(key)
+    }
+
+    private class StaticCurrentKey(
+        private val syncSpaceId: SyncSpaceId,
+        private val keyEpoch: Long,
+        private val key: SyncPayloadAead,
+    ) : CurrentEncryptionKeyProvider {
+        override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): CurrentEncryptionKeyLookup =
+            if (syncSpaceId == this.syncSpaceId) CurrentEncryptionKeyLookup.Available(keyEpoch, key)
+            else CurrentEncryptionKeyLookup.Missing
     }
 
     private class EchoAead(
