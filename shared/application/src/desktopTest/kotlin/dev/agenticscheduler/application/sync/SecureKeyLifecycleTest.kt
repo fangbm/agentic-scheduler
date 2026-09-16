@@ -51,6 +51,30 @@ class SecureKeyLifecycleTest {
         assertEquals(listOf(SecretReference("secure://historical")), material.deleted)
     }
 
+    @Test
+    fun `post commit reused key cleanup failure never deletes an adopted key`() = runBlocking {
+        val space = SyncSpaceId("personal-space")
+        val historical = SecretReference("secure://historical")
+        val material = RecordingKeyMaterial(failingDeletes = setOf(historical))
+        val ring = PackageResultRing(
+            InstallSyncKeyPackageResult.Advanced(
+                SyncKeyPackageAdoption(adoptedEpochs = setOf(8), reusedEpochs = setOf(7)),
+            ),
+        )
+
+        val result = SyncKeyPackageInstaller(material, ring).install(
+            DecryptedSyncKeyPackage(
+                syncSpaceId = space,
+                activeEpoch = 8,
+                activeKey = TestKeyMaterial("active", "identity-8"),
+                historicalKeys = listOf(SyncKeyPackageHistoricalKey(7, TestKeyMaterial("historical", "identity-7"))),
+            ),
+        )
+
+        assertEquals(ring.result, result)
+        assertEquals(listOf(historical), material.deleted)
+    }
+
     private class MemoryKeyRing(
         private val space: SyncSpaceId,
     ) : SyncKeyRingRepository {
@@ -110,7 +134,9 @@ class SecureKeyLifecycleTest {
         val identity: String,
     ) : ImportedContentKeyMaterial
 
-    private class RecordingKeyMaterial : PlatformKeyMaterialStore {
+    private class RecordingKeyMaterial(
+        private val failingDeletes: Set<SecretReference> = emptySet(),
+    ) : PlatformKeyMaterialStore {
         val imported = mutableListOf<SecretReference>()
         val deleted = mutableListOf<SecretReference>()
 
@@ -125,6 +151,7 @@ class SecureKeyLifecycleTest {
         override suspend fun contentAead(reference: SecretReference): SyncPayloadAead? = null
         override suspend fun delete(reference: SecretReference) {
             deleted += reference
+            if (reference in failingDeletes) error("secure-store cleanup unavailable")
         }
     }
 
