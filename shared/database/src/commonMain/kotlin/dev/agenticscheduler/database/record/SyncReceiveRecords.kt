@@ -60,5 +60,6 @@ data class SyncSpaceContentKeyRecord(
     @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
     @ColumnInfo(name = "key_epoch") val keyEpoch: Long,
     @ColumnInfo(name = "content_key_secret_ref") val contentKeySecretRef: String,
+    @ColumnInfo(name = "key_identity", defaultValue = "''") val keyIdentity: String = "",
     val usage: String,
 )

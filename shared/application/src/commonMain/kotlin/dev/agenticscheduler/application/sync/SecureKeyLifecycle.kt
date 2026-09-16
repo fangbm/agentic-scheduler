@@ -8,16 +8,27 @@ value class SecretReference(val value: String) {
     init { require(value.isNotBlank()) { "Secret reference must not be blank." } }
 }
 
+/** Non-secret stable identity/fingerprint supplied by the platform crypto implementation. */
+@JvmInline
+value class ContentKeyIdentity(val value: String) {
+    init { require(value.isNotBlank()) { "Content key identity must not be blank." } }
+}
+
 /**
  * No caller receives a SyncSpace key's raw bytes. Platform implementations own
  * AES key generation/import, platform-backed protection and deletion.
  */
 interface PlatformKeyMaterialStore {
     /** Imports transient key-package material directly into platform protection and returns only an opaque reference. */
-    suspend fun importContentKey(material: ImportedContentKeyMaterial): SecretReference
+    suspend fun importContentKey(material: ImportedContentKeyMaterial): ImportedContentKey
     suspend fun contentAead(reference: SecretReference): SyncPayloadAead?
     suspend fun delete(reference: SecretReference)
 }
+
+data class ImportedContentKey(
+    val reference: SecretReference,
+    val identity: ContentKeyIdentity,
+)
 
 /** Opaque transient result of a platform HPKE/recovery decrypt; it must never be persisted in Room. */
 interface ImportedContentKeyMaterial
@@ -34,6 +45,7 @@ data class SyncSpaceContentKeyMetadata(
     val syncSpaceId: SyncSpaceId,
     val keyEpoch: Long,
     val contentKeyReference: SecretReference,
+    val contentKeyIdentity: ContentKeyIdentity,
     val usage: SyncSpaceContentKeyUsage,
 ) {
     init { require(keyEpoch >= 0) { "Key epoch must not be negative." } }
@@ -58,10 +70,10 @@ interface SyncKeyRingRepository {
     suspend fun decryptionKey(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncSpaceContentKeyMetadata?
     suspend fun historicalDecryptKeys(syncSpaceId: SyncSpaceId): List<SyncSpaceContentKeyMetadata>
     suspend fun installNewEpoch(syncSpaceId: SyncSpaceId, keyEpoch: Long, contentKeyReference: SecretReference): InstallSyncSpaceKeyEpochResult
-    suspend fun installKeyPackage(syncSpaceId: SyncSpaceId, activeEpoch: Long, activeReference: SecretReference, historicalReferences: List<SyncKeyPackageKeyReference>): InstallSyncSpaceKeyEpochResult
+    suspend fun installKeyPackage(syncSpaceId: SyncSpaceId, activeKey: SyncKeyPackageKeyReference, historicalReferences: List<SyncKeyPackageKeyReference>): InstallSyncSpaceKeyEpochResult
 }
 
-data class SyncKeyPackageKeyReference(val keyEpoch: Long, val reference: SecretReference) {
+data class SyncKeyPackageKeyReference(val keyEpoch: Long, val reference: SecretReference, val identity: ContentKeyIdentity) {
     init { require(keyEpoch >= 0) }
 }
 
@@ -92,13 +104,18 @@ class SyncKeyPackageInstaller(
     suspend fun install(value: DecryptedSyncKeyPackage): InstallSyncSpaceKeyEpochResult {
         val imported = mutableListOf<SecretReference>()
         try {
-            val active = keyMaterial.importContentKey(value.activeKey).also(imported::add)
+            val active = keyMaterial.importContentKey(value.activeKey).also { imported += it.reference }
             val historical = value.historicalKeys.map { key ->
-                SyncKeyPackageKeyReference(key.keyEpoch, keyMaterial.importContentKey(key.material).also(imported::add))
+                keyMaterial.importContentKey(key.material).let { importedKey ->
+                    imported += importedKey.reference
+                    SyncKeyPackageKeyReference(key.keyEpoch, importedKey.reference, importedKey.identity)
+                }
             }
-            val result = keyRing.installKeyPackage(value.syncSpaceId, value.activeEpoch, active, historical)
-            if (result !is InstallSyncSpaceKeyEpochResult.Installed && result !is InstallSyncSpaceKeyEpochResult.Advanced && result !is InstallSyncSpaceKeyEpochResult.Idempotent) {
-                imported.forEach(keyMaterial::delete)
+            val result = keyRing.installKeyPackage(value.syncSpaceId, SyncKeyPackageKeyReference(value.activeEpoch, active.reference, active.identity), historical)
+            if (result !is InstallSyncSpaceKeyEpochResult.Installed && result !is InstallSyncSpaceKeyEpochResult.Advanced) {
+                for (reference in imported) {
+                    keyMaterial.delete(reference)
+                }
             }
             return result
         } catch (failure: Throwable) {
