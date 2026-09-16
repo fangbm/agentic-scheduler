@@ -147,7 +147,7 @@ class SyncKeyPackageInstaller(
 ) {
     suspend fun install(value: DecryptedSyncKeyPackage): InstallSyncKeyPackageResult {
         val imported = mutableMapOf<Long, SecretReference>()
-        try {
+        val result = try {
             val active = keyMaterial.importContentKey(value.activeKey).also { imported[value.activeEpoch] = it.reference }
             val historical = value.historicalKeys.map { key ->
                 keyMaterial.importContentKey(key.material).let { importedKey ->
@@ -155,13 +155,11 @@ class SyncKeyPackageInstaller(
                     SyncKeyPackageKeyReference(key.keyEpoch, importedKey.reference, importedKey.identity)
                 }
             }
-            val result = keyRing.installKeyPackage(value.syncSpaceId, SyncKeyPackageKeyReference(value.activeEpoch, active.reference, active.identity), historical)
-            for ((epoch, reference) in imported) {
-                if (epoch !in result.adoption.adoptedEpochs) {
-                    keyMaterial.delete(reference)
-                }
-            }
-            return result
+            keyRing.installKeyPackage(
+                value.syncSpaceId,
+                SyncKeyPackageKeyReference(value.activeEpoch, active.reference, active.identity),
+                historical,
+            )
         } catch (failure: Throwable) {
             for (reference in imported.values) {
                 try {
@@ -173,6 +171,20 @@ class SyncKeyPackageInstaller(
             }
             throw failure
         }
+
+        // Room metadata is committed once installKeyPackage returns. From this
+        // point forward adopted references are durable and must never be deleted.
+        // Failed cleanup leaves a safe orphan; it is not an install failure.
+        for ((epoch, reference) in imported) {
+            if (epoch !in result.adoption.adoptedEpochs) {
+                try {
+                    keyMaterial.delete(reference)
+                } catch (_: Throwable) {
+                    // Best effort only: the committed key ring remains valid.
+                }
+            }
+        }
+        return result
     }
 }
 
