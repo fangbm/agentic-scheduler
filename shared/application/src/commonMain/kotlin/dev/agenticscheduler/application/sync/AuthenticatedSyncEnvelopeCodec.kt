@@ -25,8 +25,6 @@ interface SyncPayloadKeyProvider {
 sealed interface SyncPayloadKeyLookup {
     data class Available(val aead: SyncPayloadAead) : SyncPayloadKeyLookup
     data object Missing : SyncPayloadKeyLookup
-    /** A local device that accepted N must not be downgraded by an N-1 envelope. */
-    data class RejectedRollback(val acceptedEpoch: Long) : SyncPayloadKeyLookup
 }
 
 interface CurrentEncryptionKeyProvider {
@@ -78,7 +76,6 @@ sealed interface DecryptSyncEnvelopeResult {
     ) : DecryptSyncEnvelopeResult
 
     data object MissingContentKey : DecryptSyncEnvelopeResult
-    data class RejectedKeyEpochRollback(val acceptedEpoch: Long) : DecryptSyncEnvelopeResult
     data object AuthenticationFailed : DecryptSyncEnvelopeResult
     data class UnsupportedEnvelopeVersion(val actual: Int?) : DecryptSyncEnvelopeResult
     data class InvalidEnvelope(val reason: String) : DecryptSyncEnvelopeResult
@@ -138,7 +135,6 @@ class AuthenticatedSyncEnvelopeCodec(
         val key = when (val lookup = decryptionKeys.keyFor(binding.syncSpaceId, binding.keyEpoch)) {
             is SyncPayloadKeyLookup.Available -> lookup.aead
             SyncPayloadKeyLookup.Missing -> return DecryptSyncEnvelopeResult.MissingContentKey
-            is SyncPayloadKeyLookup.RejectedRollback -> return DecryptSyncEnvelopeResult.RejectedKeyEpochRollback(lookup.acceptedEpoch)
         }
         val payloadJson = try {
             key.decryptFromBase64Url(envelope.ciphertextBase64Url, binding.authenticatedAssociatedData())
