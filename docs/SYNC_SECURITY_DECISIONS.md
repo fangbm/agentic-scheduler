@@ -181,6 +181,16 @@ The local durable model is a `sync_space_key_state` active epoch plus one
 references and an `ACTIVE` or `DECRYPT_ONLY` usage marker; they never contain
 key bytes.
 
+Every content-key row also carries a non-secret `ContentKeyIdentity`, frozen as
+`base64url-no-padding(SHA-256(raw AES-256 content-key bytes))`. This identity
+is calculated by the platform secure-key implementation while it imports or
+generates the key, and is the only value used to decide whether an epoch is
+idempotently replayed. A `SecretReference` is a local opaque handle and must
+never be used as a key identity. Complete key-package installs validate every
+overlapping historical epoch, atomically repair missing historical keys, and
+return which imported references were adopted versus reused so unused imports
+are deleted after the transaction commits.
+
 A malicious server can always withhold newer data from a newly recovered device; D8 does not claim global freshness/transparency guarantees against a server that suppresses all newer state.
 
 ---

@@ -515,11 +515,13 @@ class PersistenceIntegrationTest {
         val space = SyncSpaceId("personal-space")
         val first = dev.agenticscheduler.application.sync.SecretReference("secure://content-key/7")
         val second = dev.agenticscheduler.application.sync.SecretReference("secure://content-key/8")
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Installed, keys.installNewEpoch(space, 7, first))
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Idempotent, keys.installNewEpoch(space, 7, first))
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.IntegrityError, keys.installNewEpoch(space, 7, second))
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Advanced, keys.installNewEpoch(space, 8, second))
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.RejectedRollback(8), keys.installNewEpoch(space, 7, first))
+        val firstIdentity = dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-k7")
+        val secondIdentity = dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-k8")
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Installed, keys.installNewEpoch(space, 7, first, firstIdentity))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Idempotent, keys.installNewEpoch(space, 7, dev.agenticscheduler.application.sync.SecretReference("secure://content-key/7-reimport"), firstIdentity))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.IntegrityError, keys.installNewEpoch(space, 7, second, secondIdentity))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Advanced, keys.installNewEpoch(space, 8, second, secondIdentity))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.RejectedRollback(8), keys.installNewEpoch(space, 7, first, firstIdentity))
         assertEquals(8L, keys.state(space)?.activeEncryptionEpoch)
         assertEquals(second, keys.currentEncryptionKey(space)?.contentKeyReference)
         assertEquals(first, keys.decryptionKey(space, 7)?.contentKeyReference)
@@ -534,10 +536,66 @@ class PersistenceIntegrationTest {
         val first = dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(8, dev.agenticscheduler.application.sync.SecretReference("secure://key/object-123"), dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-k8"))
         val replay = dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(8, dev.agenticscheduler.application.sync.SecretReference("secure://key/object-456"), dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-k8"))
         val divergent = dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(8, dev.agenticscheduler.application.sync.SecretReference("secure://key/object-789"), dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-other"))
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Installed, keys.installKeyPackage(space, first, emptyList()))
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Idempotent, keys.installKeyPackage(space, replay, emptyList()))
+        assertEquals(
+            dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.Installed(
+                dev.agenticscheduler.application.sync.SyncKeyPackageAdoption(setOf(8), emptySet()),
+            ),
+            keys.installKeyPackage(space, first, emptyList()),
+        )
+        assertEquals(
+            dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.Idempotent(
+                dev.agenticscheduler.application.sync.SyncKeyPackageAdoption(emptySet(), setOf(8)),
+            ),
+            keys.installKeyPackage(space, replay, emptyList()),
+        )
         assertEquals(dev.agenticscheduler.application.sync.SecretReference("secure://key/object-123"), keys.currentEncryptionKey(space)?.contentKeyReference)
-        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.IntegrityError, keys.installKeyPackage(space, divergent, emptyList()))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.IntegrityError, keys.installKeyPackage(space, divergent, emptyList()))
+        database.close()
+    }
+
+    @Test fun `D8 key package validates and repairs the complete historical ring`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val keys = RoomSyncKeyMetadataRepository(database)
+        val space = SyncSpaceId("personal-space")
+        fun key(epoch: Long, reference: String, identity: String) =
+            dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(
+                epoch,
+                dev.agenticscheduler.application.sync.SecretReference(reference),
+                dev.agenticscheduler.application.sync.ContentKeyIdentity(identity),
+            )
+
+        val epoch7 = key(7, "secure://key/7-original", "fingerprint-k7")
+        val epoch8 = key(8, "secure://key/8", "fingerprint-k8")
+        assertEquals(
+            dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.Installed(
+                dev.agenticscheduler.application.sync.SyncKeyPackageAdoption(setOf(7), emptySet()),
+            ),
+            keys.installKeyPackage(space, epoch7, emptyList()),
+        )
+        assertEquals(
+            dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.Advanced(
+                dev.agenticscheduler.application.sync.SyncKeyPackageAdoption(setOf(8), setOf(7)),
+            ),
+            keys.installKeyPackage(space, epoch8, listOf(key(7, "secure://key/7-reimport", "fingerprint-k7"))),
+        )
+        assertEquals(dev.agenticscheduler.application.sync.SecretReference("secure://key/7-original"), keys.decryptionKey(space, 7)?.contentKeyReference)
+        assertEquals(
+            dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.IntegrityError,
+            keys.installKeyPackage(space, epoch8, listOf(key(7, "secure://key/7-bad", "fingerprint-other"))),
+        )
+
+        val epoch6 = key(6, "secure://key/6", "fingerprint-k6")
+        assertEquals(
+            dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult.Repaired(
+                dev.agenticscheduler.application.sync.SyncKeyPackageAdoption(setOf(6), setOf(7, 8)),
+            ),
+            keys.installKeyPackage(
+                space,
+                key(8, "secure://key/8-reimport", "fingerprint-k8"),
+                listOf(epoch6, key(7, "secure://key/7-again", "fingerprint-k7")),
+            ),
+        )
+        assertEquals(listOf(6L, 7L), keys.historicalDecryptKeys(space).map { it.keyEpoch })
         database.close()
     }
 

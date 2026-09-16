@@ -8,7 +8,12 @@ value class SecretReference(val value: String) {
     init { require(value.isNotBlank()) { "Secret reference must not be blank." } }
 }
 
-/** Non-secret stable identity/fingerprint supplied by the platform crypto implementation. */
+/**
+ * Non-secret, cross-platform stable fingerprint supplied by the platform crypto
+ * implementation. Its canonical form is base64url-without-padding of
+ * SHA-256(raw AES-256 content-key bytes). It is never a secure-store reference
+ * and must not be derived from one.
+ */
 @JvmInline
 value class ContentKeyIdentity(val value: String) {
     init { require(value.isNotBlank()) { "Content key identity must not be blank." } }
@@ -64,13 +69,52 @@ sealed interface InstallSyncSpaceKeyEpochResult {
     data class RejectedRollback(val activeEncryptionEpoch: Long) : InstallSyncSpaceKeyEpochResult
 }
 
+/**
+ * The Room transaction's authoritative decision about imported secure-store
+ * objects. The installer retains only references for [adoptedEpochs] and
+ * deletes freshly imported references for [reusedEpochs].
+ */
+data class SyncKeyPackageAdoption(
+    val adoptedEpochs: Set<Long>,
+    val reusedEpochs: Set<Long>,
+) {
+    init {
+        require(adoptedEpochs.intersect(reusedEpochs).isEmpty())
+    }
+}
+
+sealed interface InstallSyncKeyPackageResult {
+    val adoption: SyncKeyPackageAdoption
+
+    data class Installed(override val adoption: SyncKeyPackageAdoption) : InstallSyncKeyPackageResult
+    data class Advanced(override val adoption: SyncKeyPackageAdoption) : InstallSyncKeyPackageResult
+    data class Idempotent(override val adoption: SyncKeyPackageAdoption) : InstallSyncKeyPackageResult
+    data class Repaired(override val adoption: SyncKeyPackageAdoption) : InstallSyncKeyPackageResult
+    data object IntegrityError : InstallSyncKeyPackageResult {
+        override val adoption = SyncKeyPackageAdoption(emptySet(), emptySet())
+    }
+    data class RejectedRollback(val activeEncryptionEpoch: Long) : InstallSyncKeyPackageResult {
+        override val adoption = SyncKeyPackageAdoption(emptySet(), emptySet())
+    }
+}
+
 interface SyncKeyRingRepository {
     suspend fun state(syncSpaceId: SyncSpaceId): SyncSpaceKeyState?
     suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): SyncSpaceContentKeyMetadata?
     suspend fun decryptionKey(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncSpaceContentKeyMetadata?
     suspend fun historicalDecryptKeys(syncSpaceId: SyncSpaceId): List<SyncSpaceContentKeyMetadata>
-    suspend fun installNewEpoch(syncSpaceId: SyncSpaceId, keyEpoch: Long, contentKeyReference: SecretReference): InstallSyncSpaceKeyEpochResult
-    suspend fun installKeyPackage(syncSpaceId: SyncSpaceId, activeKey: SyncKeyPackageKeyReference, historicalReferences: List<SyncKeyPackageKeyReference>): InstallSyncSpaceKeyEpochResult
+    suspend fun installNewEpoch(
+        syncSpaceId: SyncSpaceId,
+        keyEpoch: Long,
+        contentKeyReference: SecretReference,
+        contentKeyIdentity: ContentKeyIdentity,
+    ): InstallSyncSpaceKeyEpochResult
+
+    suspend fun installKeyPackage(
+        syncSpaceId: SyncSpaceId,
+        activeKey: SyncKeyPackageKeyReference,
+        historicalReferences: List<SyncKeyPackageKeyReference>,
+    ): InstallSyncKeyPackageResult
 }
 
 data class SyncKeyPackageKeyReference(val keyEpoch: Long, val reference: SecretReference, val identity: ContentKeyIdentity) {
@@ -101,25 +145,32 @@ class SyncKeyPackageInstaller(
     private val keyMaterial: PlatformKeyMaterialStore,
     private val keyRing: SyncKeyRingRepository,
 ) {
-    suspend fun install(value: DecryptedSyncKeyPackage): InstallSyncSpaceKeyEpochResult {
-        val imported = mutableListOf<SecretReference>()
+    suspend fun install(value: DecryptedSyncKeyPackage): InstallSyncKeyPackageResult {
+        val imported = mutableMapOf<Long, SecretReference>()
         try {
-            val active = keyMaterial.importContentKey(value.activeKey).also { imported += it.reference }
+            val active = keyMaterial.importContentKey(value.activeKey).also { imported[value.activeEpoch] = it.reference }
             val historical = value.historicalKeys.map { key ->
                 keyMaterial.importContentKey(key.material).let { importedKey ->
-                    imported += importedKey.reference
+                    imported[key.keyEpoch] = importedKey.reference
                     SyncKeyPackageKeyReference(key.keyEpoch, importedKey.reference, importedKey.identity)
                 }
             }
             val result = keyRing.installKeyPackage(value.syncSpaceId, SyncKeyPackageKeyReference(value.activeEpoch, active.reference, active.identity), historical)
-            if (result !is InstallSyncSpaceKeyEpochResult.Installed && result !is InstallSyncSpaceKeyEpochResult.Advanced) {
-                for (reference in imported) {
+            for ((epoch, reference) in imported) {
+                if (epoch !in result.adoption.adoptedEpochs) {
                     keyMaterial.delete(reference)
                 }
             }
             return result
         } catch (failure: Throwable) {
-            imported.forEach { reference -> runCatching { keyMaterial.delete(reference) } }
+            for (reference in imported.values) {
+                try {
+                    keyMaterial.delete(reference)
+                } catch (_: Throwable) {
+                    // Preserve the original import/install failure. Orphaned
+                    // secure-store objects are safe; dangling Room references are not.
+                }
+            }
             throw failure
         }
     }
