@@ -93,6 +93,24 @@ class AuthenticatedSyncEnvelopeCodecTest {
         assertEquals(unknownPayload, decrypted.payloadJson)
     }
 
+    @Test
+    fun `rotation retains old ciphertext for decrypt but forbids old epoch outbound encryption`() = runBlocking {
+        val epoch7 = TinkSyncPayloadAead.generate()
+        val epoch8 = TinkSyncPayloadAead.generate()
+        val oldBinding = binding.copy(keyEpoch = 7)
+        val oldCodec = AuthenticatedSyncEnvelopeCodec(
+            StaticKeys(binding.syncSpaceId, 7, epoch7),
+            StaticCurrentKey(binding.syncSpaceId, 7, epoch7),
+        )
+        val oldEnvelope = assertIs<EncryptSyncPayloadResult.Encrypted>(oldCodec.encrypt(oldBinding, payload())).envelope
+        val rotated = RotatedKeys(binding.syncSpaceId, epoch7, epoch8)
+        val rotatedCodec = AuthenticatedSyncEnvelopeCodec(rotated, rotated)
+
+        assertIs<DecryptSyncEnvelopeResult.AuthenticatedPlaintext>(rotatedCodec.decrypt(oldEnvelope))
+        assertEquals(EncryptSyncPayloadResult.NonActiveKeyEpoch(8), rotatedCodec.encrypt(oldBinding, payload()))
+        assertEquals(DecryptSyncEnvelopeResult.MissingContentKey, rotatedCodec.decrypt(oldEnvelope.copy(keyEpoch = 9)))
+    }
+
     private fun payload(): SyncPayloadV1 = SyncPayloadV1(
         operation = SyncOperation(
             mutationId = binding.mutationId,
@@ -135,6 +153,23 @@ class AuthenticatedSyncEnvelopeCodecTest {
     ) : CurrentEncryptionKeyProvider {
         override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): CurrentEncryptionKeyLookup =
             if (syncSpaceId == this.syncSpaceId) CurrentEncryptionKeyLookup.Available(keyEpoch, key)
+            else CurrentEncryptionKeyLookup.Missing
+    }
+
+    private class RotatedKeys(
+        private val syncSpaceId: SyncSpaceId,
+        private val epoch7: SyncPayloadAead,
+        private val epoch8: SyncPayloadAead,
+    ) : SyncPayloadKeyProvider, CurrentEncryptionKeyProvider {
+        override suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadKeyLookup = when {
+            syncSpaceId != this.syncSpaceId -> SyncPayloadKeyLookup.Missing
+            keyEpoch == 7L -> SyncPayloadKeyLookup.Available(epoch7)
+            keyEpoch == 8L -> SyncPayloadKeyLookup.Available(epoch8)
+            else -> SyncPayloadKeyLookup.Missing
+        }
+
+        override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): CurrentEncryptionKeyLookup =
+            if (syncSpaceId == this.syncSpaceId) CurrentEncryptionKeyLookup.Available(8, epoch8)
             else CurrentEncryptionKeyLookup.Missing
     }
 
