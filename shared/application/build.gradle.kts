@@ -12,4 +12,6 @@ kotlin {
         commonMain.dependencies { api(project(":shared:domain")); api(project(":shared:planner")); api(project(":shared:sync")); api(libs.kotlinx.coroutines.core); api(libs.kotlinx.collections.immutable); api(libs.kotlinx.datetime) }
         commonTest.dependencies { implementation(kotlin("test")) }
     }
+    sourceSets.named("androidMain") { dependencies { implementation(libs.tink.android) } }
+    sourceSets.named("desktopMain") { dependencies { implementation(libs.tink) } }
 }
