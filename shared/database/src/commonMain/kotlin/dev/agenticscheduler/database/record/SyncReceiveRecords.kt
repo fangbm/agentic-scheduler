@@ -48,3 +48,17 @@ data class SyncSpaceKeyEpochRecord(
     @ColumnInfo(name = "accepted_key_epoch") val acceptedKeyEpoch: Long,
     @ColumnInfo(name = "content_key_secret_ref") val contentKeySecretRef: String,
 )
+
+@Entity(tableName = "sync_space_key_state")
+data class SyncSpaceKeyStateRecord(
+    @androidx.room3.PrimaryKey @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
+    @ColumnInfo(name = "active_encryption_epoch") val activeEncryptionEpoch: Long,
+)
+
+@Entity(tableName = "sync_space_content_key", primaryKeys = ["sync_space_id", "key_epoch"])
+data class SyncSpaceContentKeyRecord(
+    @ColumnInfo(name = "sync_space_id") val syncSpaceId: String,
+    @ColumnInfo(name = "key_epoch") val keyEpoch: Long,
+    @ColumnInfo(name = "content_key_secret_ref") val contentKeySecretRef: String,
+    val usage: String,
+)

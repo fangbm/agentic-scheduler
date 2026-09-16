@@ -29,6 +29,15 @@ sealed interface SyncPayloadKeyLookup {
     data class RejectedRollback(val acceptedEpoch: Long) : SyncPayloadKeyLookup
 }
 
+interface CurrentEncryptionKeyProvider {
+    suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): CurrentEncryptionKeyLookup
+}
+
+sealed interface CurrentEncryptionKeyLookup {
+    data class Available(val keyEpoch: Long, val aead: SyncPayloadAead) : CurrentEncryptionKeyLookup
+    data object Missing : CurrentEncryptionKeyLookup
+}
+
 /** Exact SYN-004 AAD identity. Its byte representation is frozen UTF-8 text. */
 data class SyncEnvelopeBinding(
     val syncSpaceId: SyncSpaceId,
@@ -57,7 +66,7 @@ data class SyncEnvelopeBinding(
 sealed interface EncryptSyncPayloadResult {
     data class Encrypted(val envelope: EncryptedEnvelopeV1) : EncryptSyncPayloadResult
     data object MissingContentKey : EncryptSyncPayloadResult
-    data class RejectedKeyEpochRollback(val acceptedEpoch: Long) : EncryptSyncPayloadResult
+    data class NonActiveKeyEpoch(val activeEpoch: Long) : EncryptSyncPayloadResult
     data class InvalidPayload(val reason: String) : EncryptSyncPayloadResult
 }
 
@@ -82,16 +91,19 @@ sealed interface DecryptSyncEnvelopeResult {
  * durable quarantine/cursor semantics for authenticated protocol failures.
  */
 class AuthenticatedSyncEnvelopeCodec(
-    private val keys: SyncPayloadKeyProvider,
+    private val decryptionKeys: SyncPayloadKeyProvider,
+    private val encryptionKeys: CurrentEncryptionKeyProvider,
 ) {
     suspend fun encrypt(binding: SyncEnvelopeBinding, payload: SyncPayloadV1): EncryptSyncPayloadResult {
         if (payload.operation.mutationId != binding.mutationId) {
             return EncryptSyncPayloadResult.InvalidPayload("Outer and inner MutationId differ.")
         }
-        val key = when (val lookup = keys.keyFor(binding.syncSpaceId, binding.keyEpoch)) {
-            is SyncPayloadKeyLookup.Available -> lookup.aead
-            SyncPayloadKeyLookup.Missing -> return EncryptSyncPayloadResult.MissingContentKey
-            is SyncPayloadKeyLookup.RejectedRollback -> return EncryptSyncPayloadResult.RejectedKeyEpochRollback(lookup.acceptedEpoch)
+        val key = when (val lookup = encryptionKeys.currentEncryptionKey(binding.syncSpaceId)) {
+            is CurrentEncryptionKeyLookup.Available -> {
+                if (binding.keyEpoch != lookup.keyEpoch) return EncryptSyncPayloadResult.NonActiveKeyEpoch(lookup.keyEpoch)
+                lookup.aead
+            }
+            CurrentEncryptionKeyLookup.Missing -> return EncryptSyncPayloadResult.MissingContentKey
         }
         val ciphertext = key.encryptToBase64Url(
             plaintextUtf8 = SyncWireCodec.encodePayload(payload),
@@ -123,7 +135,7 @@ class AuthenticatedSyncEnvelopeCodec(
         if (envelope.envelopeVersion != SyncWireCodec.ENVELOPE_VERSION) {
             return DecryptSyncEnvelopeResult.UnsupportedEnvelopeVersion(envelope.envelopeVersion)
         }
-        val key = when (val lookup = keys.keyFor(binding.syncSpaceId, binding.keyEpoch)) {
+        val key = when (val lookup = decryptionKeys.keyFor(binding.syncSpaceId, binding.keyEpoch)) {
             is SyncPayloadKeyLookup.Available -> lookup.aead
             SyncPayloadKeyLookup.Missing -> return DecryptSyncEnvelopeResult.MissingContentKey
             is SyncPayloadKeyLookup.RejectedRollback -> return DecryptSyncEnvelopeResult.RejectedKeyEpochRollback(lookup.acceptedEpoch)

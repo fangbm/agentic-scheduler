@@ -7,32 +7,43 @@ import kotlin.test.assertEquals
 
 class SecureKeyLifecycleTest {
     @Test
-    fun `content key lookup uses durable accepted epoch and rejects rollback`() = runBlocking {
+    fun `content key lookup retains historical decrypt keys across rotation`() = runBlocking {
         val space = SyncSpaceId("personal-space")
         val key = EchoAead
         val provider = SecureSyncPayloadKeyProvider(
-            metadata = MemoryMetadata(SyncSpaceKeyEpochMetadata(space, 7, SecretReference("secure://content-key/7"))),
-            keyMaterial = MemoryKeyMaterial(SecretReference("secure://content-key/7"), key),
+            metadata = MemoryKeyRing(space),
+            keyMaterial = MemoryKeyMaterial(setOf(SecretReference("secure://content-key/7"), SecretReference("secure://content-key/8")), key),
+        )
+        val outbound = SecureCurrentEncryptionKeyProvider(
+            metadata = MemoryKeyRing(space),
+            keyMaterial = MemoryKeyMaterial(setOf(SecretReference("secure://content-key/7"), SecretReference("secure://content-key/8")), key),
         )
 
         assertEquals(SyncPayloadKeyLookup.Available(key), provider.keyFor(space, 7))
-        assertEquals(SyncPayloadKeyLookup.RejectedRollback(7), provider.keyFor(space, 6))
-        assertEquals(SyncPayloadKeyLookup.Missing, provider.keyFor(space, 8))
+        assertEquals(SyncPayloadKeyLookup.Available(key), provider.keyFor(space, 8))
+        assertEquals(SyncPayloadKeyLookup.Missing, provider.keyFor(space, 6))
         assertEquals(SyncPayloadKeyLookup.Missing, provider.keyFor(SyncSpaceId("unknown-space"), 7))
+        assertEquals(CurrentEncryptionKeyLookup.Available(8, key), outbound.currentEncryptionKey(space))
     }
 
-    private class MemoryMetadata(
-        private val value: SyncSpaceKeyEpochMetadata,
-    ) : SyncKeyMetadataRepository {
-        override suspend fun keyEpoch(syncSpaceId: SyncSpaceId): SyncSpaceKeyEpochMetadata? = value.takeIf { it.syncSpaceId == syncSpaceId }
-        override suspend fun saveKeyEpoch(value: SyncSpaceKeyEpochMetadata) = Unit
+    private class MemoryKeyRing(
+        private val space: SyncSpaceId,
+    ) : SyncKeyRingRepository {
+        private val active = SyncSpaceContentKeyMetadata(space, 8, SecretReference("secure://content-key/8"), SyncSpaceContentKeyUsage.ACTIVE)
+        private val historical = SyncSpaceContentKeyMetadata(space, 7, SecretReference("secure://content-key/7"), SyncSpaceContentKeyUsage.DECRYPT_ONLY)
+        override suspend fun state(syncSpaceId: SyncSpaceId): SyncSpaceKeyState? = SyncSpaceKeyState(space, 8).takeIf { syncSpaceId == space }
+        override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): SyncSpaceContentKeyMetadata? = active.takeIf { syncSpaceId == space }
+        override suspend fun decryptionKey(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncSpaceContentKeyMetadata? =
+            listOf(active, historical).firstOrNull { it.syncSpaceId == syncSpaceId && it.keyEpoch == keyEpoch }
+        override suspend fun historicalDecryptKeys(syncSpaceId: SyncSpaceId): List<SyncSpaceContentKeyMetadata> = listOf(historical).takeIf { syncSpaceId == space }.orEmpty()
+        override suspend fun installNewEpoch(syncSpaceId: SyncSpaceId, keyEpoch: Long, contentKeyReference: SecretReference): InstallSyncSpaceKeyEpochResult = error("Not used")
     }
 
     private class MemoryKeyMaterial(
-        private val expectedReference: SecretReference,
+        private val expectedReferences: Set<SecretReference>,
         private val key: SyncPayloadAead,
     ) : PlatformKeyMaterialStore {
-        override suspend fun contentAead(reference: SecretReference): SyncPayloadAead? = key.takeIf { reference == expectedReference }
+        override suspend fun contentAead(reference: SecretReference): SyncPayloadAead? = key.takeIf { reference in expectedReferences }
         override suspend fun delete(reference: SecretReference) = Unit
     }
 

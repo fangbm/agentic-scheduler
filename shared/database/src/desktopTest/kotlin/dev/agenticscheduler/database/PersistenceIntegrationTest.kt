@@ -31,6 +31,7 @@ import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomSyncReceiveRepository
+import dev.agenticscheduler.database.repository.RoomSyncKeyMetadataRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.AcademicYearId
@@ -493,6 +494,37 @@ class PersistenceIntegrationTest {
             statement.bindText(1, "personal-space"); assertEquals(true, statement.step()); assertEquals(7L, statement.getLong(0)); assertEquals("secure://content-key/7", statement.getText(1))
         }
         migrated.close()
+    }
+
+    @Test fun `exported v6 schema migrates to v7 key ring tables`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(6)
+        legacy.prepare("INSERT INTO sync_space_key_epoch (sync_space_id, accepted_key_epoch, content_key_secret_ref) VALUES (?, ?, ?)").use { statement ->
+            statement.bindText(1, "personal-space"); statement.bindLong(2, 7); statement.bindText(3, "secure://content-key/7"); statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(7, emptyList())
+        listOf("sync_space_key_state", "sync_space_content_key").forEach { table ->
+            migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").use { statement -> statement.bindText(1, table); assertEquals(true, statement.step(), table) }
+        }
+        migrated.close()
+    }
+
+    @Test fun `D8 key ring install is atomic monotonic and retains historical decrypt keys`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val keys = RoomSyncKeyMetadataRepository(database)
+        val space = SyncSpaceId("personal-space")
+        val first = dev.agenticscheduler.application.sync.SecretReference("secure://content-key/7")
+        val second = dev.agenticscheduler.application.sync.SecretReference("secure://content-key/8")
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Installed, keys.installNewEpoch(space, 7, first))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Idempotent, keys.installNewEpoch(space, 7, first))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.IntegrityError, keys.installNewEpoch(space, 7, second))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Advanced, keys.installNewEpoch(space, 8, second))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.RejectedRollback(8), keys.installNewEpoch(space, 7, first))
+        assertEquals(8L, keys.state(space)?.activeEncryptionEpoch)
+        assertEquals(second, keys.currentEncryptionKey(space)?.contentKeyReference)
+        assertEquals(first, keys.decryptionKey(space, 7)?.contentKeyReference)
+        assertEquals(listOf(first), keys.historicalDecryptKeys(space).map { it.contentKeyReference })
+        database.close()
     }
 
     @Test fun `D8 receive metadata persists cursor quarantine and structured conflict`() = runBlocking {
