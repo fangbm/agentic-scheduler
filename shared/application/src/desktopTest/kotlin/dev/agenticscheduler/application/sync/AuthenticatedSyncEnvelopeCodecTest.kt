@@ -34,7 +34,8 @@ class AuthenticatedSyncEnvelopeCodecTest {
     )
 
     @Test
-    fun `encrypts typed payload with frozen aad and decrypts it`() = runBlocking {
+    fun `encrypts typed payload with frozen aad and decrypts it`() {
+        runBlocking {
         assertEquals(
             "agentic-scheduler-sync|v1|personal-space|00000000-0000-7000-8000-000000000001|desktop-device|7",
             binding.authenticatedAssociatedData(),
@@ -45,10 +46,12 @@ class AuthenticatedSyncEnvelopeCodecTest {
 
         val decrypted = assertIs<DecryptSyncEnvelopeResult.AuthenticatedPlaintext>(codec.decrypt(envelope))
         assertEquals(SyncWireCodec.encodePayload(payload()), decrypted.payloadJson)
+        }
     }
 
     @Test
-    fun `rejects tampered ciphertext and every aad identity component`() = runBlocking {
+    fun `rejects tampered ciphertext and every aad identity component`() {
+        runBlocking {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
         val alteredCiphertext = envelope.copy(ciphertextBase64Url = envelope.ciphertextBase64Url.dropLast(1) + "A")
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, codec.decrypt(alteredCiphertext))
@@ -58,10 +61,12 @@ class AuthenticatedSyncEnvelopeCodecTest {
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, aadCodec.decrypt(envelope.copy(mutationId = "00000000-0000-7000-8000-000000000002")))
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, aadCodec.decrypt(envelope.copy(senderDeviceId = DeviceId("other-device"))))
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, aadCodec.decrypt(envelope.copy(keyEpoch = 8)))
+        }
     }
 
     @Test
-    fun `rejects wrong key and mismatched inner mutation id`() = runBlocking {
+    fun `rejects wrong key and mismatched inner mutation id`() {
+        runBlocking {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
         val wrongKeyCodec = AuthenticatedSyncEnvelopeCodec(
             StaticKeys(binding.syncSpaceId, binding.keyEpoch, TinkSyncPayloadAead.generate()),
@@ -71,10 +76,12 @@ class AuthenticatedSyncEnvelopeCodecTest {
 
         val mismatchedBinding = binding.copy(mutationId = "00000000-0000-7000-8000-000000000002")
         assertIs<EncryptSyncPayloadResult.InvalidPayload>(codec.encrypt(mismatchedBinding, payload()))
+        }
     }
 
     @Test
-    fun `leaves authenticated unknown inner protocol for SyncEngine durable quarantine`() = runBlocking {
+    fun `leaves authenticated unknown inner protocol for SyncEngine durable quarantine`() {
+        runBlocking {
         val unknownPayload = """{"payloadVersion":2,"operation":{"ignored":true}}"""
         val plaintextAead = EchoAead(unknownPayload)
         val plaintextCodec = AuthenticatedSyncEnvelopeCodec(
@@ -91,10 +98,12 @@ class AuthenticatedSyncEnvelopeCodecTest {
 
         val decrypted = assertIs<DecryptSyncEnvelopeResult.AuthenticatedPlaintext>(plaintextCodec.decrypt(envelope))
         assertEquals(unknownPayload, decrypted.payloadJson)
+        }
     }
 
     @Test
-    fun `rotation retains old ciphertext for decrypt but forbids old epoch outbound encryption`() = runBlocking {
+    fun `rotation retains old ciphertext for decrypt but forbids old epoch outbound encryption`() {
+        runBlocking {
         val epoch7 = TinkSyncPayloadAead.generate()
         val epoch8 = TinkSyncPayloadAead.generate()
         val oldBinding = binding.copy(keyEpoch = 7)
@@ -109,6 +118,7 @@ class AuthenticatedSyncEnvelopeCodecTest {
         assertIs<DecryptSyncEnvelopeResult.AuthenticatedPlaintext>(rotatedCodec.decrypt(oldEnvelope))
         assertEquals(EncryptSyncPayloadResult.NonActiveKeyEpoch(8), rotatedCodec.encrypt(oldBinding, payload()))
         assertEquals(DecryptSyncEnvelopeResult.MissingContentKey, rotatedCodec.decrypt(oldEnvelope.copy(keyEpoch = 9)))
+        }
     }
 
     private fun payload(): SyncPayloadV1 = SyncPayloadV1(

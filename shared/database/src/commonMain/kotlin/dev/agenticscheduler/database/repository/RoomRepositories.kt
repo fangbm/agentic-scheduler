@@ -39,8 +39,10 @@ import dev.agenticscheduler.application.sync.SyncSpaceKeyState
 import dev.agenticscheduler.application.sync.SyncSpaceContentKeyMetadata
 import dev.agenticscheduler.application.sync.SyncSpaceContentKeyUsage
 import dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult
+import dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult
 import dev.agenticscheduler.application.sync.ContentKeyIdentity
 import dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference
+import dev.agenticscheduler.application.sync.SyncKeyPackageAdoption
 import dev.agenticscheduler.database.record.SyncSpaceKeyStateRecord
 import dev.agenticscheduler.database.record.SyncSpaceContentKeyRecord
 import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
@@ -223,52 +225,127 @@ class RoomSyncKeyMetadataRepository(private val database: AgenticSchedulerDataba
         database.syncKeyRingDao().historicalKeys(syncSpaceId.value).map(SyncSpaceContentKeyRecord::toMetadata)
     }
 
-    override suspend fun installNewEpoch(syncSpaceId: SyncSpaceId, keyEpoch: Long, contentKeyReference: SecretReference): InstallSyncSpaceKeyEpochResult = database.withWriteTransaction {
+    override suspend fun installNewEpoch(
+        syncSpaceId: SyncSpaceId,
+        keyEpoch: Long,
+        contentKeyReference: SecretReference,
+        contentKeyIdentity: ContentKeyIdentity,
+    ): InstallSyncSpaceKeyEpochResult = database.withWriteTransaction {
         require(keyEpoch >= 0)
         migrateLegacyState(syncSpaceId)
         val state = database.syncKeyRingDao().state(syncSpaceId.value)
         when {
             state == null -> {
                 database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, keyEpoch))
-                database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, keyEpoch, contentKeyReference.value, contentKeyReference.value, SyncSpaceContentKeyUsage.ACTIVE.name))
+                database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, keyEpoch, contentKeyReference.value, contentKeyIdentity.value, SyncSpaceContentKeyUsage.ACTIVE.name))
                 InstallSyncSpaceKeyEpochResult.Installed
             }
             keyEpoch < state.activeEncryptionEpoch -> InstallSyncSpaceKeyEpochResult.RejectedRollback(state.activeEncryptionEpoch)
             keyEpoch == state.activeEncryptionEpoch -> {
                 val active = requireNotNull(database.syncKeyRingDao().key(syncSpaceId.value, keyEpoch))
-                if (active.contentKeySecretRef == contentKeyReference.value) InstallSyncSpaceKeyEpochResult.Idempotent
+                if (active.keyIdentity == contentKeyIdentity.value) InstallSyncSpaceKeyEpochResult.Idempotent
                 else InstallSyncSpaceKeyEpochResult.IntegrityError
             }
             else -> {
                 database.syncKeyRingDao().demoteActive(syncSpaceId.value)
-                database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, keyEpoch, contentKeyReference.value, contentKeyReference.value, SyncSpaceContentKeyUsage.ACTIVE.name))
+                database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, keyEpoch, contentKeyReference.value, contentKeyIdentity.value, SyncSpaceContentKeyUsage.ACTIVE.name))
                 database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, keyEpoch))
                 InstallSyncSpaceKeyEpochResult.Advanced
             }
         }
     }
 
-    override suspend fun installKeyPackage(syncSpaceId: SyncSpaceId, activeKey: SyncKeyPackageKeyReference, historicalReferences: List<SyncKeyPackageKeyReference>): InstallSyncSpaceKeyEpochResult = database.withWriteTransaction {
+    override suspend fun installKeyPackage(
+        syncSpaceId: SyncSpaceId,
+        activeKey: SyncKeyPackageKeyReference,
+        historicalReferences: List<SyncKeyPackageKeyReference>,
+    ): InstallSyncKeyPackageResult = database.withWriteTransaction {
         val activeEpoch = activeKey.keyEpoch
-        val activeReference = activeKey.reference
         require(historicalReferences.map(SyncKeyPackageKeyReference::keyEpoch).distinct().size == historicalReferences.size)
         require(historicalReferences.all { it.keyEpoch < activeEpoch })
         migrateLegacyState(syncSpaceId)
         val state = database.syncKeyRingDao().state(syncSpaceId.value)
-        if (state != null && activeEpoch < state.activeEncryptionEpoch) return@withWriteTransaction InstallSyncSpaceKeyEpochResult.RejectedRollback(state.activeEncryptionEpoch)
-        if (state != null && activeEpoch == state.activeEncryptionEpoch) {
-            val active = requireNotNull(database.syncKeyRingDao().key(syncSpaceId.value, activeEpoch))
-            return@withWriteTransaction if (active.keyIdentity == activeKey.identity.value) InstallSyncSpaceKeyEpochResult.Idempotent else InstallSyncSpaceKeyEpochResult.IntegrityError
+        if (state != null && activeEpoch < state.activeEncryptionEpoch) {
+            return@withWriteTransaction InstallSyncKeyPackageResult.RejectedRollback(state.activeEncryptionEpoch)
         }
+
+        val adoptedEpochs = linkedSetOf<Long>()
+        val reusedEpochs = linkedSetOf<Long>()
         historicalReferences.forEach { historical ->
             val existing = database.syncKeyRingDao().key(syncSpaceId.value, historical.keyEpoch)
-            if (existing != null && existing.keyIdentity != historical.identity.value) return@withWriteTransaction InstallSyncSpaceKeyEpochResult.IntegrityError
+            when {
+                existing == null -> adoptedEpochs += historical.keyEpoch
+                existing.keyIdentity == historical.identity.value -> reusedEpochs += historical.keyEpoch
+                else -> return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+            }
         }
-        database.syncKeyRingDao().demoteActive(syncSpaceId.value)
-        historicalReferences.filter { database.syncKeyRingDao().key(syncSpaceId.value, it.keyEpoch) == null }.forEach { historical -> database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, historical.keyEpoch, historical.reference.value, historical.identity.value, SyncSpaceContentKeyUsage.DECRYPT_ONLY.name)) }
-        database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, activeEpoch, activeReference.value, activeKey.identity.value, SyncSpaceContentKeyUsage.ACTIVE.name))
-        database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, activeEpoch))
-        if (state == null) InstallSyncSpaceKeyEpochResult.Installed else InstallSyncSpaceKeyEpochResult.Advanced
+
+        val currentActive = state?.let { database.syncKeyRingDao().key(syncSpaceId.value, it.activeEncryptionEpoch) }
+        when {
+            state != null && activeEpoch == state.activeEncryptionEpoch && currentActive == null ->
+                return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+            state != null && activeEpoch == state.activeEncryptionEpoch && currentActive!!.keyIdentity != activeKey.identity.value ->
+                return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+            state != null && activeEpoch == state.activeEncryptionEpoch -> reusedEpochs += activeEpoch
+            else -> {
+                val existingAtIncomingEpoch = database.syncKeyRingDao().key(syncSpaceId.value, activeEpoch)
+                when {
+                    existingAtIncomingEpoch == null -> adoptedEpochs += activeEpoch
+                    existingAtIncomingEpoch.keyIdentity == activeKey.identity.value -> reusedEpochs += activeEpoch
+                    else -> return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+                }
+            }
+        }
+
+        val adoption = SyncKeyPackageAdoption(adoptedEpochs, reusedEpochs)
+        historicalReferences.filter { it.keyEpoch in adoptedEpochs }.forEach { historical ->
+            database.syncKeyRingDao().saveKey(
+                SyncSpaceContentKeyRecord(
+                    syncSpaceId.value,
+                    historical.keyEpoch,
+                    historical.reference.value,
+                    historical.identity.value,
+                    SyncSpaceContentKeyUsage.DECRYPT_ONLY.name,
+                ),
+            )
+        }
+
+        return@withWriteTransaction when {
+            state == null -> {
+                database.syncKeyRingDao().saveKey(
+                    SyncSpaceContentKeyRecord(
+                        syncSpaceId.value,
+                        activeEpoch,
+                        activeKey.reference.value,
+                        activeKey.identity.value,
+                        SyncSpaceContentKeyUsage.ACTIVE.name,
+                    ),
+                )
+                database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, activeEpoch))
+                InstallSyncKeyPackageResult.Installed(adoption)
+            }
+            activeEpoch > state.activeEncryptionEpoch -> {
+                database.syncKeyRingDao().demoteActive(syncSpaceId.value)
+                if (activeEpoch in adoptedEpochs) {
+                    database.syncKeyRingDao().saveKey(
+                        SyncSpaceContentKeyRecord(
+                            syncSpaceId.value,
+                            activeEpoch,
+                            activeKey.reference.value,
+                            activeKey.identity.value,
+                            SyncSpaceContentKeyUsage.ACTIVE.name,
+                        ),
+                    )
+                } else {
+                    val existing = requireNotNull(database.syncKeyRingDao().key(syncSpaceId.value, activeEpoch))
+                    database.syncKeyRingDao().saveKey(existing.copy(usage = SyncSpaceContentKeyUsage.ACTIVE.name))
+                }
+                database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, activeEpoch))
+                InstallSyncKeyPackageResult.Advanced(adoption)
+            }
+            adoptedEpochs.isNotEmpty() -> InstallSyncKeyPackageResult.Repaired(adoption)
+            else -> InstallSyncKeyPackageResult.Idempotent(adoption)
+        }
     }
 
     /** Converts the unmerged v6 single-key record once, preserving it as the active key. */
