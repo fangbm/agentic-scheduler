@@ -6,8 +6,10 @@ import dev.agenticscheduler.application.history.SyncReceiveResult
 
 /**
  * Sole D8 bridge from an opaque transport envelope into the plaintext
- * SyncEngine. Authentication/protocol failures stop here, before the engine
- * can inspect or write Active State, history, conflicts, or cursors.
+ * SyncEngine. Envelope authentication failures stop here before the engine
+ * can inspect or write state; authenticated inner protocol failures continue
+ * to SyncEngine so its durable quarantine/cursor transaction remains sole
+ * owner of that behavior.
  */
 class EncryptedSyncReceiveGateway(
     private val envelopeCodec: AuthenticatedSyncEnvelopeCodec,
@@ -15,7 +17,7 @@ class EncryptedSyncReceiveGateway(
 ) {
     suspend fun receive(encodedEnvelope: String, serverCursor: Long): EncryptedSyncReceiveResult =
         when (val decrypted = envelopeCodec.decrypt(encodedEnvelope)) {
-            is DecryptSyncEnvelopeResult.Decrypted -> EncryptedSyncReceiveResult.Handled(
+            is DecryptSyncEnvelopeResult.AuthenticatedPlaintext -> EncryptedSyncReceiveResult.Handled(
                 syncEngine.receive(
                     DecryptedPayloadReceipt(
                         syncSpaceId = decrypted.envelope.syncSpaceId,
@@ -29,9 +31,6 @@ class EncryptedSyncReceiveGateway(
             DecryptSyncEnvelopeResult.MissingContentKey -> EncryptedSyncReceiveResult.SecurityFailure.MissingContentKey
             is DecryptSyncEnvelopeResult.UnsupportedEnvelopeVersion -> EncryptedSyncReceiveResult.ProtocolFailure.UnsupportedEnvelopeVersion(decrypted.actual)
             is DecryptSyncEnvelopeResult.InvalidEnvelope -> EncryptedSyncReceiveResult.ProtocolFailure.InvalidEnvelope(decrypted.reason)
-            is DecryptSyncEnvelopeResult.InvalidPayload -> EncryptedSyncReceiveResult.ProtocolFailure.InvalidPayload(decrypted.reason)
-            is DecryptSyncEnvelopeResult.UnsupportedPayloadVersion -> EncryptedSyncReceiveResult.ProtocolFailure.UnsupportedPayloadVersion(decrypted.actual)
-            is DecryptSyncEnvelopeResult.UnsupportedMutation -> EncryptedSyncReceiveResult.ProtocolFailure.UnsupportedMutation(decrypted.discriminator)
         }
 }
 
@@ -46,8 +45,5 @@ sealed interface EncryptedSyncReceiveResult {
     sealed interface ProtocolFailure : EncryptedSyncReceiveResult {
         data class UnsupportedEnvelopeVersion(val actual: Int?) : ProtocolFailure
         data class InvalidEnvelope(val reason: String) : ProtocolFailure
-        data class InvalidPayload(val reason: String) : ProtocolFailure
-        data class UnsupportedPayloadVersion(val actual: Int?) : ProtocolFailure
-        data class UnsupportedMutation(val discriminator: String?) : ProtocolFailure
     }
 }
