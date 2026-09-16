@@ -3,7 +3,6 @@ package dev.agenticscheduler.application.sync
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.EnvelopeDecodeResult
-import dev.agenticscheduler.sync.PayloadDecodeResult
 import dev.agenticscheduler.sync.SyncPayloadV1
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncWireCodec
@@ -55,9 +54,9 @@ sealed interface EncryptSyncPayloadResult {
 }
 
 sealed interface DecryptSyncEnvelopeResult {
-    data class Decrypted(
+    /** AEAD-authenticated plaintext. Inner protocol validation belongs to SyncEngine. */
+    data class AuthenticatedPlaintext(
         val envelope: EncryptedEnvelopeV1,
-        val payload: SyncPayloadV1,
         val payloadJson: String,
     ) : DecryptSyncEnvelopeResult
 
@@ -65,15 +64,13 @@ sealed interface DecryptSyncEnvelopeResult {
     data object AuthenticationFailed : DecryptSyncEnvelopeResult
     data class UnsupportedEnvelopeVersion(val actual: Int?) : DecryptSyncEnvelopeResult
     data class InvalidEnvelope(val reason: String) : DecryptSyncEnvelopeResult
-    data class InvalidPayload(val reason: String) : DecryptSyncEnvelopeResult
-    data class UnsupportedPayloadVersion(val actual: Int?) : DecryptSyncEnvelopeResult
-    data class UnsupportedMutation(val discriminator: String?) : DecryptSyncEnvelopeResult
 }
 
 /**
  * D8-02's authenticated envelope boundary. It validates the outer routing
- * identity before key lookup, authenticates that exact identity as AAD, and
- * only returns a typed payload after the inner wire decoder accepts it.
+ * identity before key lookup and authenticates that exact identity as AAD.
+ * It deliberately does not decode inner protocol JSON: SyncEngine owns its
+ * durable quarantine/cursor semantics for authenticated protocol failures.
  */
 class AuthenticatedSyncEnvelopeCodec(
     private val keys: SyncPayloadKeyProvider,
@@ -121,17 +118,6 @@ class AuthenticatedSyncEnvelopeCodec(
         } catch (_: Exception) {
             return DecryptSyncEnvelopeResult.AuthenticationFailed
         }
-        return when (val decoded = SyncWireCodec.decodePayload(payloadJson)) {
-            is PayloadDecodeResult.Supported -> {
-                if (decoded.payload.operation.mutationId != binding.mutationId) {
-                    DecryptSyncEnvelopeResult.InvalidPayload("Outer and inner MutationId differ.")
-                } else {
-                    DecryptSyncEnvelopeResult.Decrypted(envelope, decoded.payload, payloadJson)
-                }
-            }
-            is PayloadDecodeResult.UnsupportedVersion -> DecryptSyncEnvelopeResult.UnsupportedPayloadVersion(decoded.actual)
-            is PayloadDecodeResult.UnsupportedMutation -> DecryptSyncEnvelopeResult.UnsupportedMutation(decoded.discriminator)
-            is PayloadDecodeResult.Invalid -> DecryptSyncEnvelopeResult.InvalidPayload(decoded.reason)
-        }
+        return DecryptSyncEnvelopeResult.AuthenticatedPlaintext(envelope, payloadJson)
     }
 }

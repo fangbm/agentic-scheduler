@@ -3,11 +3,13 @@ package dev.agenticscheduler.application.sync
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.DotSnapshot
 import dev.agenticscheduler.sync.DvvSnapshot
+import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.HlcSnapshot
 import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.SyncPayloadV1
 import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.SyncWireCodec
 import dev.agenticscheduler.sync.VersionComponent
 import dev.agenticscheduler.sync.WorkLogAppend
 import dev.agenticscheduler.sync.WorkLogImage
@@ -37,8 +39,8 @@ class AuthenticatedSyncEnvelopeCodecTest {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
         assertNotEquals("cGF5bG9hZA", envelope.ciphertextBase64Url)
 
-        val decrypted = assertIs<DecryptSyncEnvelopeResult.Decrypted>(codec.decrypt(envelope))
-        assertEquals(payload(), decrypted.payload)
+        val decrypted = assertIs<DecryptSyncEnvelopeResult.AuthenticatedPlaintext>(codec.decrypt(envelope))
+        assertEquals(SyncWireCodec.encodePayload(payload()), decrypted.payloadJson)
     }
 
     @Test
@@ -62,6 +64,22 @@ class AuthenticatedSyncEnvelopeCodecTest {
 
         val mismatchedBinding = binding.copy(mutationId = "00000000-0000-7000-8000-000000000002")
         assertIs<EncryptSyncPayloadResult.InvalidPayload>(codec.encrypt(mismatchedBinding, payload()))
+    }
+
+    @Test
+    fun `leaves authenticated unknown inner protocol for SyncEngine durable quarantine`() {
+        val unknownPayload = """{"payloadVersion":2,"operation":{"ignored":true}}"""
+        val plaintextCodec = AuthenticatedSyncEnvelopeCodec(PermissiveKeys(EchoAead(unknownPayload)))
+        val envelope = EncryptedEnvelopeV1(
+            syncSpaceId = binding.syncSpaceId,
+            mutationId = binding.mutationId,
+            senderDeviceId = binding.senderDeviceId,
+            keyEpoch = binding.keyEpoch,
+            ciphertextBase64Url = "opaque",
+        )
+
+        val decrypted = assertIs<DecryptSyncEnvelopeResult.AuthenticatedPlaintext>(plaintextCodec.decrypt(envelope))
+        assertEquals(unknownPayload, decrypted.payloadJson)
     }
 
     private fun payload(): SyncPayloadV1 = SyncPayloadV1(
@@ -95,5 +113,12 @@ class AuthenticatedSyncEnvelopeCodecTest {
         private val key: SyncPayloadAead,
     ) : SyncPayloadKeyProvider {
         override fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncPayloadAead = key
+    }
+
+    private class EchoAead(
+        private val plaintext: String,
+    ) : SyncPayloadAead {
+        override fun encryptToBase64Url(plaintextUtf8: String, associatedDataUtf8: String): String = "unused"
+        override fun decryptFromBase64Url(ciphertextBase64Url: String, associatedDataUtf8: String): String = plaintext
     }
 }
