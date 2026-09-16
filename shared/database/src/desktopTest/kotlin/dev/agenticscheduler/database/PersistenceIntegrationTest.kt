@@ -527,6 +527,20 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
+    @Test fun `D8 key package replay compares stable key identity not secure-store reference`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val keys = RoomSyncKeyMetadataRepository(database)
+        val space = SyncSpaceId("personal-space")
+        val first = dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(8, dev.agenticscheduler.application.sync.SecretReference("secure://key/object-123"), dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-k8"))
+        val replay = dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(8, dev.agenticscheduler.application.sync.SecretReference("secure://key/object-456"), dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-k8"))
+        val divergent = dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference(8, dev.agenticscheduler.application.sync.SecretReference("secure://key/object-789"), dev.agenticscheduler.application.sync.ContentKeyIdentity("fingerprint-other"))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Installed, keys.installKeyPackage(space, first, emptyList()))
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.Idempotent, keys.installKeyPackage(space, replay, emptyList()))
+        assertEquals(dev.agenticscheduler.application.sync.SecretReference("secure://key/object-123"), keys.currentEncryptionKey(space)?.contentKeyReference)
+        assertEquals(dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult.IntegrityError, keys.installKeyPackage(space, divergent, emptyList()))
+        database.close()
+    }
+
     @Test fun `D8 receive metadata persists cursor quarantine and structured conflict`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val repository = RoomSyncReceiveRepository(database)
