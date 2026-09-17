@@ -174,18 +174,22 @@ fun requireCanonicalBase64Url(value: String, expectedBytes: Int?, name: String) 
     require(value.isNotEmpty() && '=' !in value && value.all { it.isAsciiLetterOrDigit() || it == '-' || it == '_' }) {
         "$name must be non-empty unpadded base64url."
     }
-    val decoded = try { Base64.UrlSafe.decode(value) } catch (_: IllegalArgumentException) {
+    val decoded = try { unpaddedUrlSafeBase64.decode(value) } catch (_: IllegalArgumentException) {
         throw IllegalArgumentException("$name is not base64url.")
     }
     require(expectedBytes == null || decoded.size == expectedBytes) { "$name must decode to $expectedBytes bytes." }
-    require(Base64.UrlSafe.encode(decoded) == value) { "$name must use canonical base64url encoding." }
+    require(unpaddedUrlSafeBase64.encode(decoded) == value) { "$name must use canonical base64url encoding." }
 }
 
 @OptIn(ExperimentalEncodingApi::class)
 fun decodeCanonicalBase64Url(value: String, expectedBytes: Int?, name: String): ByteArray {
     requireCanonicalBase64Url(value, expectedBytes, name)
-    return Base64.UrlSafe.decode(value)
+    return unpaddedUrlSafeBase64.decode(value)
 }
+
+/** SYN-006A accepts and emits canonical base64url without '=' padding. */
+@OptIn(ExperimentalEncodingApi::class)
+private val unpaddedUrlSafeBase64 = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
 
 private fun Char.isAsciiLetterOrDigit(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
