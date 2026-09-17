@@ -27,7 +27,9 @@ class TinkPairingHpke : PairingHpke {
         val rawPublic = decodeCanonicalBase64Url(publicKey.value, 32, "HPKE public key")
         val key = HpkePublicKey.create(parameters, Bytes.copyFrom(rawPublic), null)
         val handle = KeysetHandle.newBuilder()
-            .addEntry(KeysetHandle.importKey(key).makePrimary())
+            // Tink requires a local KeysetHandle ID even for RAW output.
+            // SYN-006A's HPKE ciphertext remains NO_PREFIX on the wire.
+            .addEntry(KeysetHandle.importKey(key).withRandomId().makePrimary())
             .build()
         val combined = handle.getPrimitive(HybridEncrypt::class.java).encrypt(plaintext, contextInfo)
         require(combined.size > ENCAPSULATED_KEY_BYTES)
