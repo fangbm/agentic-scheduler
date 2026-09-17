@@ -6,6 +6,7 @@ import dev.agenticscheduler.sync.EnrollmentRequestId
 import dev.agenticscheduler.sync.HpkePublicKeyBase64Url
 import dev.agenticscheduler.sync.KeyPackageEnvelopeV1
 import dev.agenticscheduler.sync.KeyPackagePlaintextV1
+import dev.agenticscheduler.sync.PairingWireDecodeResult
 import dev.agenticscheduler.sync.PairingWireCodec
 import kotlin.io.encoding.Base64
 import kotlin.io.encoding.ExperimentalEncodingApi
@@ -83,6 +84,47 @@ fun PairingHpke.encryptKeyPackage(
         encapsulatedKeyBase64Url = encrypted.encapsulatedKeyBase64Url,
         ciphertextBase64Url = encrypted.ciphertextBase64Url,
     )
+}
+
+sealed interface DecryptKeyPackageResult {
+    data class Admitted(val plaintext: KeyPackagePlaintextV1) : DecryptKeyPackageResult
+    data object AuthenticationFailed : DecryptKeyPackageResult
+    data object InvalidPlaintext : DecryptKeyPackageResult
+    data object IdentityMismatch : DecryptKeyPackageResult
+    data object NotPending : DecryptKeyPackageResult
+}
+
+/**
+ * SYN-006A receive gate. It derives context from the authenticated outer
+ * envelope, strictly decodes inner JSON, and admits identities before any
+ * caller can import key material.
+ */
+fun PairingHpke.decryptKeyPackage(
+    state: PairingEnrollmentState,
+    privateKey: PairingPrivateKeyMaterial,
+    envelope: KeyPackageEnvelopeV1,
+): DecryptKeyPackageResult {
+    val context = KeyPackageContextV1.bytes(
+        envelope.accountId,
+        envelope.requestId,
+        envelope.targetDeviceId,
+        envelope.keyPackageVersion,
+        envelope.keyEpoch,
+    )
+    val plaintextJson = try {
+        decrypt(privateKey, envelope.encapsulatedKeyBase64Url, envelope.ciphertextBase64Url, context).decodeToString()
+    } catch (_: Exception) {
+        return DecryptKeyPackageResult.AuthenticationFailed
+    }
+    val plaintext = when (val decoded = PairingWireCodec.decodePlaintext(plaintextJson)) {
+        is PairingWireDecodeResult.Supported -> decoded.value
+        else -> return DecryptKeyPackageResult.InvalidPlaintext
+    }
+    return when (val admission = PairingAdmission.admitPackage(state, envelope, plaintext)) {
+        is KeyPackageAdmissionResult.Accepted -> DecryptKeyPackageResult.Admitted(admission.plaintext)
+        KeyPackageAdmissionResult.IdentityMismatch -> DecryptKeyPackageResult.IdentityMismatch
+        KeyPackageAdmissionResult.NotPending -> DecryptKeyPackageResult.NotPending
+    }
 }
 
 @OptIn(ExperimentalEncodingApi::class)
