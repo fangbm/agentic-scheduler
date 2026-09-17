@@ -212,8 +212,7 @@ Enrollment flow:
 ```text
 new device generates DeviceId + HPKE key pair
 → server stores a PENDING enrollment request with public key
-→ new device displays an 8-digit verification code derived from
-   SHA-256(accountId | requestId | deviceId | publicKey), truncated for SAS display
+→ new device displays the exact 8-digit SAS defined by SYN-006A
 → an existing enrolled device fetches the request and user compares the code
 → existing device explicitly approves
 → existing device HPKE-encrypts current key package to new-device public key
@@ -236,6 +235,231 @@ keyEpoch
 Future QR pairing may encode the same request identity/public key/SAS data without changing key-package semantics.
 
 Recovery enrollment is also supported: possession of the Recovery Secret decrypts the current recovery envelope, after which the new device registers as an enrolled device and rotates its server credential.
+
+### SYN-006A — D8 v1 pairing wire and SAS contract (approved amendment)
+
+SYN-006A freezes the cross-device byte-level contract. Implementations must not
+persist or transmit Tink keyset/protobuf serialization as the pairing protocol.
+The HPKE suite is fixed by `keyPackageVersion = 1`; v1 does not negotiate KEM,
+KDF, AEAD, output-prefix type, or alternate suites.
+
+#### SYN-006A-1 — HPKE public-key wire encoding
+
+The canonical v1 public-key field is:
+
+```text
+hpkePublicKeyBase64Url =
+    base64url-no-padding(
+        RFC9180.SerializePublicKey(X25519 public key)
+    )
+```
+
+For `DHKEM_X25519_HKDF_SHA256`, `SerializePublicKey` is the raw 32-byte X25519
+public key. Therefore v1 requires:
+
+```text
+decoded public-key length = exactly 32 bytes
+base64url alphabet only
+no '=' padding
+canonical re-encode must equal the received input
+wire text length = exactly 43 characters
+```
+
+The following are not valid pairing public-key wire encodings:
+
+```text
+Tink Keyset proto
+Tink HpkePublicKey protobuf serialization
+PEM
+DER
+JWK
+Tink output prefix / key id
+```
+
+The v1 suite is exactly:
+
+```text
+DHKEM_X25519_HKDF_SHA256
+HKDF_SHA256
+AES_256_GCM
+HPKE base mode
+RAW / NO_PREFIX
+```
+
+#### SYN-006A-2 — Key-package envelope and plaintext schema
+
+The opaque server-relayed outer envelope is strict UTF-8 JSON:
+
+```json
+{
+  "keyPackageVersion": 1,
+  "accountId": "...",
+  "requestId": "...",
+  "targetDeviceId": "...",
+  "keyEpoch": 8,
+  "encapsulatedKeyBase64Url": "...",
+  "ciphertextBase64Url": "..."
+}
+```
+
+`encapsulatedKeyBase64Url` is base64url-without-padding of the 32-byte HPKE
+encapsulated X25519 key. `ciphertextBase64Url` is base64url-without-padding of
+the HPKE ciphertext, including its AEAD authentication tag. V1 does not expose
+or transmit a separate nonce, IV, or tag field.
+
+The decrypted plaintext is strict UTF-8 JSON:
+
+```json
+{
+  "keyPackageVersion": 1,
+  "accountId": "...",
+  "requestId": "...",
+  "targetDeviceId": "...",
+  "keyEpoch": 8,
+  "accountMasterKeyBase64Url": "...",
+  "syncSpace": {
+    "syncSpaceId": "...",
+    "activeEpoch": 8,
+    "activeKeyBase64Url": "...",
+    "historicalKeys": [
+      {
+        "keyEpoch": 6,
+        "keyBase64Url": "..."
+      },
+      {
+        "keyEpoch": 7,
+        "keyBase64Url": "..."
+      }
+    ]
+  }
+}
+```
+
+The decoded AMK, active SyncSpace key, and every historical SyncSpace key are
+exactly 32 bytes. `RecoverySecret` and `DeviceCredential` never appear in this
+package.
+
+`historicalKeys` has these v1 rules:
+
+```text
+keyEpoch values are unique
+all historical keyEpoch values < activeEpoch
+sender emits entries in ascending keyEpoch order
+sender MUST include its complete locally retained DECRYPT_ONLY ring
+```
+
+The recipient does not infer omitted epochs from numeric continuity. Package
+completeness is a sender/package-builder responsibility. `ContentKeyIdentity`
+is not transmitted; the recipient derives it from each received raw key as
+`base64url-no-padding(SHA-256(raw AES-256 content-key bytes))` before invoking
+the durable key-ring installer.
+
+Before any secure-store import, the recipient validates all of:
+
+```text
+plaintext.keyPackageVersion == envelope.keyPackageVersion == 1
+plaintext.accountId         == envelope.accountId
+plaintext.requestId         == envelope.requestId
+plaintext.targetDeviceId    == envelope.targetDeviceId
+plaintext.keyEpoch          == envelope.keyEpoch
+plaintext.keyEpoch          == plaintext.syncSpace.activeEpoch
+requestId                   == current local PENDING enrollment request
+targetDeviceId              == current device
+```
+
+Any mismatch rejects the whole package, imports no partial key material, and
+leaves the device PENDING. V1 key-package JSON is strict: duplicate object keys,
+unexpected fields, malformed/noncanonical base64url, duplicate historical
+epochs, invalid lengths, and unsupported versions are rejected rather than
+silently ignored. Future schema changes require a new `keyPackageVersion`.
+
+The exact HPKE `contextInfo` / AAD byte string is length-prefixed, not delimiter
+concatenated. Define:
+
+```text
+LP(s) = U32BE(length(UTF8(s))) || UTF8(s)
+```
+
+Then:
+
+```text
+KeyPackageContextV1 =
+    ASCII("agentic-scheduler-key-package")
+    || 0x00
+    || LP(accountId)
+    || LP(requestId)
+    || LP(targetDeviceId)
+    || U32BE(keyPackageVersion)
+    || U64BE(keyEpoch)
+```
+
+These exact bytes are supplied as the Tink HPKE/hybrid `contextInfo` value.
+
+#### SYN-006A-3 — Exact 8-digit SAS mapping
+
+SAS input uses the canonical raw 32-byte X25519 public key, not its base64url
+text. Reuse the `LP(s)` definition above and define:
+
+```text
+S =
+    ASCII("agentic-scheduler-pairing-sas")
+    || 0x00
+    || LP(accountId)
+    || LP(requestId)
+    || LP(deviceId)
+    || hpkePublicKeyRaw32
+```
+
+The unbiased deterministic decimal mapping is:
+
+```text
+M     = 100000000
+LIMIT = 18446744073700000000
+
+for counter = 0, 1, 2, ...:
+    digest = SHA-256(S || U32BE(counter))
+    x = U64BE(digest[0..7])
+    if x >= LIMIT:
+        continue
+    sasNumber = x mod M
+    stop
+```
+
+`LIMIT` is the largest multiple of `100000000` below `2^64`, so rejection avoids
+modulo bias. The canonical protocol SAS is the base-10 representation of
+`sasNumber`, left-padded with ASCII `0` to exactly eight digits:
+
+```text
+regex: [0-9]{8}
+42 -> "00000042"
+```
+
+Leading zeros are mandatory protocol data. A UI may visually group the eight
+digits, for example `0000 0042`, but comparison and transport use the ungrouped
+eight-character value.
+
+Cross-platform implementations must include this frozen test vector:
+
+```text
+accountId = "acct-1"
+requestId = "req-1"
+deviceId  = "device-1"
+
+hpkePublicKeyRaw32 =
+00 01 02 03 04 05 06 07
+08 09 0a 0b 0c 0d 0e 0f
+10 11 12 13 14 15 16 17
+18 19 1a 1b 1c 1d 1e 1f
+
+hpkePublicKeyBase64Url =
+AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8
+
+counter = 0
+SHA-256(S || U32BE(counter)) =
+1eabe35e9ae2c9157d72294828e5f9ff191c6de708942dd147e5ab3df625d770
+
+SAS = "20345109"
+```
 
 ---
 
