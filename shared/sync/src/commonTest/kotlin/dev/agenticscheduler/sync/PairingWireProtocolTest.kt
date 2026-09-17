@@ -23,6 +23,10 @@ class PairingWireProtocolTest {
             ),
         )
         val encoded = PairingWireCodec.encodePlaintext(plaintext)
+        assertEquals(
+            """{"keyPackageVersion":1,"accountId":"acct-1","requestId":"req-1","targetDeviceId":"device-1","keyEpoch":8,"accountMasterKeyBase64Url":"$key","syncSpace":{"syncSpaceId":"personal-space","activeEpoch":8,"activeKeyBase64Url":"$key","historicalKeys":[{"keyEpoch":6,"keyBase64Url":"$key"},{"keyEpoch":7,"keyBase64Url":"$key"}]}}""",
+            encoded,
+        )
         assertEquals(plaintext, assertIs<PairingWireDecodeResult.Supported<KeyPackagePlaintextV1>>(PairingWireCodec.decodePlaintext(encoded)).value)
 
         val envelope = KeyPackageEnvelopeV1(
@@ -33,7 +37,12 @@ class PairingWireProtocolTest {
             encapsulatedKeyBase64Url = key,
             ciphertextBase64Url = "AQI",
         )
-        assertEquals(envelope, assertIs<PairingWireDecodeResult.Supported<KeyPackageEnvelopeV1>>(PairingWireCodec.decodeEnvelope(PairingWireCodec.encodeEnvelope(envelope))).value)
+        val encodedEnvelope = PairingWireCodec.encodeEnvelope(envelope)
+        assertEquals(
+            """{"keyPackageVersion":1,"accountId":"acct-1","requestId":"req-1","targetDeviceId":"device-1","keyEpoch":8,"encapsulatedKeyBase64Url":"$key","ciphertextBase64Url":"AQI"}""",
+            encodedEnvelope,
+        )
+        assertEquals(envelope, assertIs<PairingWireDecodeResult.Supported<KeyPackageEnvelopeV1>>(PairingWireCodec.decodeEnvelope(encodedEnvelope)).value)
     }
 
     @Test
