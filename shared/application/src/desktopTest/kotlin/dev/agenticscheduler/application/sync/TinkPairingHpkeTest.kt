@@ -5,6 +5,7 @@ import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EnrollmentRequestId
 import dev.agenticscheduler.sync.HistoricalSyncSpaceKeyV1
 import dev.agenticscheduler.sync.KeyPackagePlaintextV1
+import dev.agenticscheduler.sync.PendingEnrollmentRequestV1
 import dev.agenticscheduler.sync.PairingWireCodec
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncSpaceKeyPackageV1
@@ -47,6 +48,13 @@ class TinkPairingHpkeTest {
             context,
         ).decodeToString()
         assertEquals(plaintext, (PairingWireCodec.decodePlaintext(decrypted) as dev.agenticscheduler.sync.PairingWireDecodeResult.Supported).value)
+        val pending = PairingEnrollmentState.Pending(
+            PendingEnrollmentRequestV1(plaintext.accountId, plaintext.requestId, plaintext.targetDeviceId, recipient.publicKey),
+        )
+        assertEquals(
+            DecryptKeyPackageResult.Admitted(plaintext),
+            hpke.decryptKeyPackage(pending, recipient.privateKey, envelope),
+        )
 
         val wrongContext = KeyPackageContextV1.bytes(
             plaintext.accountId,
@@ -58,5 +66,9 @@ class TinkPairingHpkeTest {
         assertFails {
             hpke.decrypt(recipient.privateKey, envelope.encapsulatedKeyBase64Url, envelope.ciphertextBase64Url, wrongContext)
         }
+        assertEquals(
+            DecryptKeyPackageResult.AuthenticationFailed,
+            hpke.decryptKeyPackage(pending, recipient.privateKey, envelope.copy(targetDeviceId = DeviceId("other-device"))),
+        )
     }
 }
