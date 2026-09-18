@@ -1,0 +1,14 @@
+name: CIFleet Smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: [self-hosted, cifleet, linux-x64]
+    timeout-minutes: 10
+    steps:
+      - name: Verify CIFleet JIT runner
+        run: |
+          echo "CIFleet JIT runner OK"
+          uname -a
