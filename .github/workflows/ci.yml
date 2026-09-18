@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+env:
+  HTTP_PROXY: http://192.168.0.102:7890
+  HTTPS_PROXY: http://192.168.0.102:7890
+  NO_PROXY: localhost,127.0.0.1,::1
+
 jobs:
   build:
     runs-on: [self-hosted, cifleet, linux-x64]
