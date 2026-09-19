@@ -69,3 +69,5 @@ jobs:
           retention-days: 14
 
 # CIFleet E5 Linux proxy verification
+
+# CIFleet Java Gradle proxy verification
