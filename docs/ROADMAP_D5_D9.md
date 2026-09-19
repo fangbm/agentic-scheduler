@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented; D6 complete; D6.5 implemented (formal verification pending); D7 complete; D8/D9 specs frozen; D10 planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 implemented/build-verified (interactive verification pending); D7 complete; D8/D9 specs frozen; D10 planned
 > Date: 2026-09-20
 
 ---
@@ -14,7 +14,7 @@ D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDIN
  ↓
 D6     Deterministic Planner + PlanBranch      COMPLETE / MERGED / CI GREEN
  ↓
-D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / FORMAL VERIFICATION PENDING
+D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / BUILD VERIFIED / INTERACTIVE VERIFICATION PENDING
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
@@ -121,6 +121,15 @@ D10 cross-platform visual consistency work
 The previous Agentic Scheduler UI concept boards are therefore a D10 visual/product reference, not a D6.5 acceptance target.
 
 D6.5 acceptance is functional: real-data Full Replan -> Preview -> Apply/Cancel works end-to-end, structured failures remain visible, one Local Reflow flow works, and Android/Desktop are usable enough for dogfooding.
+
+Build evidence recorded 2026-09-20:
+
+```text
+.\gradlew.bat build --no-daemon                                  PASS
+.\gradlew.bat :apps:android:assembleDebug :apps:desktop:createDistributable --no-daemon  PASS
+```
+
+The Android debug APK and Desktop distributable were produced. Manual interactive dogfood verification is still pending.
 
 ---
 

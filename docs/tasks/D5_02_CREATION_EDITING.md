@@ -2,7 +2,7 @@
 
 > Task ID: **D5-02**  
 > Milestone: **D5 follow-on — local creation/editing**  
-> Status: **IMPLEMENTED / STATIC REVIEWED / VERIFICATION PENDING**
+> Status: **IMPLEMENTED / BUILD VERIFIED / RUNTIME VERIFICATION PENDING**
 > Date: 2026-09-11  
 > Prerequisites: D5-01 complete; OD-004 production UUIDv7 generation resolved by `docs/PLANNER_DECISIONS.md` PLN-019
 > Implementation revision: `b10bec0` (`fix(d5): make editing tests JUnit compatible`)

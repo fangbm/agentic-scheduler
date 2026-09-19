@@ -2,7 +2,7 @@
 
 A local-first Kotlin Multiplatform scheduler. End-to-end encrypted synchronization is planned for D8; it is not implemented yet.
 
-The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, and implemented D7 mutation/history/causality foundation. D6.5 dogfood integration is present but formal verification remains pending; D8 E2EE Sync is specified but not implemented.
+The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, and implemented D7 mutation/history/causality foundation. D5-02/D6.5 build and packaging verification passed locally on 2026-09-20; interactive dogfood verification remains pending. D8 E2EE Sync is specified but not implemented.
 
 ## Modules
 
