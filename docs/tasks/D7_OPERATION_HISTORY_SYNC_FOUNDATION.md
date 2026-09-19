@@ -298,12 +298,12 @@ object-level LWW
 D7 PASS requires every HST-013 item plus:
 
 ```text
-[ ] D6 is COMPLETE before integration begins
-[ ] :shared:sync dependency direction verified
-[ ] all existing user/planner write commands either use MutationCoordinator or are explicitly non-synchronizable
-[ ] ChangeLog/Undo public result vocabulary is structured
-[ ] Room migration/schema export passes
-[ ] repository-wide CI green
+[x] D6 is COMPLETE before integration begins
+[x] :shared:sync dependency direction verified
+[x] all existing user/planner write commands either use MutationCoordinator or are explicitly non-synchronizable
+[x] ChangeLog/Undo public result vocabulary is structured
+[x] Room migration/schema export passes
+[x] repository-wide CI green
 ```
 
-When complete, update this status to `COMPLETE` and advance D8 implementation gate.
+The status above records D7 completion. D8 implementation remains gated by the outstanding D6.5 formal verification and its own frozen acceptance requirements.

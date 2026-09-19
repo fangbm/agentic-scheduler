@@ -46,13 +46,15 @@ The repository currently contains:
 ```text
 :shared:domain
 :shared:application
+:shared:planner
+:shared:sync
 :shared:database
 :apps:android
 :apps:desktop
 :apps:wear
 ```
 
-A future Task Spec may explicitly authorize another module. Do not create one merely because it seems cleaner.
+D6 explicitly authorized `:shared:planner`; D7 explicitly authorized `:shared:sync`. A future Task Spec may authorize another module. Do not create one merely because it seems cleaner.
 
 ## Non-negotiable invariants
 

@@ -80,6 +80,8 @@ Current modules are:
 ```text
 :shared:domain
 :shared:application
+:shared:planner
+:shared:sync
 :shared:database
 :apps:android
 :apps:desktop

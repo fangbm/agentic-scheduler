@@ -1,8 +1,8 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented; D6 Planner rewrite merged and CI green; D6.5 next; D7-D9 specs frozen; D10 final product UI planned
-> Date: 2026-09-14
+> Baseline: D5-01 complete; D5-02 implemented; D6 complete; D6.5 implemented (formal verification pending); D7 complete; D8/D9 specs frozen; D10 planned
+> Date: 2026-09-20
 
 ---
 
@@ -14,11 +14,11 @@ D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDIN
  ↓
 D6     Deterministic Planner + PlanBranch      COMPLETE / MERGED / CI GREEN
  ↓
-D6.5   Prototype Integration / Dogfood Gate    READY
+D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / FORMAL VERIFICATION PENDING
  ↓
-D7     Mutation Journal / History / Undo       SPEC FROZEN — READY AFTER D6.5
+D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    SPEC FROZEN — READY AFTER D7
+D8     E2EE Multi-device Sync + Thin Server    SPEC FROZEN — READY AFTER D6.5 VERIFICATION
  ↓
 D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
 D9-02  Agent history sync amendment            AFTER D9-01
@@ -136,9 +136,9 @@ Status:
 
 ```text
 D7-00 decisions                      FROZEN
-D7-01 mutation coordinator/ChangeLog READY AFTER D6.5
-D7-02 Undo                           READY AFTER D6.5
-D7-03 DVV/HLC/:shared:sync journal   READY AFTER D6.5
+D7-01 mutation coordinator/ChangeLog IMPLEMENTED / VERIFIED
+D7-02 Undo                           IMPLEMENTED / VERIFIED
+D7-03 DVV/HLC/:shared:sync journal   IMPLEMENTED / VERIFIED
 ```
 
 Core frozen outcomes:
@@ -153,7 +153,7 @@ DVV causal truth; HLC ordering metadata only
 :shared:sync approved
 ```
 
-D7 has no network/server/E2EE.
+D7 is complete on current main and has no network/server/E2EE.
 
 ---
 
@@ -169,9 +169,9 @@ Status:
 
 ```text
 D8-00 protocol/security decisions  FROZEN
-D8-01 client SyncEngine/merge      READY AFTER D7
-D8-02 E2EE/key lifecycle           READY AFTER D7
-D8-03 thin server/Wear transport   READY AFTER D7
+D8-01 client SyncEngine/merge      READY AFTER D6.5 VERIFICATION
+D8-02 E2EE/key lifecycle           READY AFTER D6.5 VERIFICATION
+D8-03 thin server/Wear transport   READY AFTER D6.5 VERIFICATION
 ```
 
 Frozen baseline includes:

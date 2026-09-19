@@ -12,13 +12,15 @@ This document is about **ownership**, not just directory names. If a coding agen
 ```text
 :shared:domain
 :shared:application
+:shared:planner
+:shared:sync
 :shared:database
 :apps:android
 :apps:desktop
 :apps:wear
 ```
 
-D4 explicitly introduced `:shared:application`. No other Gradle module exists by default. Future modules from the architecture/roadmap are conceptual until a Task Spec explicitly creates them.
+D4 introduced `:shared:application`; D6 introduced `:shared:planner`; D7 introduced `:shared:sync`. Future modules from the architecture/roadmap remain conceptual until a Task Spec explicitly creates them.
 
 ---
 
@@ -33,12 +35,14 @@ Platform Apps
     ↓               ↓
 :shared:application   :shared:database
     │               │
+    ├──────────────→ :shared:planner ──→ :shared:domain
+    ├──────────────→ :shared:sync ─────→ :shared:domain
     ↓               ├──────────────→ :shared:application
 :shared:domain       │
                     └──────────────→ :shared:domain
 ```
 
-Future Agent/Planner/Sync modules, when explicitly created, remain higher-level consumers of Domain/Application contracts rather than dependencies of `shared:domain`.
+Future Agent modules remain higher-level consumers of Domain/Application/Planner/Sync contracts rather than dependencies of `shared:domain`.
 
 `shared:domain` is at the bottom of dependency direction.
 
