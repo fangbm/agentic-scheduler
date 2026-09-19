@@ -1,291 +1,309 @@
 # Agentic Scheduler — D7 Operation Journal, History, Undo & Causality Foundation
 
-> Task ID: **D7-00/01/02/03 draft**  
+> Task ID: **D7-01 / D7-02 / D7-03**  
 > Milestone: **D7 — Audit / Mutation / Sync Foundation**  
-> Status: **DRAFT — not implementation-ready**  
-> Date: 2026-09-11
+> Status: **IMPLEMENTED / VERIFIED / COMPLETE — D7.1 typed semantic-schema amendment incorporated**
+> Date: 2026-09-12  
+> Decision source: `docs/HISTORY_SYNC_DECISIONS.md`
 
 ---
 
 # 1. Goal
 
-Give every successful local logical mutation a durable transaction identity and auditable history before network synchronization exists.
+Make every successful local logical mutation durable, auditable, undo-aware, and causally identifiable before network synchronization exists.
 
-Intended D7 output:
-
-```text
-MutationId
-+ typed mutation group
-+ ChangeLog
-+ explicit limited Undo
-+ DVV
-+ HLC
-+ internal SyncOperation
-+ durable operation journal
-```
-
-Production wire serialization and network transport remain D8.
-
----
-
-# 2. Recommended split
+D7 output:
 
 ```text
-D7-00  mutation/delete/Undo decisions
-D7-01  typed mutation group + ChangeLog
-D7-02  explicit Undo support matrix
-D7-03  DVV/HLC + internal operation journal
-```
-
----
-
-# 3. Proposed ownership
-
-Recommended future module boundary:
-
-```text
-:shared:application
-    mutation orchestration
-    history read contracts
-    Undo use cases
-
-:shared:sync
-    DVV/HLC
-    SyncOperation semantic model
-    causality helpers
-
-:shared:database
-    persistence records/migrations
-```
-
-Creating `:shared:sync` is architecture-affecting and requires D7-00 approval before implementation.
-
-Sync metadata must not be added to Domain entities.
-
----
-
-# 4. Atomic local mutation path
-
-After D7, a successful synchronizable local command should follow:
-
-```text
-validate
-→ one application transaction
-    ├─ active-state writes
-    ├─ ChangeLog append
-    └─ internal SyncOperation append
-→ commit
-```
-
-All or none.
-
-D9 may later add AgentAction for Agent-originated operations without weakening this atomicity rule.
-
----
-
-# 5. OD-033 — operation granularity
-
-OD-033 must be resolved before D7 implementation.
-
-Recommended semantic shape:
-
-```text
-one logical application transaction = one MutationId
-one MutationId contains one ordered group of typed entity mutations
-replica application of the group is atomic
-```
-
-Do not use generic SQL patches or opaque arbitrary JSON as the authoritative mutation meaning.
-
----
-
-# 6. Typed mutation vocabulary
-
-The exact mutation set must be frozen from the entity operations that actually exist at D7 start.
-
-Conceptual examples:
-
-```text
-EventUpsert
-TaskUpsert
-FocusBlockUpsert
-AcademicSourceUpsert
-```
-
-Do not invent delete/update forms merely for protocol symmetry.
-
-A mutation carries typed semantic values or explicit transport-neutral DTOs rather than Room records.
-
----
-
-# 7. ChangeLog
-
-ChangeLog records successful state changes, not conversational claims.
-
-Minimum intended facts:
-
-```text
-ChangeLogEntryId
-MutationId
-origin
-logical timestamp / HLC
-affected typed entity identity
-typed operation
-reversible structured facts where supported
-```
-
-History is append-oriented.
-
-Current Domain State remains authoritative for current truth; ChangeLog is authoritative history of committed change.
-
----
-
-# 8. Undo support matrix
-
-Undo is not automatically available for every mutation.
-
-D7-00 must publish an explicit matrix:
-
-```text
-mutation kind
-inverse/compensation rule
-preconditions
-conflict result when current state diverged
-```
-
-For v1 it is acceptable to support only update/move mutations with safe explicit inverses.
-
-Undo creates a new compensating mutation/ChangeLog entry.
-
-Undo never deletes prior history.
-
----
-
-# 9. Deletion/tombstone gate
-
-D4 repositories intentionally did not define public delete semantics.
-
-D7 MUST NOT add generic synchronized deletion/tombstone behavior merely because Sync will eventually need it.
-
-Before the first delete mutation, explicitly freeze:
-
-```text
-which entity kinds are deletable
-related-entity effects
-reference behavior
-history behavior
-Undo behavior
-tombstone payload/identity
-```
-
-OD-032 physical tombstone compaction remains a later decision.
-
----
-
-# 10. WorkLog correction rule
-
-WorkLog is append-oriented historical fact.
-
-D7 must not expose ordinary "rewrite any WorkLog" semantics without a dedicated correction/tombstone contract.
-
-A future WorkLog correction must remain auditable.
-
----
-
-# 11. DVV / HLC
-
-D7 intends to implement the already-frozen causality directions:
-
-```text
-DVV => causal ancestry / concurrency
-HLC => monotonic stable ordering metadata
-```
-
-HLC is never semantic Last-Write-Wins policy.
-
-Wall-clock rollback must not break HLC monotonicity.
-
----
-
-# 12. Internal SyncOperation
-
-D7 may define and persist a typed semantic operation object suitable for later transport.
-
-D7 MUST NOT freeze production wire bytes merely to store the local operation journal.
-
-Therefore OD-030 may remain `PENDING` through D7 if no production serialization is introduced.
-
----
-
-# 13. Persistence/schema rule
-
-D7 bumps the then-current Room schema:
-
-```text
-N → N+1
-```
-
-Expected durable concerns:
-
-```text
+MutationId + atomic typed mutation group
 ChangeLog
-operation journal
-Device/HLC causal state
+explicit limited Undo
+ReplicaId + DVV + HLC
+:shared:sync causal/operation model
+durable internal SyncOperation journal
+FocusBlock tombstone semantics
+history read APIs
+Room migration N -> N+1
 ```
 
-Do not predeclare a numeric source version until the D7 implementation task is approved.
-
-Do not add tombstone tables if deletion remains out of scope.
+Production network transport/E2EE/server remain D8.
 
 ---
 
-# 14. History read APIs
+# 2. Required reading
 
-D7 should expose application read capabilities equivalent to:
+```text
+docs/DOMAIN_INVARIANTS.md
+docs/IMPLEMENTATION_CONTRACT.md
+docs/MODULE_OWNERSHIP.md
+docs/OPEN_DECISIONS.md
+docs/HISTORY_SYNC_DECISIONS.md
+docs/PLANNER_DECISIONS.md
+docs/PLANNER_REWRITE_DECISIONS.md
+docs/tasks/D6_DETERMINISTIC_PLANNER.md
+docs/tasks/D6_PLANNER_CORE_REWRITE.md
+this Task Spec
+```
+
+D7 implementation must not begin until D6 is explicitly COMPLETE. Documentation/design work may proceed earlier.
+
+---
+
+# 3. Split
+
+```text
+D7-01  mutation coordinator + typed mutation group + ChangeLog
+D7-02  explicit Undo support matrix + compensation
+D7-03  :shared:sync + DVV/HLC + durable SyncOperation journal + tombstone
+```
+
+Recommended integration order is D7-03 causal primitives first, then D7-01 atomic orchestration, then D7-02 Undo, while keeping each commit buildable.
+
+---
+
+# 4. Module contract
+
+Create:
+
+```text
+:shared:sync
+```
+
+Allowed direction:
+
+```text
+shared:sync        -> shared:domain
+shared:application -> shared:sync + shared:domain + shared:planner
+shared:database    -> shared:application + shared:sync + shared:domain
+apps               -> application composition; no direct journal table access
+```
+
+`:shared:sync` contains causal/semantic operation types, not networking/server code.
+
+No Domain entity receives Room/sync metadata.
+
+---
+
+# 5. Atomic mutation coordinator
+
+All synchronizable application writes must pass one coordinator/transaction seam equivalent to:
+
+```text
+allocate MutationId
+build typed ordered entity mutation group
+allocate local DVV dot + HLC
+begin application DB transaction
+    apply Active State writes
+    append MutationRecord + ChangeLog entries
+    append SyncOperation journal
+    update replica causal state
+    persist FocusBlock tombstone when applicable
+commit
+```
+
+Any failure rolls all of these back.
+
+Do not retrofit history by observing repository Flows after commit.
+
+No generic repository interceptor may guess before/after values outside the application command transaction.
+
+---
+
+# 6. Integration with existing commands
+
+At minimum wrap existing successful writes from:
+
+```text
+D5-02 Event create/update
+D5-02 Task create/update
+D6 Planner Apply FocusBlock create/move/resize/delete
+PlanningProfile update command when the prototype settings surface introduces it
+```
+
+Other D4 source-fact repository writes use the frozen typed mutation vocabulary when/if exposed through an application mutation command.
+
+Tests and migrations may still seed repositories directly; seeding is not user ChangeLog history unless the test explicitly exercises MutationCoordinator.
+
+---
+
+# 7. Typed operation requirements
+
+Use the exact v1 vocabulary in HST-002.
+
+Each entry carries normalized semantic DTO values sufficient for:
+
+```text
+history diff
+safe Undo precondition checks
+deterministic replay
+D8 semantic merge
+```
+
+Do not serialize Room records.
+
+WorkLog is append-only. CourseSession is never journaled as source fact.
+
+---
+
+# 8. ChangeLog/read surface
+
+Expose application capabilities equivalent to:
 
 ```text
 history.timeline
 history.getMutation
 history.getEntityChanges
 history.getDiff
+history.canUndo
+history.undo
 ```
 
-Exact internal names may vary, but history APIs are read-only with respect to Active State.
+Timeline ordering for UI is stable by HLC then MutationId; that ordering is not a merge policy.
+
+History UI may be minimal in D7. The application/query contract and structured results are required.
 
 ---
 
-# 15. Required tests once READY
+# 9. Undo
 
-At minimum:
+Implement exactly the HST-005 support matrix.
+
+Critical invariants:
 
 ```text
-active state + ChangeLog + operation journal atomic commit
-forced failure rolls all three back
-Undo appends compensating history
-diverged Undo returns explicit conflict
-DVV sequential case
-DVV concurrent case
-HLC monotonic under wall-clock rollback
-operation replay is deterministic
-migration N → N+1
-no production wire serialization dependency
-no object-level LWW fallback
+Undo is a new MutationId
+original history remains
+current-state equality/precondition is checked in the same write transaction
+grouped Planner Undo is all-or-none
+unsupported mutation kind is explicit, not silently ignored
+```
+
+A diverged entity produces `UndoConflict`; do not overwrite newer user/remote facts.
+
+---
+
+# 10. DVV / HLC
+
+Implement HST-006/HST-007 literally.
+
+Pure unit tests must cover:
+
+```text
+DVV equality/dominance/concurrency
+counter persistence
+rollback does not publish dot
+HLC local same-millisecond increments
+HLC wall-clock rollback
+HLC receive merge branches
+stable display ordering
+```
+
+Do not use HLC to choose semantic winners.
+
+---
+
+# 11. FocusBlock tombstone
+
+Only FocusBlock delete joins D7 v1 deletion semantics.
+
+Required behavior:
+
+```text
+active row removed
+tombstone retained
+before image in ChangeLog
+causally older Put suppressed during replay
+Undo may restore same ID only under HST-005 preconditions
+no physical compaction
+```
+
+Do not add Event/Task delete to make the protocol symmetric.
+
+---
+
+# 12. Persistence
+
+Bump current Room schema `N -> N+1` only when D7 implementation starts.
+
+Required durable concerns are frozen by HST-011. Export schema and add migration tests from the actual then-current version.
+
+The D7 task must not assume D6's numeric schema version remains the immediate predecessor if an intervening approved schema milestone lands first.
+
+---
+
+# 13. D8 compatibility seam
+
+D7 does not open network connections.
+
+The durable `SyncOperation` must nevertheless be transport-neutral and contain the semantic facts D8 needs:
+
+```text
+MutationId
+DVV
+HLC
+origin
+ordered typed entity mutations
+```
+
+No server cursor, delivery retry count, ciphertext, key ID, or account credential belongs inside semantic SyncOperation.
+
+---
+
+# 14. Required test matrix
+
+```text
+Event create/update atomic journal
+Task create/update atomic journal
+Planner multi-FocusBlock Apply = one MutationId
+forced active-state failure rolls history/journal/causal state back
+forced journal failure rolls Active State back
+ChangeLog ordinal ordering
+history diff round-trip
+supported Event/Task/Profile Undo
+FocusBlock create/move/resize/delete Undo
+Planner grouped Undo atomic success/failure
+unsupported create/academic/WorkLog Undo result
+DVV sequential + concurrent + dominance
+HLC rollback + receive merge
+replay duplicate idempotency
+FocusBlock tombstone suppresses causally older Put
+local journal codec compatibility fixture
+migration N -> N+1 preserves D6 facts
 ```
 
 ---
 
-# 16. READY gate
+# 15. Explicit exclusions
 
-D7 remains DRAFT until:
+D7 MUST NOT add:
 
 ```text
-[ ] OD-033 operation granularity resolved
-[ ] typed mutation vocabulary frozen
-[ ] Undo support matrix frozen
-[ ] delete/tombstone scope explicitly included or excluded
-[ ] WorkLog correction behavior explicitly excluded or frozen
-[ ] :shared:sync module boundary approved if used
-[ ] persistence tables/API shapes frozen
+network transport
+Ktor server
+E2EE key management
+server authentication
+semantic merge engine
+physical tombstone compaction
+AgentThread/AgentAction
+provider credentials
+external calendar writes
+generic SQL mutation commands
+object-level LWW
 ```
 
-OD-030 need not block D7 while D7 remains transport-format agnostic.
+---
+
+# 16. Completion gate
+
+D7 PASS requires every HST-013 item plus:
+
+```text
+[ ] D6 is COMPLETE before integration begins
+[ ] :shared:sync dependency direction verified
+[ ] all existing user/planner write commands either use MutationCoordinator or are explicitly non-synchronizable
+[ ] ChangeLog/Undo public result vocabulary is structured
+[ ] Room migration/schema export passes
+[ ] repository-wide CI green
+```
+
+When complete, update this status to `COMPLETE` and advance D8 implementation gate.

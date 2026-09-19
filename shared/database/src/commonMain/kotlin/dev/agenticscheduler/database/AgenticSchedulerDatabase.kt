@@ -14,10 +14,11 @@ import dev.agenticscheduler.database.dao.*
         PlanningProfileRecord::class, PlanningProfileAvailabilityWindowRecord::class, AcademicYearRecord::class, SemesterRecord::class, AcademicWeekRecord::class,
         CourseRecord::class, PeriodTemplateRecord::class, AcademicPeriodRecord::class, CourseScheduleRuleRecord::class,
         CourseRuleWeekRecord::class, AcademicHolidayRecord::class, CourseOccurrenceExceptionRecord::class, ExamRecord::class,
+        MutationRecord::class, ChangeLogEntryRecord::class, SyncOperationJournalRecord::class, ReplicaCausalStateRecord::class, FocusBlockTombstoneRecord::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
 )
 @ConstructedBy(AgenticSchedulerDatabaseConstructor::class)
 abstract class AgenticSchedulerDatabase : RoomDatabase() {
@@ -35,6 +36,7 @@ abstract class AgenticSchedulerDatabase : RoomDatabase() {
     abstract fun focusBlockDao(): FocusBlockDao
     abstract fun workLogDao(): WorkLogDao
     abstract fun taskDependencyDao(): TaskDependencyDao
+    abstract fun mutationJournalDao(): MutationJournalDao
 }
 
 @Suppress("NO_ACTUAL_FOR_EXPECT")

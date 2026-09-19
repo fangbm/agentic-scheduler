@@ -13,9 +13,108 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import dev.agenticscheduler.database.record.ChangeLogEntryRecord
+import dev.agenticscheduler.database.record.FocusBlockTombstoneRecord
+import dev.agenticscheduler.database.record.MutationRecord
+import dev.agenticscheduler.database.record.ReplicaCausalStateRecord
+import dev.agenticscheduler.database.record.SyncOperationJournalRecord
+import dev.agenticscheduler.sync.FocusBlockDelete
+import dev.agenticscheduler.sync.LocalJournalCodec
+import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.ReplicaId
+import dev.agenticscheduler.sync.HlcTimestamp
+import dev.agenticscheduler.sync.operationKind
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
+}
+
+/** Room implementation of the D7 atomic journal port; callers already own the write transaction. */
+class RoomMutationJournalRepository(private val database: AgenticSchedulerDatabase) : MutationJournalRepository, HistoryRepository {
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = database.mutationJournalDao().localReplicaState()?.let { record ->
+        LocalReplicaCausalState(
+            replicaId = ReplicaId(record.replicaId),
+            lastCounter = record.lastCounter,
+            observedContext = LocalJournalCodec.decodeContext(record.observedContextJson),
+            lastHlc = HlcTimestamp(record.lastHlcPhysicalMillis, record.lastHlcLogical, ReplicaId(record.lastHlcReplicaId)),
+        )
+    }
+
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) {
+        database.mutationJournalDao().saveLocalReplicaState(ReplicaCausalStateRecord(
+            replicaId = state.replicaId.value,
+            lastCounter = state.lastCounter,
+            observedContextJson = LocalJournalCodec.encodeContext(state.observedContext),
+            lastHlcPhysicalMillis = state.lastHlc.physicalMillis,
+            lastHlcLogical = state.lastHlc.logical,
+            lastHlcReplicaId = state.lastHlc.replicaId.value,
+        ))
+    }
+
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) {
+        val operation = mutation.operation
+        database.mutationJournalDao().insertMutationRecord(MutationRecord(
+            mutationId = operation.mutationId,
+            origin = operation.origin.durableName(),
+            dvvJson = LocalJournalCodec.encodeDvv(operation.dvv),
+            hlcPhysicalMillis = operation.hlc.physicalMillis,
+            hlcLogical = operation.hlc.logical,
+            hlcReplicaId = operation.hlc.replicaId,
+            committedAtEpochMillis = mutation.committedAtEpochMillis,
+        ))
+        database.mutationJournalDao().insertChangeLogEntries(operation.orderedMutations.mapIndexed { ordinal, entry ->
+            ChangeLogEntryRecord(
+                entryId = "${operation.mutationId}:$ordinal",
+                mutationId = operation.mutationId,
+                ordinal = ordinal,
+                entityKind = entry.entityKind.name,
+                entityId = entry.entityId,
+                operationKind = entry.operationKind(),
+                beforeImageJson = LocalJournalCodec.beforeImage(entry),
+                afterImageJson = LocalJournalCodec.afterImage(entry),
+            )
+        })
+        database.mutationJournalDao().insertSyncOperation(SyncOperationJournalRecord(operation.mutationId, LocalJournalCodec.version, LocalJournalCodec.encode(operation)))
+    }
+
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<FocusBlockDelete>) {
+        acceptedDeletes.forEach { delete ->
+            database.mutationJournalDao().upsertFocusBlockTombstone(FocusBlockTombstoneRecord(
+                focusBlockId = delete.before.id,
+                deletionMutationId = operation.mutationId,
+                dvvJson = LocalJournalCodec.encodeDvv(operation.dvv),
+                hlcPhysicalMillis = operation.hlc.physicalMillis,
+                hlcLogical = operation.hlc.logical,
+                hlcReplicaId = operation.hlc.replicaId,
+            ))
+        }
+    }
+
+    override suspend fun timeline(): List<CommittedMutation> = database.mutationJournalDao().timeline().mapNotNull { record -> mutation(record.mutationId) }
+
+    override suspend fun mutation(mutationId: String): CommittedMutation? {
+        val record = database.mutationJournalDao().syncOperation(mutationId) ?: return null
+        val metadata = database.mutationJournalDao().mutationRecord(mutationId) ?: return null
+        return CommittedMutation(LocalJournalCodec.decode(record.operationJson), metadata.committedAtEpochMillis)
+    }
+
+    override suspend fun entityChanges(entityKind: dev.agenticscheduler.sync.EntityKind, entityId: String): List<HistoryChange> =
+        database.mutationJournalDao().entityEntries(entityKind.name, entityId).map { it.toHistoryChange(requireNotNull(database.mutationJournalDao().mutationRecord(it.mutationId))) }.sortedWith(historyChangeComparator)
+
+    override suspend fun diff(mutationId: String): List<HistoryChange> = database.mutationJournalDao().entries(mutationId).map { it.toHistoryChange(requireNotNull(database.mutationJournalDao().mutationRecord(it.mutationId))) }
+
+    override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId), LocalJournalCodec.decodeDvv(it.dvvJson)) }
+}
+
+private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))
+private val historyChangeComparator = compareBy<HistoryChange>({ it.hlc.physicalMillis }, { it.hlc.logical }, { it.hlc.replicaId.value }, { it.mutationId }, { it.ordinal })
+
+private fun MutationOrigin.durableName(): String = when (this) {
+    MutationOrigin.User -> "USER"
+    MutationOrigin.Planner -> "PLANNER"
+    MutationOrigin.System -> "SYSTEM"
+    is MutationOrigin.Undo -> "UNDO:$originalMutationId"
 }
 
 class RoomEventRepository(private val database: AgenticSchedulerDatabase) : EventRepository {

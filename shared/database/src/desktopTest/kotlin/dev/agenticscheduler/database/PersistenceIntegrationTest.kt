@@ -8,13 +8,22 @@ import dev.agenticscheduler.application.editing.EditingResult
 import dev.agenticscheduler.application.editing.EventEditingService
 import dev.agenticscheduler.application.editing.EventTimeInput
 import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.UpdateEventInput
+import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.persistence.CommittedMutation
+import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
+import dev.agenticscheduler.application.persistence.MutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
+import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.AcademicYearId
@@ -46,6 +55,10 @@ import dev.agenticscheduler.domain.id.WorkLogId
 import dev.agenticscheduler.domain.id.TaskDependencyId
 import dev.agenticscheduler.domain.id.PlanningProfileId
 import dev.agenticscheduler.domain.id.AcademicHolidayId
+import dev.agenticscheduler.sync.operationKind
+import dev.agenticscheduler.sync.FocusBlockImage
+import dev.agenticscheduler.sync.FocusBlockPut
+import dev.agenticscheduler.sync.MutationOrigin
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -176,7 +189,8 @@ class PersistenceIntegrationTest {
         val events = RoomEventRepository(firstDatabase)
         val tasks = RoomTaskRepository(firstDatabase)
         val runner = RoomApplicationTransactionRunner(firstDatabase)
-        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, runner, ids).create(
+        val coordinator = MutationCoordinator(runner, RoomMutationJournalRepository(firstDatabase), ids, MutationWallClock { 1 })
+        val event = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator).create(
             CreateEventInput(
                 "Created event",
                 EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)),
@@ -184,20 +198,36 @@ class PersistenceIntegrationTest {
                 PinState.UNPINNED,
             ),
         )).value)
-        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, runner, ids).create(
+        val task = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator).create(
             CreateTaskInput("Created task", TaskPriority.NORMAL, null, null, null),
         )).value)
+        val updatedEvent = assertIs<Event>(assertIs<EditingResult.Success<*>>(EventEditingService(events, ids, coordinator).update(
+            UpdateEventInput(event.id, "Updated event", EventTimeInput.AllDay(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11)), Flexibility.HARD, PinState.UNPINNED),
+        )).value)
+        val updatedTask = assertIs<Task>(assertIs<EditingResult.Success<*>>(TaskEditingService(tasks, ids, coordinator).update(
+            UpdateTaskInput(task.id, "Updated task", TaskStatus.IN_PROGRESS, TaskPriority.HIGH, null, kotlin.time.Duration.ZERO, null, null),
+        )).value)
+        val history = RoomMutationJournalRepository(firstDatabase)
+        val timeline = history.timeline()
+        assertEquals(4, timeline.size, "Every Event/Task command must commit one atomic journal operation.")
+        assertEquals(listOf("EventPut", "TaskPut", "EventPut", "TaskPut"), timeline.map { it.operation.orderedMutations.single().operationKind() })
+        timeline.forEach { committed ->
+            val diff = history.diff(committed.operation.mutationId)
+            assertEquals(listOf(0), diff.map { it.ordinal }, "Single-command ChangeLog must start at ordinal zero.")
+            assertEquals(committed.operation.orderedMutations.single().entityId, diff.single().entityId)
+        }
+        assertEquals(updatedEvent, events.get(event.id)); assertEquals(updatedTask, tasks.getTask(task.id))
         val viewport = CalendarViewport(LocalDate(2026, 9, 10), LocalDate(2026, 9, 11), TimeZone.UTC)
         val projection = RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(firstDatabase)).observe(viewport).first()
-        assertTrue(projection.items.any { it.title == event.title })
+        assertTrue(projection.items.any { it.title == updatedEvent.title })
         assertTrue(tasks.observeFocusBlocks().first().isEmpty())
         firstDatabase.close()
 
         val secondDatabase = openDesktopDatabase(path.toString())
         val reloadedEvents = RoomEventRepository(secondDatabase)
         val reloadedTasks = RoomTaskRepository(secondDatabase)
-        assertEquals(event, reloadedEvents.get(event.id))
-        assertEquals(task, reloadedTasks.getTask(task.id))
+        assertEquals(updatedEvent, reloadedEvents.get(event.id))
+        assertEquals(updatedTask, reloadedTasks.getTask(task.id))
         secondDatabase.close(); Files.deleteIfExists(path); Unit
     }
 
@@ -349,6 +379,63 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
+    @Test fun `exported v2 schema migrates to v3 without losing D6 facts`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(2)
+        legacy.prepare("INSERT INTO planning_profiles (id, name, configuration_state) VALUES (?, ?, ?)").use { statement ->
+            statement.bindText(1, id(98)); statement.bindText(2, "D6 profile"); statement.bindText(3, "UNCONFIGURED"); statement.step()
+        }
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(3, emptyList())
+        migrated.prepare("SELECT name FROM planning_profiles WHERE id = ?").use { statement ->
+            statement.bindText(1, id(98)); assertEquals(true, statement.step()); assertEquals("D6 profile", statement.getText(0))
+        }
+        migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='sync_operation_journal'").use { statement -> assertEquals(true, statement.step()) }
+        migrated.close()
+    }
+
+    @Test fun `journal append failure rolls active state and causal state back together`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val events = RoomEventRepository(database)
+        val journal = RoomMutationJournalRepository(database)
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), FailingJournal(journal), ids, MutationWallClock { 1 })
+        val editor = EventEditingService(events, ids, coordinator)
+        assertFailsWith<IllegalStateException> { editor.create(CreateEventInput("rollback", EventTimeInput.AllDay(LocalDate(2026, 1, 1), LocalDate(2026, 1, 2)), Flexibility.HARD, PinState.UNPINNED)) }
+        assertEquals(emptyList(), events.observeAll().first())
+        assertEquals(emptyList(), database.mutationJournalDao().timeline())
+        assertEquals(null, database.mutationJournalDao().localReplicaState())
+        database.close()
+    }
+
+    @Test fun `grouped Planner ChangeLog preserves child ordinal and durable diff order`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val tasks = RoomTaskRepository(database)
+        val source = task(70)
+        tasks.upsertTask(source)
+        val first = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(71)), source.id, ZonedTimeRange(Instant.parse("2026-01-01T10:00:00Z"), Instant.parse("2026-01-01T11:00:00Z"), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
+        val second = dev.agenticscheduler.domain.task.FocusBlock(FocusBlockId(id(72)), source.id, ZonedTimeRange(Instant.parse("2026-01-01T11:00:00Z"), Instant.parse("2026-01-01T12:00:00Z"), TimeZone.UTC), Flexibility.SOFT, PinState.UNPINNED)
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), RoomMutationJournalRepository(database), ids, MutationWallClock { 1 })
+        val committed = coordinator.execute(MutationOrigin.Planner) {
+            tasks.upsertFocusBlock(first)
+            record(FocusBlockPut(null, FocusBlockImage(first.id.value, first.taskId.value, dev.agenticscheduler.sync.ZonedTimeRangeImage(first.time.start.toString(), first.time.endExclusive.toString(), first.time.timeZone.id), dev.agenticscheduler.sync.FlexibilityImage.valueOf(first.flexibility.name), dev.agenticscheduler.sync.PinStateImage.valueOf(first.pinState.name))))
+            tasks.upsertFocusBlock(second)
+            record(FocusBlockPut(null, FocusBlockImage(second.id.value, second.taskId.value, dev.agenticscheduler.sync.ZonedTimeRangeImage(second.time.start.toString(), second.time.endExclusive.toString(), second.time.timeZone.id), dev.agenticscheduler.sync.FlexibilityImage.valueOf(second.flexibility.name), dev.agenticscheduler.sync.PinStateImage.valueOf(second.pinState.name))))
+        }
+        val diff = RoomMutationJournalRepository(database).diff(committed.mutationId.value)
+        assertEquals(listOf(0, 1), diff.map { it.ordinal })
+        assertEquals(listOf(first.id.value, second.id.value), diff.map { it.entityId })
+        assertTrue(diff.all { it.beforeImageJson == null && it.afterImageJson != null })
+        database.close()
+    }
+
     private fun task(number: Int) = Task(TaskId(id(number)), "task $number", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null)
     private fun id(number: Int) = "00000000-0000-7000-8000-0000000000${number.toString().padStart(2, '0')}"
+}
+
+private class FailingJournal(private val delegate: MutationJournalRepository) : MutationJournalRepository {
+    override suspend fun localReplicaState(): LocalReplicaCausalState? = delegate.localReplicaState()
+    override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) = delegate.saveLocalReplicaState(state)
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { delegate.appendCommittedMutation(mutation); error("forced journal failure") }
+    override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = delegate.advanceFocusBlockTombstones(operation, acceptedDeletes)
 }

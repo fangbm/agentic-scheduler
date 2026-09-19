@@ -38,30 +38,50 @@ import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.planner.DogfoodPlannerService
+import dev.agenticscheduler.application.planner.PlanBranch
+import dev.agenticscheduler.application.planner.PlanBranchApplyResult
+import dev.agenticscheduler.application.planner.PlannerPreview
+import dev.agenticscheduler.application.planner.PlanningProfileSettingsService
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.database.openAndroidDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
+import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
+import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.event.Event
+import dev.agenticscheduler.domain.id.FocusBlockId
+import dev.agenticscheduler.domain.id.PlanningProfileId
+import dev.agenticscheduler.domain.planning.AllDayEventPolicy
 import dev.agenticscheduler.domain.planning.Deadline
 import dev.agenticscheduler.domain.planning.DeadlinePolicy
 import dev.agenticscheduler.domain.planning.Flexibility
 import dev.agenticscheduler.domain.planning.OverflowPolicy
 import dev.agenticscheduler.domain.planning.PinState
+import dev.agenticscheduler.domain.planning.PlanningProfile
+import dev.agenticscheduler.domain.planning.PlanningProfileConfiguration
+import dev.agenticscheduler.domain.planning.WeeklyAvailabilityWindow
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskPriority
 import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
+import dev.agenticscheduler.planner.LocalReflowRequest
+import dev.agenticscheduler.planner.PlanningHorizon
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
+import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
@@ -74,18 +94,23 @@ class MainActivity : ComponentActivity() {
     private val tasks by lazy { RoomTaskRepository(database) }
     private val transactionRunner by lazy { RoomApplicationTransactionRunner(database) }
     private val ids by lazy { productionUuidV7Generator() }
+    private val academics by lazy { RoomAcademicRepository(database) }
+    private val profiles by lazy { RoomPlanningProfileRepository(database) }
+    private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
     private val calendarQueryService: CalendarQueryService by lazy {
-        RepositoryCalendarQueryService(events, tasks, RoomAcademicRepository(database))
+        RepositoryCalendarQueryService(events, tasks, academics)
     }
-    private val eventEditor by lazy { EventEditingService(events, transactionRunner, ids) }
-    private val taskEditor by lazy { TaskEditingService(tasks, transactionRunner, ids) }
+    private val eventEditor by lazy { EventEditingService(events, ids, mutations) }
+    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface {
-                    AndroidScheduler(calendarQueryService, events, tasks, eventEditor, taskEditor)
+                    AndroidScheduler(calendarQueryService, events, tasks, profiles, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
                 }
             }
         }
@@ -97,6 +122,9 @@ private fun AndroidScheduler(
     calendar: CalendarQueryService,
     events: EventRepository,
     tasks: TaskRepository,
+    profiles: dev.agenticscheduler.application.persistence.PlanningProfileRepository,
+    dogfoodPlanner: DogfoodPlannerService,
+    profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
     taskEditor: TaskEditingService,
 ) {
@@ -111,6 +139,7 @@ private fun AndroidScheduler(
     }
     val projection by remember(calendar, viewport) { calendar.observe(viewport) }.collectAsState(emptyProjection())
     val taskValues by tasks.observeTasks().collectAsState(emptyList<Task>().toImmutableList())
+    val focusBlocks by tasks.observeFocusBlocks().collectAsState(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList())
     val dateItems = projection.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
@@ -125,9 +154,9 @@ private fun AndroidScheduler(
             }
         }
         item { Text("All-day / date-only") }
-        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, events) { editingEvent = it } }
+        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, events, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
         item { Text("Timed / floating") }
-        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, events) { editingEvent = it } }
+        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, events, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
         item { Text("Tasks") }
         items(taskValues, key = { it.id.value }) { task ->
             Row {
@@ -139,6 +168,7 @@ private fun AndroidScheduler(
             if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)")
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
         }
+        item { PlannerDogfoodPanel(profiles, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
     if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
@@ -148,10 +178,11 @@ private fun AndroidScheduler(
 }
 
 @Composable
-private fun CalendarRow(item: CalendarItem, events: EventRepository, onEdit: (Event) -> Unit) {
+private fun CalendarRow(item: CalendarItem, events: EventRepository, focusTitles: Map<FocusBlockId, String>, onEdit: (Event) -> Unit) {
     val scope = rememberCoroutineScope()
     Row {
-        Text(item.title + if (item is CalendarItem.Floating) " (floating)" else "")
+        val focusTitle = (item.source as? CalendarSourceRef.FocusBlock)?.let { focusTitles[it.id] }
+        Text((focusTitle?.let { "Focus block: $it" } ?: item.title) + if (item is CalendarItem.Floating) " (floating)" else "")
         val source = item.source as? CalendarSourceRef.Event
         if (source != null) {
             Button(onClick = { scope.launch { events.get(source.id)?.let(onEdit) } }) { Text("Edit") }
@@ -289,6 +320,144 @@ private fun TaskEditorDialog(
         dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
     )
 }
+
+@Composable
+private fun PlannerDogfoodPanel(
+    profiles: dev.agenticscheduler.application.persistence.PlanningProfileRepository,
+    focusBlocks: List<dev.agenticscheduler.domain.task.FocusBlock>,
+    planner: DogfoodPlannerService,
+    profileSettings: PlanningProfileSettingsService,
+) {
+    val profileValues by profiles.observeAll().collectAsState(emptyList<PlanningProfile>().toImmutableList())
+    var selectedProfileId by remember { mutableStateOf<PlanningProfileId?>(null) }
+    var createProfile by remember { mutableStateOf(false) }
+    var editingProfile by remember { mutableStateOf<PlanningProfile?>(null) }
+    var horizonStart by remember { mutableStateOf("") }
+    var horizonEnd by remember { mutableStateOf("") }
+    var affectedId by remember { mutableStateOf("") }
+    var preview by remember { mutableStateOf<PlannerPreview?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val selected = profileValues.firstOrNull { it.id == selectedProfileId }
+
+    Column {
+        Text("Planner dogfood")
+        Text("PlanningProfile")
+        Row {
+            Button(onClick = { createProfile = true }) { Text("New PlanningProfile") }
+            selected?.let { Button(onClick = { editingProfile = it }) { Text("Edit selected profile") } }
+        }
+        profileValues.forEach { profile ->
+            Button(onClick = { selectedProfileId = profile.id }) {
+                Text(if (profile.id == selectedProfileId) "Selected: ${profile.name}" else profile.name)
+            }
+        }
+        if (profileValues.isEmpty()) Text("Create a PlanningProfile, then configure explicit availability before planning.")
+        OutlinedTextField(horizonStart, { horizonStart = it }, label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
+        OutlinedTextField(horizonEnd, { horizonEnd = it }, label = { Text("Horizon end Instant (exclusive)") })
+        Row {
+            Button(onClick = {
+                val horizon = parseHorizon(horizonStart, horizonEnd)
+                if (selected == null || horizon == null) message = "Select a PlanningProfile and enter an explicit positive horizon."
+                else scope.launch { preview = planner.fullReplan(selected.id, Clock.System.now(), horizon); message = null }
+            }) { Text("Full Replan preview") }
+            Button(onClick = {
+                val horizon = parseHorizon(horizonStart, horizonEnd)
+                val configured = selected?.configuration as? PlanningProfileConfiguration.Configured
+                val affected = runCatching { FocusBlockId(affectedId) }.getOrNull()
+                if (selected == null || horizon == null || configured == null || affected == null) {
+                    message = "Local Reflow requires a configured profile, one FocusBlock ID, and an explicit horizon."
+                } else scope.launch {
+                    val search = ZonedTimeRange(horizon.start, horizon.endExclusive, configured.timeZone)
+                    preview = planner.localReflow(selected.id, Clock.System.now(), horizon, LocalReflowRequest(persistentListOf(affected), persistentListOf(), search))
+                    message = null
+                }
+            }) { Text("Local Reflow preview") }
+        }
+        Text("Affected FocusBlock for Local Reflow")
+        focusBlocks.forEach { block -> Button(onClick = { affectedId = block.id.value }) { Text(block.id.value) } }
+        OutlinedTextField(affectedId, { affectedId = it }, label = { Text("FocusBlock ID") })
+        message?.let { Text(it) }
+        when (val result = preview) {
+            is PlannerPreview.Applicable -> {
+                Text("PlanBranch preview: ${result.branch.mutations.size} FocusBlock mutation(s)")
+                result.branch.mutations.forEach { Text(it.toString()) }
+                result.branch.issues.forEach { Text("PlannerIssue: $it") }
+                Row {
+                    Button(onClick = {
+                        scope.launch {
+                            when (val applied = planner.apply(result.branch, Clock.System.now())) {
+                                is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
+                                is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
+                            }
+                        }
+                    }) { Text("Apply PlanBranch") }
+                    Button(onClick = { preview = null; message = "PlanBranch cancelled; Active State was unchanged." }) { Text("Cancel preview") }
+                }
+            }
+            is PlannerPreview.Infeasible -> result.issues.forEach { Text("PlannerIssue / infeasible: $it") }
+            is PlannerPreview.InvalidInput -> result.issues.forEach { Text("PlannerIssue / invalid input: $it") }
+            null -> Unit
+        }
+    }
+    if (createProfile) PlanningProfileDialog(null, profileSettings, { createProfile = false }, { createProfile = false })
+    editingProfile?.let { PlanningProfileDialog(it, profileSettings, { editingProfile = null }, { editingProfile = null }) }
+}
+
+@Composable
+private fun PlanningProfileDialog(
+    existing: PlanningProfile?,
+    settings: PlanningProfileSettingsService,
+    onSaved: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var name by remember(existing) { mutableStateOf(existing?.name ?: "") }
+    val configured = existing?.configuration as? PlanningProfileConfiguration.Configured
+    var timeZone by remember(existing) { mutableStateOf(configured?.timeZone?.id ?: "") }
+    var minimum by remember(existing) { mutableStateOf(configured?.minimumFocusBlock?.toString() ?: "") }
+    var preferred by remember(existing) { mutableStateOf(configured?.preferredFocusBlock?.toString() ?: "") }
+    var maximum by remember(existing) { mutableStateOf(configured?.maximumFocusBlock?.toString() ?: "") }
+    var windows by remember(existing) { mutableStateOf(configured?.weeklyAvailability?.joinToString("\n") { "${it.dayOfWeek} ${it.start}-${it.endExclusive}" } ?: "") }
+    var allDayPolicy by remember(existing) { mutableStateOf(configured?.allDayEventPolicy) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "New PlanningProfile" else "PlanningProfile settings") },
+        text = { Column {
+            OutlinedTextField(name, { name = it }, label = { Text("Profile name") })
+            if (existing != null) {
+                OutlinedTextField(timeZone, { timeZone = it }, label = { Text("Time zone, e.g. Asia/Shanghai") })
+                OutlinedTextField(minimum, { minimum = it }, label = { Text("Minimum FocusBlock duration") })
+                OutlinedTextField(preferred, { preferred = it }, label = { Text("Preferred FocusBlock duration") })
+                OutlinedTextField(maximum, { maximum = it }, label = { Text("Maximum FocusBlock duration") })
+                OutlinedTextField(windows, { windows = it }, label = { Text("Availability: MONDAY 09:00-17:00 per line") })
+                Button(onClick = { allDayPolicy = when (allDayPolicy) { null -> AllDayEventPolicy.NON_BLOCKING; AllDayEventPolicy.NON_BLOCKING -> AllDayEventPolicy.BLOCK_WHOLE_LOCAL_DAY; AllDayEventPolicy.BLOCK_WHOLE_LOCAL_DAY -> null } }) { Text("All-day Event policy: ${allDayPolicy ?: "Choose explicitly"}") }
+            } else Text("New profiles start deliberately Unconfigured; configure it after creation.")
+            error?.let { Text(it) }
+        } },
+        confirmButton = { Button(onClick = {
+            if (existing == null) {
+                scope.launch { runCatching { settings.createUnconfigured(name) }.onSuccess { onSaved() }.onFailure { error = it.message } }
+            } else {
+                val configuration = parseConfiguration(timeZone, minimum, preferred, maximum, windows, allDayPolicy)
+                if (configuration == null) error = "Enter a valid timezone, ordered positive durations, non-overlapping availability, and choose an all-day policy."
+                else scope.launch { runCatching { settings.save(existing.copy(name = name, configuration = configuration)) }.onSuccess { onSaved() }.onFailure { error = it.message } }
+            }
+        }) { Text(if (existing == null) "Create" else "Save") } },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun parseHorizon(start: String, end: String): PlanningHorizon? = runCatching { PlanningHorizon(kotlin.time.Instant.parse(start), kotlin.time.Instant.parse(end)) }.getOrNull()
+private fun parseConfiguration(zone: String, minimum: String, preferred: String, maximum: String, windows: String, policy: AllDayEventPolicy?): PlanningProfileConfiguration.Configured? = runCatching {
+    val parsedWindows = windows.lines().filter { it.isNotBlank() }.map { line ->
+        val parts = line.trim().split(Regex("\\s+"), limit = 2)
+        val times = parts[1].split("-", limit = 2)
+        WeeklyAvailabilityWindow(DayOfWeek.valueOf(parts[0].uppercase()), LocalTime.parse(times[0]), LocalTime.parse(times[1]))
+    }.toImmutableList()
+    PlanningProfileConfiguration.Configured(TimeZone.of(zone), parsedWindows, Duration.parse(minimum), Duration.parse(preferred), Duration.parse(maximum), requireNotNull(policy))
+}.getOrNull()
 
 private enum class EventKind { ZONED, ALL_DAY, FLOATING }
 private enum class DeadlineKind { DATE_ONLY, EXACT }
