@@ -67,3 +67,5 @@ jobs:
           path: apps/desktop/build/compose/binaries/main/app/**
           if-no-files-found: error
           retention-days: 14
+
+# CIFleet E5 Linux proxy verification
