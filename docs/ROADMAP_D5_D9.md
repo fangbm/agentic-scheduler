@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 implemented/build-verified (interactive verification pending); D7 complete; D8/D9 specs frozen; D10 planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build-verified/Desktop-dogfood-verified (Android runtime pending); D7 complete; D8/D9 specs frozen; D10 planned
 > Date: 2026-09-20
 
 ---
@@ -14,7 +14,7 @@ D5-02 Event/Task creation + editing            IMPLEMENTED / VERIFICATION PENDIN
  ↓
 D6     Deterministic Planner + PlanBranch      COMPLETE / MERGED / CI GREEN
  ↓
-D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / BUILD VERIFIED / INTERACTIVE VERIFICATION PENDING
+D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / ANDROID RUNTIME PENDING
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
@@ -129,7 +129,7 @@ Build evidence recorded 2026-09-20:
 .\gradlew.bat :apps:android:assembleDebug :apps:desktop:createDistributable --no-daemon  PASS
 ```
 
-The Android debug APK and Desktop distributable were produced. Manual interactive dogfood verification is still pending.
+The Android debug APK and Desktop distributable were produced. Desktop dogfood passed interactively: profile setup, task creation, valid/invalid Full Replan preview, Apply/Cancel, FocusBlock rendering, and Local Reflow preview. `adb devices` returned no connected Android device/emulator, so Android interactive verification remains pending.
 
 ---
 
