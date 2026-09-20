@@ -63,3 +63,17 @@ data class SyncSpaceContentKeyRecord(
     @ColumnInfo(name = "key_identity", defaultValue = "''") val keyIdentity: String = "",
     val usage: String,
 )
+
+/** D8 SYN-006 local state; this is never the server-relayed enrollment request. */
+@Entity(tableName = "local_pairing_enrollment")
+data class LocalPairingEnrollmentRecord(
+    @androidx.room3.PrimaryKey @ColumnInfo(name = "account_id") val accountId: String,
+    @ColumnInfo(name = "device_id") val deviceId: String,
+    @ColumnInfo(name = "enrollment_request_id") val enrollmentRequestId: String,
+    @ColumnInfo(name = "hpke_public_key_base64url") val hpkePublicKeyBase64Url: String,
+    @ColumnInfo(name = "hpke_private_key_secret_ref") val hpkePrivateKeySecretRef: String,
+    val status: String,
+    @ColumnInfo(name = "sync_space_id") val syncSpaceId: String?,
+    @ColumnInfo(name = "account_master_key_secret_ref") val accountMasterKeySecretRef: String?,
+    @ColumnInfo(name = "device_credential_secret_ref") val deviceCredentialSecretRef: String?,
+)

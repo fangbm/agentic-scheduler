@@ -68,3 +68,8 @@ import kotlinx.coroutines.flow.Flow
     @Upsert suspend fun saveState(value: SyncSpaceKeyStateRecord)
     @Upsert suspend fun saveKey(value: SyncSpaceContentKeyRecord)
 }
+
+@Dao interface LocalPairingEnrollmentDao {
+    @Query("SELECT * FROM local_pairing_enrollment WHERE account_id = :accountId") suspend fun state(accountId: String): LocalPairingEnrollmentRecord?
+    @Upsert suspend fun save(value: LocalPairingEnrollmentRecord)
+}

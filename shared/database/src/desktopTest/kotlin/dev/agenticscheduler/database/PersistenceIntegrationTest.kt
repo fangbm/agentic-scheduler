@@ -32,6 +32,7 @@ import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomSyncReceiveRepository
 import dev.agenticscheduler.database.repository.RoomSyncKeyMetadataRepository
+import dev.agenticscheduler.database.repository.RoomLocalEnrollmentRepository
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.AcademicYearId
@@ -507,6 +508,31 @@ class PersistenceIntegrationTest {
             migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").use { statement -> statement.bindText(1, table); assertEquals(true, statement.step(), table) }
         }
         migrated.close()
+    }
+
+    @Test fun `exported v8 schema migrates to v9 local pairing enrollment metadata`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(8)
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(9, emptyList())
+        migrated.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='local_pairing_enrollment'").use { statement ->
+            assertEquals(true, statement.step())
+        }
+        migrated.close()
+    }
+
+    @Test fun `local pending enrollment survives Room reopen with only a private key reference`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            accountId = dev.agenticscheduler.sync.AccountId("acct-1"),
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-1"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("req-1"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private-key/1"),
+        )
+        enrollments.savePending(pending)
+        assertEquals(pending, enrollments.state(pending.accountId))
+        database.close()
     }
 
     @Test fun `D8 key ring install is atomic monotonic and retains historical decrypt keys`() = runBlocking {

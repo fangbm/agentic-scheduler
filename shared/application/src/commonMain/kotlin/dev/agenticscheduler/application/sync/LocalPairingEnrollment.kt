@@ -1,0 +1,102 @@
+package dev.agenticscheduler.application.sync
+
+import dev.agenticscheduler.sync.AccountId
+import dev.agenticscheduler.sync.DeviceId
+import dev.agenticscheduler.sync.EnrollmentRequestId
+import dev.agenticscheduler.sync.HpkePublicKeyBase64Url
+import dev.agenticscheduler.sync.PendingEnrollmentRequestV1
+import dev.agenticscheduler.sync.SyncSpaceId
+
+/**
+ * Local durable enrollment is intentionally distinct from a remotely relayed
+ * [PendingEnrollmentRequestV1]. Only this state owns the private-key handle.
+ */
+sealed interface LocalEnrollmentState {
+    val accountId: AccountId
+    val deviceId: DeviceId
+    val enrollmentRequestId: EnrollmentRequestId
+    val hpkePublicKey: HpkePublicKeyBase64Url
+    val hpkePrivateKeyReference: SecretReference
+
+    data class Pending(
+        override val accountId: AccountId,
+        override val deviceId: DeviceId,
+        override val enrollmentRequestId: EnrollmentRequestId,
+        override val hpkePublicKey: HpkePublicKeyBase64Url,
+        override val hpkePrivateKeyReference: SecretReference,
+    ) : LocalEnrollmentState {
+        fun asRemoteEnrollmentRequest(): PendingEnrollmentRequestV1 =
+            PendingEnrollmentRequestV1(accountId, enrollmentRequestId, deviceId, hpkePublicKey)
+    }
+
+    data class Active(
+        override val accountId: AccountId,
+        override val deviceId: DeviceId,
+        override val enrollmentRequestId: EnrollmentRequestId,
+        override val hpkePublicKey: HpkePublicKeyBase64Url,
+        override val hpkePrivateKeyReference: SecretReference,
+        val syncSpaceId: SyncSpaceId,
+        val accountMasterKeyReference: SecretReference,
+        val deviceCredentialReference: SecretReference,
+    ) : LocalEnrollmentState
+}
+
+/** Application port for the non-secret local enrollment metadata. */
+interface LocalEnrollmentRepository {
+    suspend fun state(accountId: AccountId): LocalEnrollmentState?
+    suspend fun savePending(value: LocalEnrollmentState.Pending)
+    suspend fun saveActive(value: LocalEnrollmentState.Active)
+}
+
+/** Platform-owned persistent private HPKE identity. Room stores only [SecretReference]. */
+interface PlatformPairingPrivateKeyStore {
+    suspend fun generatePairingDeviceKey(): PersistedPairingDeviceKey
+    suspend fun privateKey(reference: SecretReference): PairingPrivateKeyMaterial?
+    suspend fun delete(reference: SecretReference)
+}
+
+data class PersistedPairingDeviceKey(
+    val publicKey: HpkePublicKeyBase64Url,
+    val privateKeyReference: SecretReference,
+)
+
+sealed interface StartLocalEnrollmentResult {
+    data class Created(val pending: LocalEnrollmentState.Pending) : StartLocalEnrollmentResult
+    data class Existing(val state: LocalEnrollmentState) : StartLocalEnrollmentResult
+}
+
+/** Creates a restart-safe local PENDING identity before its public request is relayed. */
+class LocalEnrollmentRequestService(
+    private val enrollments: LocalEnrollmentRepository,
+    private val privateKeys: PlatformPairingPrivateKeyStore,
+) {
+    suspend fun startPending(
+        accountId: AccountId,
+        deviceId: DeviceId,
+        enrollmentRequestId: EnrollmentRequestId,
+    ): StartLocalEnrollmentResult {
+        val existing = enrollments.state(accountId)
+        if (existing != null) return StartLocalEnrollmentResult.Existing(existing)
+
+        val generated = privateKeys.generatePairingDeviceKey()
+        val pending = LocalEnrollmentState.Pending(
+            accountId = accountId,
+            deviceId = deviceId,
+            enrollmentRequestId = enrollmentRequestId,
+            hpkePublicKey = generated.publicKey,
+            hpkePrivateKeyReference = generated.privateKeyReference,
+        )
+        try {
+            enrollments.savePending(pending)
+        } catch (failure: Throwable) {
+            try {
+                privateKeys.delete(generated.privateKeyReference)
+            } catch (_: Throwable) {
+                // A secure-store orphan is safe; publishing a nonexistent
+                // private-key reference is not.
+            }
+            throw failure
+        }
+        return StartLocalEnrollmentResult.Created(pending)
+    }
+}
