@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8/D9 specs frozen; D10 planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 client/E2EE plus opaque server-relay baseline in review (full gate pending); D9 specs frozen; D10 planned
 > Date: 2026-09-20
 
 ---
@@ -18,7 +18,7 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    SPEC FROZEN — READY AFTER D6.5 VERIFICATION
+D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY BASELINE IN PR #5
  ↓
 D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
 D9-02  Agent history sync amendment            AFTER D9-01
@@ -178,9 +178,9 @@ Status:
 
 ```text
 D8-00 protocol/security decisions  FROZEN
-D8-01 client SyncEngine/merge      READY AFTER D6.5 VERIFICATION
-D8-02 E2EE/key lifecycle           READY AFTER D6.5 VERIFICATION
-D8-03 thin server/Wear transport   READY AFTER D6.5 VERIFICATION
+D8-01 client SyncEngine/merge      IMPLEMENTED / TARGETED TESTS PASS
+D8-02 E2EE/key lifecycle           IMPLEMENTED / TARGETED TESTS PASS
+D8-03 thin server/Wear transport   OPAQUE RELAY BASELINE IMPLEMENTED / LIFECYCLE + WEAR PENDING
 ```
 
 Frozen baseline includes:

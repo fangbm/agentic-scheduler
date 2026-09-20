@@ -1,0 +1,106 @@
+package dev.agenticscheduler.server.sync
+
+import dev.agenticscheduler.sync.DeviceId
+import dev.agenticscheduler.sync.EncryptedEnvelopeV1
+import dev.agenticscheduler.sync.SyncSpaceId
+import io.ktor.client.request.header
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.contentType
+import io.ktor.server.testing.testApplication
+import kotlinx.serialization.json.Json
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+class SyncServerRoutesTest {
+    @Test
+    fun `opaque upload is authenticated idempotent and cursor fetchable`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val body = Json.encodeToString(EncryptedEnvelopeV1.serializer(), envelope())
+
+        assertEquals(HttpStatusCode.Unauthorized, client.post("/v1/sync/spaces/space/envelopes") { setBody(body) }.status)
+
+        val first = client.post("/v1/sync/spaces/space/envelopes") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        assertEquals(HttpStatusCode.Created, first.status)
+        assertTrue(first.bodyAsText().contains("\"idempotent\":false"))
+
+        val duplicate = client.post("/v1/sync/spaces/space/envelopes") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        assertEquals(HttpStatusCode.OK, duplicate.status)
+        assertTrue(duplicate.bodyAsText().contains("\"idempotent\":true"))
+
+        val fetched = client.get("/v1/sync/spaces/space/envelopes?after=0&limit=10") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }
+        assertEquals(HttpStatusCode.OK, fetched.status)
+        assertTrue(fetched.bodyAsText().contains("mutation-1"))
+        assertTrue(fetched.bodyAsText().contains("AQI"))
+    }
+
+    @Test
+    fun `sender identity and mutation integrity are enforced`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val body = Json.encodeToString(EncryptedEnvelopeV1.serializer(), envelope())
+        val spoofed = Json.encodeToString(EncryptedEnvelopeV1.serializer(), envelope().copy(senderDeviceId = DeviceId("other")))
+        assertEquals(HttpStatusCode.Forbidden, client.post("/v1/sync/spaces/space/envelopes") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody(spoofed)
+        }.status)
+        client.post("/v1/sync/spaces/space/envelopes") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        val changed = Json.encodeToString(EncryptedEnvelopeV1.serializer(), envelope().copy(ciphertextBase64Url = "AwQ"))
+        assertEquals(HttpStatusCode.Conflict, client.post("/v1/sync/spaces/space/envelopes") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody(changed)
+        }.status)
+    }
+
+    private fun envelope() = EncryptedEnvelopeV1(
+        syncSpaceId = SyncSpaceId("space"),
+        mutationId = "mutation-1",
+        senderDeviceId = DeviceId("device"),
+        keyEpoch = 0,
+        ciphertextBase64Url = "AQI",
+    )
+
+    private fun testConfig() = SyncServerConfig("jdbc:test", "user", "password", maxFetchLimit = 10)
+
+    private class FakeRepository : OpaqueSyncRepository {
+        private val stored = linkedMapOf<String, StoredEnvelope>()
+        override fun authenticate(credential: String): AuthenticatedDevice? =
+            if (credential == "credential") AuthenticatedDevice("account", "device") else null
+
+        override fun upload(actor: AuthenticatedDevice, spaceId: String, envelope: EncryptedEnvelopeV1, ciphertext: ByteArray): UploadOutcome {
+            val existing = stored[envelope.mutationId]
+            if (existing != null) {
+                return if (existing.envelope == envelope) UploadOutcome.Idempotent(existing.serverCursor) else UploadOutcome.IntegrityConflict
+            }
+            val cursor = stored.size.toLong() + 1
+            stored[envelope.mutationId] = StoredEnvelope(cursor, envelope)
+            return UploadOutcome.Stored(cursor)
+        }
+
+        override fun fetch(actor: AuthenticatedDevice, spaceId: String, afterCursor: Long, limit: Int): List<StoredEnvelope> =
+            stored.values.filter { it.serverCursor > afterCursor }.take(limit)
+    }
+}

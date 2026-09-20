@@ -49,12 +49,13 @@ The repository currently contains:
 :shared:planner
 :shared:sync
 :shared:database
+:server:sync
 :apps:android
 :apps:desktop
 :apps:wear
 ```
 
-D6 explicitly authorized `:shared:planner`; D7 explicitly authorized `:shared:sync`. A future Task Spec may authorize another module. Do not create one merely because it seems cleaner.
+D6 explicitly authorized `:shared:planner`; D7 explicitly authorized `:shared:sync`; D8 explicitly authorizes `:server:sync` for the thin opaque relay. A future Task Spec may authorize another module. Do not create one merely because it seems cleaner.
 
 ## Non-negotiable invariants
 
