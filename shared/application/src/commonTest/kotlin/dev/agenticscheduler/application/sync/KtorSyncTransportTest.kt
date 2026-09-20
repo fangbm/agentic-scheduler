@@ -78,6 +78,29 @@ class KtorSyncTransportTest {
         client.close()
     }
 
+    @Test
+    fun `lifecycle package fetch is target-bound and does not require a credential`() = runBlocking {
+        var observedUrl = ""
+        var observedAuth: String? = null
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler { request ->
+                    observedUrl = request.url.toString()
+                    observedAuth = request.headers[HttpHeaders.Authorization]
+                    respond(
+                        """{"packageBase64Url":"AQI"}""",
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { error("unused") })
+        assertEquals("AQI", lifecycle.fetchKeyPackage("req/1", "target/1"))
+        assertEquals("https://sync.example/v1/enrollments/req%2F1/package?targetDeviceId=target%2F1", observedUrl)
+        assertEquals(null, observedAuth)
+        client.close()
+    }
+
     private fun envelope() = EncryptedEnvelopeV1(
         syncSpaceId = SyncSpaceId("space/a"),
         mutationId = "mutation-1",

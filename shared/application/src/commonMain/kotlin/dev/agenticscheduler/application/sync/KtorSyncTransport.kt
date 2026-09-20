@@ -85,7 +85,7 @@ class KtorSyncTransport(
 
 class SyncTransportException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
-private fun encodePathSegment(value: String): String = buildString {
+internal fun encodePathSegment(value: String): String = buildString {
     value.encodeToByteArray().forEach { byte ->
         val number = byte.toInt() and 0xff
         val character = number.toChar()
