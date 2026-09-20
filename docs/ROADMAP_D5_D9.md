@@ -129,7 +129,7 @@ Build evidence recorded 2026-09-20:
 .\gradlew.bat :apps:android:assembleDebug :apps:desktop:createDistributable --no-daemon  PASS
 ```
 
-The Android debug APK and Desktop distributable were produced. Desktop dogfood passed interactively: profile setup, task creation, valid/invalid Full Replan preview, Apply/Cancel, FocusBlock rendering, and Local Reflow preview. `adb devices` returned no connected Android device/emulator, so Android interactive verification remains pending.
+The Android debug APK and Desktop distributable were produced. Desktop dogfood passed interactively: profile setup, task creation, valid/invalid Full Replan preview, Apply/Cancel, FocusBlock rendering, and Local Reflow preview. Android runtime verification remains pending: the disposable emulator first failed its package service with an ADB broken pipe, and a clean retry timed out during boot.
 
 ---
 
