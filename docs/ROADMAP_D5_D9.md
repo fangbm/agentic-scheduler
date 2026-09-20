@@ -198,7 +198,10 @@ server stores opaque encrypted envelopes only
 ```
 
 Current persistence baselines on the D8 review branch are client Room schema v10
-(outbound ciphertext retry metadata) and server SQL schema v1 (opaque relay).
+(outbound ciphertext retry metadata) and server SQL schema v4 (opaque relay,
+bootstrap, enrollment, recovery, and revocation metadata).
+Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
+and real multi-replica execution remain open acceptance work.
 
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 
