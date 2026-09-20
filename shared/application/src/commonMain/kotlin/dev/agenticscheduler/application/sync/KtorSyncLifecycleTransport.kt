@@ -34,6 +34,17 @@ data class ClientPendingEnrollment(
 data class ClientEnrollmentCreated(val requestId: String, val expiresAtEpochSeconds: Long)
 
 @Serializable
+data class ClientBootstrapResponse(
+    val accountId: String,
+    val syncSpaceId: String,
+    val deviceId: String,
+    val deviceCredential: String,
+)
+
+@Serializable
+private data class ClientBootstrapRequest(val invitationToken: String, val deviceId: String)
+
+@Serializable
 private data class ClientPackageUpload(val packageBase64Url: String)
 
 @Serializable
@@ -52,6 +63,15 @@ class KtorSyncLifecycleTransport(
     private val baseUrl = baseUrl.trimEnd('/')
 
     init { require(this.baseUrl.startsWith("https://")) { "D8 sync transport requires HTTPS." } }
+
+    suspend fun bootstrap(invitationToken: String, deviceId: String): ClientBootstrapResponse {
+        val response = client.post("$baseUrl/v1/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(ClientBootstrapRequest.serializer(), ClientBootstrapRequest(invitationToken, deviceId)))
+        }
+        requireStatus(response, HttpStatusCode.Created)
+        return decode(response.bodyAsText(), ClientBootstrapResponse.serializer())
+    }
 
     suspend fun registerEnrollment(request: ClientEnrollmentRequest): ClientEnrollmentCreated {
         val response = client.post("$baseUrl/v1/enrollments") {

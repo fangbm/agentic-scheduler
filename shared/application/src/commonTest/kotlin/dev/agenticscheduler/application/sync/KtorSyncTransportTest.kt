@@ -133,6 +133,27 @@ class KtorSyncTransportTest {
         client.close()
     }
 
+    @Test
+    fun `bootstrap returns first credential without adding authorization`() = runBlocking {
+        var authorization: String? = null
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler { request ->
+                    authorization = request.headers[HttpHeaders.Authorization]
+                    respond(
+                        """{"accountId":"account","syncSpaceId":"space","deviceId":"device","deviceCredential":"credential"}""",
+                        status = HttpStatusCode.Created,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { error("unused") })
+        assertEquals("credential", lifecycle.bootstrap("invite", "device").deviceCredential)
+        assertEquals(null, authorization)
+        client.close()
+    }
+
     private fun envelope() = EncryptedEnvelopeV1(
         syncSpaceId = SyncSpaceId("space/a"),
         mutationId = "mutation-1",
