@@ -100,7 +100,7 @@ sealed interface DecryptKeyPackageResult {
  * caller can import key material.
  */
 fun PairingHpke.decryptKeyPackage(
-    state: PairingEnrollmentState,
+    state: LocalEnrollmentState,
     privateKey: PairingPrivateKeyMaterial,
     envelope: KeyPackageEnvelopeV1,
 ): DecryptKeyPackageResult {

@@ -48,8 +48,12 @@ class TinkPairingHpkeTest {
             context,
         ).decodeToString()
         assertEquals(plaintext, (PairingWireCodec.decodePlaintext(decrypted) as dev.agenticscheduler.sync.PairingWireDecodeResult.Supported).value)
-        val pending = PairingEnrollmentState.Pending(
-            PendingEnrollmentRequestV1(plaintext.accountId, plaintext.requestId, plaintext.targetDeviceId, recipient.publicKey),
+        val pending = LocalEnrollmentState.Pending(
+            plaintext.accountId,
+            plaintext.targetDeviceId,
+            plaintext.requestId,
+            recipient.publicKey,
+            SecretReference("secure://pairing-private/1"),
         )
         assertEquals(
             DecryptKeyPackageResult.Admitted(plaintext),
@@ -69,6 +73,13 @@ class TinkPairingHpkeTest {
         assertEquals(
             DecryptKeyPackageResult.AuthenticationFailed,
             hpke.decryptKeyPackage(pending, recipient.privateKey, envelope.copy(targetDeviceId = DeviceId("other-device"))),
+        )
+
+        val mutatedPublicKeyRecipient = hpke.generateDeviceKeyPair()
+        val publicKeyMutatedEnvelope = hpke.encryptKeyPackage(mutatedPublicKeyRecipient.publicKey, plaintext)
+        assertEquals(
+            DecryptKeyPackageResult.AuthenticationFailed,
+            hpke.decryptKeyPackage(pending, recipient.privateKey, publicKeyMutatedEnvelope),
         )
     }
 }

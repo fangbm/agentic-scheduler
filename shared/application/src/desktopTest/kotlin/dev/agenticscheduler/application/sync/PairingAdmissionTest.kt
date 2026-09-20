@@ -15,8 +15,8 @@ import kotlin.test.assertEquals
 class PairingAdmissionTest {
     private val publicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
     private val key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
-    private val pending = PairingEnrollmentState.Pending(
-        PendingEnrollmentRequestV1(AccountId("acct-1"), EnrollmentRequestId("req-1"), DeviceId("device-1"), publicKey),
+    private val pending = LocalEnrollmentState.Pending(
+        AccountId("acct-1"), DeviceId("device-1"), EnrollmentRequestId("req-1"), publicKey, SecretReference("secure://pairing-private/1"),
     )
     private val plaintext = KeyPackagePlaintextV1(
         accountId = AccountId("acct-1"), requestId = EnrollmentRequestId("req-1"), targetDeviceId = DeviceId("device-1"), keyEpoch = 8,
@@ -41,6 +41,33 @@ class PairingAdmissionTest {
             KeyPackageAdmissionResult.IdentityMismatch,
             PairingAdmission.admitPackage(pending, envelope.copy(keyEpoch = 9), plaintext),
         )
-        assertEquals(KeyPackageAdmissionResult.NotPending, PairingAdmission.admitPackage(PairingEnrollmentState.Active, envelope, plaintext))
+        assertEquals(
+            KeyPackageAdmissionResult.NotPending,
+            PairingAdmission.admitPackage(
+                LocalEnrollmentState.Active(AccountId("acct-1"), DeviceId("device-1"), EnrollmentRequestId("req-1"), publicKey, SecretReference("secure://pairing-private/1"), SyncSpaceId("personal-space"), SecretReference("secure://amk/1"), SecretReference("secure://credential/1")),
+                envelope,
+                plaintext,
+            ),
+        )
+    }
+
+    @Test
+    fun `request and target identity mismatches are rejected before key import`() {
+        assertEquals(
+            KeyPackageAdmissionResult.IdentityMismatch,
+            PairingAdmission.admitPackage(
+                pending,
+                envelope.copy(requestId = EnrollmentRequestId("other-request")),
+                plaintext,
+            ),
+        )
+        assertEquals(
+            KeyPackageAdmissionResult.IdentityMismatch,
+            PairingAdmission.admitPackage(
+                pending,
+                envelope.copy(targetDeviceId = DeviceId("other-device")),
+                plaintext,
+            ),
+        )
     }
 }
