@@ -22,6 +22,7 @@ import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
@@ -149,6 +150,53 @@ fun Application.syncServerModule(
             val packageBytes = enrollment.fetchKeyPackage(requestId, targetDeviceId)
                 ?: return@get call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
             call.respond(KeyPackageResponse(Base64.getUrlEncoder().withoutPadding().encodeToString(packageBytes)))
+        }
+        put("/v1/recovery/envelope") {
+            val lifecycle = repository as? ServerSecurityLifecycleRepository
+                ?: return@put call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            val encoded = call.receive<OpaqueBlobRequest>().blobBase64Url
+            val bytes = try {
+                decodeCanonicalBase64(encoded, null, config.maxCiphertextBytes)
+            } catch (_: IllegalArgumentException) {
+                return@put call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_RECOVERY_ENVELOPE"))
+            }
+            if (!lifecycle.saveRecoveryEnvelope(actor, bytes)) {
+                return@put call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            }
+            call.respond(HttpStatusCode.OK, ServerErrorResponse("STORED"))
+        }
+        get("/v1/recovery/envelope") {
+            val lifecycle = repository as? ServerSecurityLifecycleRepository
+                ?: return@get call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val bytes = lifecycle.fetchRecoveryEnvelope(actor)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            call.respond(OpaqueBlobResponse(Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)))
+        }
+        post("/v1/devices/{deviceId}/revoke") {
+            val lifecycle = repository as? ServerSecurityLifecycleRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val target = call.parameters["deviceId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_DEVICE"))
+            when (lifecycle.revokeDevice(actor, target)) {
+                DeviceRevocationResult.Revoked -> call.respond(HttpStatusCode.OK, ServerErrorResponse("REVOKED"))
+                DeviceRevocationResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+                DeviceRevocationResult.AlreadyRevoked -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_REVOKED"))
+                DeviceRevocationResult.SelfRevocationDenied -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("SELF_REVOCATION_DENIED"))
+            }
         }
         post("/v1/sync/spaces/{spaceId}/envelopes") {
             val credential = call.bearerCredential()

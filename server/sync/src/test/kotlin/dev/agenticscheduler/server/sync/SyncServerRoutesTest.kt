@@ -5,6 +5,7 @@ import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.SyncSpaceId
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -68,6 +69,27 @@ class SyncServerRoutesTest {
         val packageResponse = client.get("/v1/enrollments/req-1/package?targetDeviceId=target")
         assertEquals(HttpStatusCode.OK, packageResponse.status)
         assertTrue(packageResponse.bodyAsText().contains("AQI"))
+    }
+
+    @Test
+    fun `recovery envelope is opaque and device revocation is account-bound`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val stored = client.put("/v1/recovery/envelope") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"blobBase64Url":"AQI"}""")
+        }
+        assertEquals(HttpStatusCode.OK, stored.status)
+        val fetched = client.get("/v1/recovery/envelope") { header(HttpHeaders.Authorization, "Bearer credential") }
+        assertEquals(HttpStatusCode.OK, fetched.status)
+        assertTrue(fetched.bodyAsText().contains("AQI"))
+        assertEquals(HttpStatusCode.OK, client.post("/v1/devices/other/revoke") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }.status)
+        assertEquals(HttpStatusCode.BadRequest, client.post("/v1/devices/device/revoke") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }.status)
     }
 
     @Test
@@ -136,10 +158,11 @@ class SyncServerRoutesTest {
 
     private fun testConfig() = SyncServerConfig("jdbc:test", "user", "password", maxFetchLimit = 10)
 
-    private class FakeRepository : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository {
+    private class FakeRepository : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository, ServerSecurityLifecycleRepository {
         private val stored = linkedMapOf<String, StoredEnvelope>()
         private var enrollment: EnrollmentRequestWire? = null
         private var packageBytes: ByteArray? = null
+        private var recoveryBytes: ByteArray? = null
         private var consumed = false
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
@@ -187,5 +210,18 @@ class SyncServerRoutesTest {
 
         override fun fetchKeyPackage(requestId: String, targetDeviceId: String): ByteArray? =
             if (enrollment?.requestId == requestId && enrollment?.targetDeviceId == targetDeviceId) packageBytes else null
+
+        override fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean {
+            recoveryBytes = envelopeBytes
+            return true
+        }
+
+        override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = recoveryBytes
+
+        override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult = when (targetDeviceId) {
+            actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
+            "other" -> DeviceRevocationResult.Revoked
+            else -> DeviceRevocationResult.NotFound
+        }
     }
 }

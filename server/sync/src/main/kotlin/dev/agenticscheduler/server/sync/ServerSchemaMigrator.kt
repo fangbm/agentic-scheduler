@@ -10,6 +10,7 @@ object ServerMigrationCatalog {
         ServerMigration(1, "db/migration/V1__opaque_sync.sql"),
         ServerMigration(2, "db/migration/V2__account_invitations.sql"),
         ServerMigration(3, "db/migration/V3__device_enrollment.sql"),
+        ServerMigration(4, "db/migration/V4__recovery_envelope.sql"),
     )
 }
 

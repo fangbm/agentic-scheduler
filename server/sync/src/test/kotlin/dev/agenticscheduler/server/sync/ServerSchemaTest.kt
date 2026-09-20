@@ -26,5 +26,7 @@ class ServerSchemaTest {
         val enrollmentSql = javaClass.classLoader.getResourceAsStream(migrations[2].resource)!!.bufferedReader().use { it.readText() }
         assertTrue(enrollmentSql.contains("device_enrollment_request"))
         assertTrue(enrollmentSql.contains("device_key_package"))
+        val recoverySql = javaClass.classLoader.getResourceAsStream(migrations[3].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(recoverySql.contains("recovery_envelope"))
     }
 }

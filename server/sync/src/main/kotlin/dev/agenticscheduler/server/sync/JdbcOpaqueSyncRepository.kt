@@ -12,7 +12,7 @@ import java.sql.ResultSet
 import java.sql.Timestamp
 import javax.sql.DataSource
 
-class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository {
+class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository, ServerSecurityLifecycleRepository {
     private val random = SecureRandom()
 
     override fun createInvitation(accountId: String, syncSpaceId: String, ttlSeconds: Long): InvitationCreateResponse {
@@ -251,6 +251,65 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             statement.executeQuery().use { rs -> if (rs.next()) rs.getBytes(1) else null }
         }
     }
+
+    override fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean =
+        dataSource.connection.use connection@{ connection ->
+            if (!activeAccountDevice(connection, actor)) return@connection false
+            connection.prepareStatement(
+                "INSERT INTO recovery_envelope(account_id, envelope_bytes) VALUES (?, ?) " +
+                    "ON CONFLICT (account_id) DO UPDATE SET envelope_bytes = EXCLUDED.envelope_bytes, updated_at = CURRENT_TIMESTAMP",
+            ).use { statement ->
+                statement.setString(1, actor.accountId)
+                statement.setBytes(2, envelopeBytes)
+                statement.executeUpdate()
+            }
+            true
+        }
+
+    override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = dataSource.connection.use { connection ->
+        if (!activeAccountDevice(connection, actor)) return@use null
+        connection.prepareStatement("SELECT envelope_bytes FROM recovery_envelope WHERE account_id = ?").use { statement ->
+            statement.setString(1, actor.accountId)
+            statement.executeQuery().use { rs -> if (rs.next()) rs.getBytes(1) else null }
+        }
+    }
+
+    override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult =
+        dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                val result = when {
+                    targetDeviceId == actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
+                    !activeAccountDevice(connection, actor) -> DeviceRevocationResult.NotFound
+                    else -> {
+                        val state = connection.prepareStatement("SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE").use { statement ->
+                            statement.setString(1, targetDeviceId)
+                            statement.setString(2, actor.accountId)
+                            statement.executeQuery().use { rs -> if (!rs.next()) null else rs.getTimestamp("revoked_at") != null }
+                        }
+                        when {
+                            state == null -> DeviceRevocationResult.NotFound
+                            state -> DeviceRevocationResult.AlreadyRevoked
+                            else -> {
+                                connection.prepareStatement("UPDATE device SET revoked_at = CURRENT_TIMESTAMP WHERE device_id = ? AND account_id = ?").use { statement ->
+                                    statement.setString(1, targetDeviceId)
+                                    statement.setString(2, actor.accountId)
+                                    statement.executeUpdate()
+                                }
+                                DeviceRevocationResult.Revoked
+                            }
+                        }
+                    }
+                }
+                connection.commit()
+                result
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
 
     override fun authenticate(credential: String): AuthenticatedDevice? {
         val hash = sha256(credential)

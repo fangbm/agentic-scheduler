@@ -60,6 +60,12 @@ data class KeyPackageUploadRequest(val packageBase64Url: String)
 @Serializable
 data class KeyPackageResponse(val packageBase64Url: String)
 
+@Serializable
+data class OpaqueBlobRequest(val blobBase64Url: String)
+
+@Serializable
+data class OpaqueBlobResponse(val blobBase64Url: String)
+
 sealed interface EnrollmentRegistrationResult {
     data class Created(val expiresAtEpochSeconds: Long) : EnrollmentRegistrationResult
     data object UnknownAccount : EnrollmentRegistrationResult
@@ -70,6 +76,13 @@ sealed interface EnrollmentApprovalResult {
     data object Approved : EnrollmentApprovalResult
     data object NotFound : EnrollmentApprovalResult
     data object AlreadyApproved : EnrollmentApprovalResult
+}
+
+sealed interface DeviceRevocationResult {
+    data object Revoked : DeviceRevocationResult
+    data object NotFound : DeviceRevocationResult
+    data object AlreadyRevoked : DeviceRevocationResult
+    data object SelfRevocationDenied : DeviceRevocationResult
 }
 
 sealed interface BootstrapResult {
@@ -117,4 +130,10 @@ interface ServerEnrollmentRepository {
     fun pendingEnrollments(actor: AuthenticatedDevice): List<PendingEnrollmentResponse>?
     fun approveEnrollment(actor: AuthenticatedDevice, requestId: String, packageBytes: ByteArray): EnrollmentApprovalResult
     fun fetchKeyPackage(requestId: String, targetDeviceId: String): ByteArray?
+}
+
+interface ServerSecurityLifecycleRepository {
+    fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
+    fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?
+    fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult
 }
