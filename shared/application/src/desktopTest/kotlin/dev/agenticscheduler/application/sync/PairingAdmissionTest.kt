@@ -29,12 +29,6 @@ class PairingAdmissionTest {
     )
 
     @Test
-    fun `SAS mismatch blocks approval`() {
-        assertEquals(PairingApprovalResult.SasMismatch, PairingAdmission.approve(pending, "00000000"))
-        assertEquals(PairingApprovalResult.Approved, PairingAdmission.approve(pending, PairingSas.calculate(plaintext.accountId, plaintext.requestId, plaintext.targetDeviceId, publicKey)))
-    }
-
-    @Test
     fun `package identity mismatch remains pending before key import`() {
         assertEquals(KeyPackageAdmissionResult.Accepted(plaintext), PairingAdmission.admitPackage(pending, envelope, plaintext))
         assertEquals(

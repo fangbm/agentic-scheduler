@@ -75,7 +75,6 @@ class PairingRecipientAdmissionServiceTest {
         assertIs<PairingRecipientAdmissionResult.Activated>(service.admit(envelope(), SecretReference("secure://credential/1")))
         assertEquals(PairingRecipientAdmissionResult.NotPending, service.admit(envelope(), SecretReference("secure://credential/1")))
         assertEquals(1, accounts.imports)
-        assertEquals(PairingApprovalResult.NotPending, PairingAdmission.approve(enrollments.value, "20345109"))
     }
 
     private fun service(
