@@ -23,10 +23,8 @@ import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
-import dev.agenticscheduler.application.calendar.CalendarQueryService
 import dev.agenticscheduler.application.calendar.CalendarSourceRef
 import dev.agenticscheduler.application.calendar.CalendarViewport
-import dev.agenticscheduler.application.calendar.RepositoryCalendarQueryService
 import dev.agenticscheduler.application.editing.CreateEventInput
 import dev.agenticscheduler.application.editing.CreateTaskInput
 import dev.agenticscheduler.application.editing.EditingResult
@@ -39,12 +37,14 @@ import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.ConflictAwareRead
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
 import dev.agenticscheduler.application.planner.PlannerPreview
 import dev.agenticscheduler.application.planner.PlanningProfileSettingsService
-import dev.agenticscheduler.application.persistence.EventRepository
-import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.database.openDesktopDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
@@ -97,11 +97,11 @@ fun main() = application {
     val transactions = RoomApplicationTransactionRunner(database)
     val ids = productionUuidV7Generator()
     val mutations = MutationCoordinator(transactions, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() })
-    val calendar = RepositoryCalendarQueryService(events, tasks, academics)
+    val reads = ConflictAwareSourceFactReadService(events, tasks, profiles, academics, NoActiveSyncSpaceSourceFactQuery)
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(calendar, events, tasks, profiles, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations), PlanningProfileSettingsService(profiles, ids, mutations), EventEditingService(events, ids, mutations), TaskEditingService(tasks, ids, mutations))
+                DesktopScheduler(reads, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy))
             }
         }
     }
@@ -109,10 +109,7 @@ fun main() = application {
 
 @Composable
 private fun DesktopScheduler(
-    calendar: CalendarQueryService,
-    events: EventRepository,
-    tasks: TaskRepository,
-    profiles: dev.agenticscheduler.application.persistence.PlanningProfileRepository,
+    reads: ConflictAwareSourceFactReadService,
     dogfoodPlanner: DogfoodPlannerService,
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
@@ -125,9 +122,11 @@ private fun DesktopScheduler(
     var creatingEvent by remember { mutableStateOf(false) }
     var creatingTask by remember { mutableStateOf(false) }
     val viewport = remember(selectedDate, displayTimeZone) { CalendarViewport(selectedDate, selectedDate.plus(1, DateTimeUnit.DAY), displayTimeZone) }
-    val projection by remember(calendar, viewport) { calendar.observe(viewport) }.collectAsState(emptyProjection())
-    val taskValues by tasks.observeTasks().collectAsState(emptyList<Task>().toImmutableList())
-    val focusBlocks by tasks.observeFocusBlocks().collectAsState(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList())
+    val projection by remember(reads, viewport) { reads.observe(viewport) }.collectAsState(emptyProjection())
+    val taskRead by remember(reads) { reads.observeTasks() }.collectAsState(ConflictAwareRead.Projected(emptyList<Task>().toImmutableList()))
+    val focusRead by remember(reads) { reads.observeFocusBlocks() }.collectAsState(ConflictAwareRead.Projected(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList()))
+    val taskValues = (taskRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
+    val focusBlocks = (focusRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
     val dateItems = projection.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
@@ -142,13 +141,13 @@ private fun DesktopScheduler(
             }
         }
         item { Text("All-day / date-only") }
-        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, events, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
+        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, reads, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
         item { Text("Timed / floating") }
-        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, events, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
+        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, reads, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
         item { Text("Tasks") }
         items(taskValues, key = { it.id.value }) { task -> Row { Text(task.title); Button(onClick = { editingTask = task }) { Text("Edit") } } }
-        item { if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)"); if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)") }
-        item { PlannerDogfoodPanel(profiles, focusBlocks, dogfoodPlanner, profileSettings) }
+        item { if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)"); if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)"); if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.") }
+        item { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
     if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
@@ -158,13 +157,13 @@ private fun DesktopScheduler(
 }
 
 @Composable
-private fun CalendarRow(item: CalendarItem, events: EventRepository, focusTitles: Map<FocusBlockId, String>, onEdit: (Event) -> Unit) {
+private fun CalendarRow(item: CalendarItem, reads: ConflictAwareSourceFactReadService, focusTitles: Map<FocusBlockId, String>, onEdit: (Event) -> Unit) {
     val scope = rememberCoroutineScope()
     Row {
         val focusTitle = (item.source as? CalendarSourceRef.FocusBlock)?.let { focusTitles[it.id] }
         Text((focusTitle?.let { "Focus block: $it" } ?: item.title) + if (item is CalendarItem.Floating) " (floating)" else "")
         val source = item.source as? CalendarSourceRef.Event
-        if (source != null) Button(onClick = { scope.launch { events.get(source.id)?.let(onEdit) } }) { Text("Edit") }
+        if (source != null) Button(onClick = { scope.launch { (reads.event(source.id) as? ConflictAwareRead.Projected)?.value?.let(onEdit) } }) { Text("Edit") }
     }
 }
 
@@ -202,6 +201,7 @@ private fun EventEditorDialog(existing: Event?, selectedDate: LocalDate, display
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Event no longer exists."
+                        is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
             }) { Text("Save") }
@@ -259,6 +259,7 @@ private fun TaskEditorDialog(existing: Task?, editor: TaskEditingService, onSave
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Task no longer exists."
+                        is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
             }) { Text("Save") }
@@ -269,12 +270,13 @@ private fun TaskEditorDialog(existing: Task?, editor: TaskEditingService, onSave
 
 @Composable
 private fun PlannerDogfoodPanel(
-    profiles: dev.agenticscheduler.application.persistence.PlanningProfileRepository,
+    reads: ConflictAwareSourceFactReadService,
     focusBlocks: List<dev.agenticscheduler.domain.task.FocusBlock>,
     planner: DogfoodPlannerService,
     profileSettings: PlanningProfileSettingsService,
 ) {
-    val profileValues by profiles.observeAll().collectAsState(emptyList<PlanningProfile>().toImmutableList())
+    val profileRead by remember(reads) { reads.observePlanningProfiles() }.collectAsState(ConflictAwareRead.Projected(emptyList<PlanningProfile>().toImmutableList()))
+    val profileValues = (profileRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
     var selectedProfileId by remember { mutableStateOf<PlanningProfileId?>(null) }
     var createProfile by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<PlanningProfile?>(null) }
@@ -292,6 +294,7 @@ private fun PlannerDogfoodPanel(
             selected?.let { Button(onClick = { editingProfile = it }) { Text("Edit selected profile") } }
         }
         profileValues.forEach { profile -> Button(onClick = { selectedProfileId = profile.id }) { Text(if (profile.id == selectedProfileId) "Selected: ${profile.name}" else profile.name) } }
+        if (profileRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         if (profileValues.isEmpty()) Text("Create a PlanningProfile, then configure explicit availability before planning.")
         OutlinedTextField(horizonStart, { horizonStart = it }, label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
         OutlinedTextField(horizonEnd, { horizonEnd = it }, label = { Text("Horizon end Instant (exclusive)") })
@@ -325,6 +328,7 @@ private fun PlannerDogfoodPanel(
                     Button(onClick = { scope.launch { when (val applied = planner.apply(result.branch, Clock.System.now())) {
                         is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
                         is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
+                        is PlanBranchApplyResult.BlockedBySyncConflict -> message = "PlanBranch intersects an unresolved sync conflict. Resolve it before applying."
                     } } }) { Text("Apply PlanBranch") }
                     Button(onClick = { preview = null; message = "PlanBranch cancelled; Active State was unchanged." }) { Text("Cancel preview") }
                 }

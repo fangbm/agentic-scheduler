@@ -24,10 +24,8 @@ import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
-import dev.agenticscheduler.application.calendar.CalendarQueryService
 import dev.agenticscheduler.application.calendar.CalendarSourceRef
 import dev.agenticscheduler.application.calendar.CalendarViewport
-import dev.agenticscheduler.application.calendar.RepositoryCalendarQueryService
 import dev.agenticscheduler.application.editing.CreateEventInput
 import dev.agenticscheduler.application.editing.CreateTaskInput
 import dev.agenticscheduler.application.editing.EditingResult
@@ -40,13 +38,15 @@ import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.ConflictAwareRead
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranch
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
 import dev.agenticscheduler.application.planner.PlannerPreview
 import dev.agenticscheduler.application.planner.PlanningProfileSettingsService
-import dev.agenticscheduler.application.persistence.EventRepository
-import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.database.openAndroidDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
@@ -97,20 +97,18 @@ class MainActivity : ComponentActivity() {
     private val academics by lazy { RoomAcademicRepository(database) }
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
     private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
-    private val calendarQueryService: CalendarQueryService by lazy {
-        RepositoryCalendarQueryService(events, tasks, academics)
-    }
-    private val eventEditor by lazy { EventEditingService(events, ids, mutations) }
-    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations) }
-    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations) }
+    private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, NoActiveSyncSpaceSourceFactQuery) }
+    private val eventEditor by lazy { EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy) }
+    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
                 Surface {
-                    AndroidScheduler(calendarQueryService, events, tasks, profiles, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                    AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
                 }
             }
         }
@@ -119,10 +117,7 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun AndroidScheduler(
-    calendar: CalendarQueryService,
-    events: EventRepository,
-    tasks: TaskRepository,
-    profiles: dev.agenticscheduler.application.persistence.PlanningProfileRepository,
+    reads: ConflictAwareSourceFactReadService,
     dogfoodPlanner: DogfoodPlannerService,
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
@@ -137,9 +132,11 @@ private fun AndroidScheduler(
     val viewport = remember(selectedDate, displayTimeZone) {
         CalendarViewport(selectedDate, selectedDate.plus(1, DateTimeUnit.DAY), displayTimeZone)
     }
-    val projection by remember(calendar, viewport) { calendar.observe(viewport) }.collectAsState(emptyProjection())
-    val taskValues by tasks.observeTasks().collectAsState(emptyList<Task>().toImmutableList())
-    val focusBlocks by tasks.observeFocusBlocks().collectAsState(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList())
+    val projection by remember(reads, viewport) { reads.observe(viewport) }.collectAsState(emptyProjection())
+    val taskRead by remember(reads) { reads.observeTasks() }.collectAsState(ConflictAwareRead.Projected(emptyList<Task>().toImmutableList()))
+    val focusRead by remember(reads) { reads.observeFocusBlocks() }.collectAsState(ConflictAwareRead.Projected(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList()))
+    val taskValues = (taskRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
+    val focusBlocks = (focusRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
     val dateItems = projection.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
@@ -154,9 +151,9 @@ private fun AndroidScheduler(
             }
         }
         item { Text("All-day / date-only") }
-        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, events, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
+        items(dateItems, key = { it.source.toString() }) { item -> CalendarRow(item, reads, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
         item { Text("Timed / floating") }
-        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, events, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
+        items(timedItems, key = { it.source.toString() }) { item -> CalendarRow(item, reads, focusBlocks.associate { it.id to (taskValues.firstOrNull { task -> task.id == it.taskId }?.title ?: it.taskId.value) }) { editingEvent = it } }
         item { Text("Tasks") }
         items(taskValues, key = { it.id.value }) { task ->
             Row {
@@ -167,8 +164,9 @@ private fun AndroidScheduler(
         item {
             if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)")
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
+            if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }
-        item { PlannerDogfoodPanel(profiles, focusBlocks, dogfoodPlanner, profileSettings) }
+        item { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
     if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
@@ -178,14 +176,14 @@ private fun AndroidScheduler(
 }
 
 @Composable
-private fun CalendarRow(item: CalendarItem, events: EventRepository, focusTitles: Map<FocusBlockId, String>, onEdit: (Event) -> Unit) {
+private fun CalendarRow(item: CalendarItem, reads: ConflictAwareSourceFactReadService, focusTitles: Map<FocusBlockId, String>, onEdit: (Event) -> Unit) {
     val scope = rememberCoroutineScope()
     Row {
         val focusTitle = (item.source as? CalendarSourceRef.FocusBlock)?.let { focusTitles[it.id] }
         Text((focusTitle?.let { "Focus block: $it" } ?: item.title) + if (item is CalendarItem.Floating) " (floating)" else "")
         val source = item.source as? CalendarSourceRef.Event
         if (source != null) {
-            Button(onClick = { scope.launch { events.get(source.id)?.let(onEdit) } }) { Text("Edit") }
+            Button(onClick = { scope.launch { (reads.event(source.id) as? ConflictAwareRead.Projected)?.value?.let(onEdit) } }) { Text("Edit") }
         }
     }
 }
@@ -240,6 +238,7 @@ private fun EventEditorDialog(
                             is EditingResult.Success -> onSaved()
                             is EditingResult.Invalid -> error = result.issues.joinToString()
                             EditingResult.NotFound -> error = "Event no longer exists."
+                            is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                         }
                     }
                 }
@@ -312,6 +311,7 @@ private fun TaskEditorDialog(
                             is EditingResult.Success -> onSaved()
                             is EditingResult.Invalid -> error = result.issues.joinToString()
                             EditingResult.NotFound -> error = "Task no longer exists."
+                            is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                         }
                     }
                 }
@@ -323,12 +323,13 @@ private fun TaskEditorDialog(
 
 @Composable
 private fun PlannerDogfoodPanel(
-    profiles: dev.agenticscheduler.application.persistence.PlanningProfileRepository,
+    reads: ConflictAwareSourceFactReadService,
     focusBlocks: List<dev.agenticscheduler.domain.task.FocusBlock>,
     planner: DogfoodPlannerService,
     profileSettings: PlanningProfileSettingsService,
 ) {
-    val profileValues by profiles.observeAll().collectAsState(emptyList<PlanningProfile>().toImmutableList())
+    val profileRead by remember(reads) { reads.observePlanningProfiles() }.collectAsState(ConflictAwareRead.Projected(emptyList<PlanningProfile>().toImmutableList()))
+    val profileValues = (profileRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
     var selectedProfileId by remember { mutableStateOf<PlanningProfileId?>(null) }
     var createProfile by remember { mutableStateOf(false) }
     var editingProfile by remember { mutableStateOf<PlanningProfile?>(null) }
@@ -352,6 +353,7 @@ private fun PlannerDogfoodPanel(
                 Text(if (profile.id == selectedProfileId) "Selected: ${profile.name}" else profile.name)
             }
         }
+        if (profileRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         if (profileValues.isEmpty()) Text("Create a PlanningProfile, then configure explicit availability before planning.")
         OutlinedTextField(horizonStart, { horizonStart = it }, label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
         OutlinedTextField(horizonEnd, { horizonEnd = it }, label = { Text("Horizon end Instant (exclusive)") })
@@ -389,6 +391,7 @@ private fun PlannerDogfoodPanel(
                             when (val applied = planner.apply(result.branch, Clock.System.now())) {
                                 is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
                                 is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
+                                is PlanBranchApplyResult.BlockedBySyncConflict -> message = "PlanBranch intersects an unresolved sync conflict. Resolve it before applying."
                             }
                         }
                     }) { Text("Apply PlanBranch") }

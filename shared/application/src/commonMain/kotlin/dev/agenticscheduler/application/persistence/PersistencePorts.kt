@@ -11,6 +11,9 @@ import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.DvvSnapshot
+import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.ProtocolQuarantine
+import dev.agenticscheduler.sync.SyncConflict
 import dev.agenticscheduler.sync.FocusBlockDelete
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
@@ -57,6 +60,52 @@ data class HistoryChange(
 )
 
 data class FocusBlockTombstone(val focusBlockId: String, val deletionMutationId: MutationId, val dvv: DvvSnapshot)
+
+/** D8 receive-state boundary. Values here are local transport/audit metadata, never Domain facts. */
+interface SyncReceiveRepository {
+    suspend fun serverCursor(syncSpaceId: SyncSpaceId): Long
+    suspend fun saveServerCursor(syncSpaceId: SyncSpaceId, cursor: Long)
+    suspend fun pending(syncSpaceId: SyncSpaceId, mutationId: String): PendingSyncReceive?
+    suspend fun pending(syncSpaceId: SyncSpaceId): List<PendingSyncReceive>
+    suspend fun savePending(value: PendingSyncReceive)
+    suspend fun removePending(syncSpaceId: SyncSpaceId, mutationId: String)
+    suspend fun handledDot(syncSpaceId: SyncSpaceId, replicaId: ReplicaId, counter: Long): HandledReceiveDot?
+    suspend fun handledDots(syncSpaceId: SyncSpaceId): List<HandledReceiveDot>
+    suspend fun saveHandledDot(value: HandledReceiveDot)
+    suspend fun quarantine(value: ProtocolQuarantine)
+    suspend fun quarantine(syncSpaceId: SyncSpaceId, mutationId: String): ProtocolQuarantine?
+    suspend fun saveConflict(value: SyncConflict)
+    suspend fun conflict(conflictId: String): SyncConflict?
+    suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict>
+}
+
+/** A valid but causally blocked D8 receipt. It is trusted-local transport state, never a Domain fact. */
+data class PendingSyncReceive(
+    val syncSpaceId: SyncSpaceId,
+    val mutationId: String,
+    val serverCursor: Long,
+    val payloadJson: String,
+) {
+    init {
+        require(mutationId.isNotBlank())
+        require(serverCursor >= 0)
+        require(payloadJson.isNotBlank())
+    }
+}
+
+/** A remote operation dot whose result (apply, conflict, or causal acknowledgement) is durable locally. */
+data class HandledReceiveDot(
+    val syncSpaceId: SyncSpaceId,
+    val replicaId: ReplicaId,
+    val counter: Long,
+    val mutationId: String,
+) {
+    init {
+        require(counter >= 0)
+        require(mutationId.isNotBlank())
+    }
+}
+
 interface EventRepository { fun observeAll(): Flow<ImmutableList<Event>>; suspend fun get(id: EventId): Event?; suspend fun upsert(event: Event) }
 interface TaskRepository {
     fun observeTasks(): Flow<ImmutableList<Task>>; suspend fun getTask(id: TaskId): Task?; suspend fun upsertTask(task: Task)

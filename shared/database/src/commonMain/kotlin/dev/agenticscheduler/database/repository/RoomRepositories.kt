@@ -25,6 +25,31 @@ import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.ReplicaId
 import dev.agenticscheduler.sync.HlcTimestamp
 import dev.agenticscheduler.sync.operationKind
+import dev.agenticscheduler.sync.ProtocolQuarantine
+import dev.agenticscheduler.sync.ProtocolQuarantineReason
+import dev.agenticscheduler.sync.SyncConflict
+import dev.agenticscheduler.sync.SyncReceiveStateCodec
+import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.database.record.ProtocolQuarantineRecord
+import dev.agenticscheduler.database.record.SyncConflictRecord
+import dev.agenticscheduler.database.record.SyncSpaceCursorRecord
+import dev.agenticscheduler.application.sync.SecretReference
+import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
+import dev.agenticscheduler.application.sync.LocalEnrollmentState
+import dev.agenticscheduler.application.sync.SyncKeyRingRepository
+import dev.agenticscheduler.application.sync.SyncSpaceKeyState
+import dev.agenticscheduler.application.sync.SyncSpaceContentKeyMetadata
+import dev.agenticscheduler.application.sync.SyncSpaceContentKeyUsage
+import dev.agenticscheduler.application.sync.InstallSyncSpaceKeyEpochResult
+import dev.agenticscheduler.application.sync.InstallSyncKeyPackageResult
+import dev.agenticscheduler.application.sync.ContentKeyIdentity
+import dev.agenticscheduler.application.sync.SyncKeyPackageKeyReference
+import dev.agenticscheduler.application.sync.SyncKeyPackageAdoption
+import dev.agenticscheduler.database.record.SyncSpaceKeyStateRecord
+import dev.agenticscheduler.database.record.SyncSpaceContentKeyRecord
+import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
+import dev.agenticscheduler.database.record.HandledReceiveDotRecord
+import dev.agenticscheduler.database.record.LocalPairingEnrollmentRecord
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
@@ -106,6 +131,287 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
 
     override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = database.mutationJournalDao().focusBlockTombstone(focusBlockId)?.let { FocusBlockTombstone(it.focusBlockId, MutationId(it.deletionMutationId), LocalJournalCodec.decodeDvv(it.dvvJson)) }
 }
+
+/** D8 receive metadata implementation. Callers own the encompassing application transaction. */
+class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) : SyncReceiveRepository {
+    override suspend fun serverCursor(syncSpaceId: SyncSpaceId): Long =
+        database.syncReceiveDao().cursor(syncSpaceId.value)?.serverCursor ?: 0L
+
+    override suspend fun saveServerCursor(syncSpaceId: SyncSpaceId, cursor: Long) {
+        require(cursor >= 0)
+        database.syncReceiveDao().saveCursor(SyncSpaceCursorRecord(syncSpaceId.value, cursor))
+    }
+
+    override suspend fun pending(syncSpaceId: SyncSpaceId, mutationId: String): PendingSyncReceive? =
+        database.syncReceiveDao().pending(syncSpaceId.value, mutationId)?.let { record ->
+            PendingSyncReceive(SyncSpaceId(record.syncSpaceId), record.mutationId, record.serverCursor, record.payloadJson)
+        }
+
+    override suspend fun pending(syncSpaceId: SyncSpaceId): List<PendingSyncReceive> =
+        database.syncReceiveDao().pending(syncSpaceId.value).map { record ->
+            PendingSyncReceive(SyncSpaceId(record.syncSpaceId), record.mutationId, record.serverCursor, record.payloadJson)
+        }
+
+    override suspend fun savePending(value: PendingSyncReceive) {
+        database.syncReceiveDao().savePending(PendingSyncReceiveRecord(
+            value.syncSpaceId.value, value.mutationId, value.serverCursor, value.payloadJson,
+        ))
+    }
+
+    override suspend fun removePending(syncSpaceId: SyncSpaceId, mutationId: String) {
+        database.syncReceiveDao().removePending(syncSpaceId.value, mutationId)
+    }
+
+    override suspend fun handledDot(syncSpaceId: SyncSpaceId, replicaId: ReplicaId, counter: Long): HandledReceiveDot? =
+        database.syncReceiveDao().handledDot(syncSpaceId.value, replicaId.value, counter)?.let { record ->
+            HandledReceiveDot(SyncSpaceId(record.syncSpaceId), ReplicaId(record.replicaId), record.counter, record.mutationId)
+        }
+
+    override suspend fun handledDots(syncSpaceId: SyncSpaceId): List<HandledReceiveDot> =
+        database.syncReceiveDao().handledDots(syncSpaceId.value).map { record ->
+            HandledReceiveDot(SyncSpaceId(record.syncSpaceId), ReplicaId(record.replicaId), record.counter, record.mutationId)
+        }
+
+    override suspend fun saveHandledDot(value: HandledReceiveDot) {
+        database.syncReceiveDao().saveHandledDot(HandledReceiveDotRecord(
+            value.syncSpaceId.value, value.replicaId.value, value.counter, value.mutationId,
+        ))
+    }
+
+    override suspend fun quarantine(value: ProtocolQuarantine) {
+        database.syncReceiveDao().saveQuarantine(ProtocolQuarantineRecord(
+            value.syncSpaceId.value, value.mutationId, value.serverCursor, value.reason.name, value.detail,
+        ))
+    }
+
+    override suspend fun quarantine(syncSpaceId: SyncSpaceId, mutationId: String): ProtocolQuarantine? =
+        database.syncReceiveDao().quarantine(syncSpaceId.value, mutationId)?.let { record ->
+            ProtocolQuarantine(SyncSpaceId(record.syncSpaceId), record.mutationId, record.serverCursor, ProtocolQuarantineReason.valueOf(record.reason), record.detail)
+        }
+
+    override suspend fun saveConflict(value: SyncConflict) {
+        database.syncReceiveDao().saveConflict(SyncConflictRecord(
+            value.conflictId,
+            value.syncSpaceId.value,
+            SyncReceiveStateCodec.encodeConflict(value),
+        ))
+    }
+
+    override suspend fun conflict(conflictId: String): SyncConflict? =
+        database.syncReceiveDao().conflict(conflictId)?.let { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+
+    override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> =
+        database.syncReceiveDao().conflicts(syncSpaceId.value).map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+}
+
+/** D8-02b key ring. Every write is one Room transaction and stores only opaque secure-store references. */
+class RoomSyncKeyMetadataRepository(private val database: AgenticSchedulerDatabase) : SyncKeyRingRepository {
+    override suspend fun state(syncSpaceId: SyncSpaceId): SyncSpaceKeyState? = database.withWriteTransaction {
+        migrateLegacyState(syncSpaceId)
+        database.syncKeyRingDao().state(syncSpaceId.value)?.toState()
+    }
+
+    override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): SyncSpaceContentKeyMetadata? = database.withWriteTransaction {
+        migrateLegacyState(syncSpaceId)
+        database.syncKeyRingDao().state(syncSpaceId.value)?.let { state ->
+            database.syncKeyRingDao().key(syncSpaceId.value, state.activeEncryptionEpoch)?.toMetadata()
+        }
+    }
+
+    override suspend fun decryptionKey(syncSpaceId: SyncSpaceId, keyEpoch: Long): SyncSpaceContentKeyMetadata? = database.withWriteTransaction {
+        migrateLegacyState(syncSpaceId)
+        database.syncKeyRingDao().key(syncSpaceId.value, keyEpoch)?.toMetadata()
+    }
+
+    override suspend fun historicalDecryptKeys(syncSpaceId: SyncSpaceId): List<SyncSpaceContentKeyMetadata> = database.withWriteTransaction {
+        migrateLegacyState(syncSpaceId)
+        database.syncKeyRingDao().historicalKeys(syncSpaceId.value).map(SyncSpaceContentKeyRecord::toMetadata)
+    }
+
+    override suspend fun installNewEpoch(
+        syncSpaceId: SyncSpaceId,
+        keyEpoch: Long,
+        contentKeyReference: SecretReference,
+        contentKeyIdentity: ContentKeyIdentity,
+    ): InstallSyncSpaceKeyEpochResult = database.withWriteTransaction {
+        require(keyEpoch >= 0)
+        migrateLegacyState(syncSpaceId)
+        val state = database.syncKeyRingDao().state(syncSpaceId.value)
+        when {
+            state == null -> {
+                database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, keyEpoch))
+                database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, keyEpoch, contentKeyReference.value, contentKeyIdentity.value, SyncSpaceContentKeyUsage.ACTIVE.name))
+                InstallSyncSpaceKeyEpochResult.Installed
+            }
+            keyEpoch < state.activeEncryptionEpoch -> InstallSyncSpaceKeyEpochResult.RejectedRollback(state.activeEncryptionEpoch)
+            keyEpoch == state.activeEncryptionEpoch -> {
+                val active = requireNotNull(database.syncKeyRingDao().key(syncSpaceId.value, keyEpoch))
+                if (active.keyIdentity == contentKeyIdentity.value) InstallSyncSpaceKeyEpochResult.Idempotent
+                else InstallSyncSpaceKeyEpochResult.IntegrityError
+            }
+            else -> {
+                database.syncKeyRingDao().demoteActive(syncSpaceId.value)
+                database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(syncSpaceId.value, keyEpoch, contentKeyReference.value, contentKeyIdentity.value, SyncSpaceContentKeyUsage.ACTIVE.name))
+                database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, keyEpoch))
+                InstallSyncSpaceKeyEpochResult.Advanced
+            }
+        }
+    }
+
+    override suspend fun installKeyPackage(
+        syncSpaceId: SyncSpaceId,
+        activeKey: SyncKeyPackageKeyReference,
+        historicalReferences: List<SyncKeyPackageKeyReference>,
+    ): InstallSyncKeyPackageResult = database.withWriteTransaction {
+        val activeEpoch = activeKey.keyEpoch
+        require(historicalReferences.map(SyncKeyPackageKeyReference::keyEpoch).distinct().size == historicalReferences.size)
+        require(historicalReferences.all { it.keyEpoch < activeEpoch })
+        migrateLegacyState(syncSpaceId)
+        val state = database.syncKeyRingDao().state(syncSpaceId.value)
+        if (state != null && activeEpoch < state.activeEncryptionEpoch) {
+            return@withWriteTransaction InstallSyncKeyPackageResult.RejectedRollback(state.activeEncryptionEpoch)
+        }
+
+        val adoptedEpochs = linkedSetOf<Long>()
+        val reusedEpochs = linkedSetOf<Long>()
+        historicalReferences.forEach { historical ->
+            val existing = database.syncKeyRingDao().key(syncSpaceId.value, historical.keyEpoch)
+            when {
+                existing == null -> adoptedEpochs += historical.keyEpoch
+                existing.keyIdentity == historical.identity.value -> reusedEpochs += historical.keyEpoch
+                else -> return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+            }
+        }
+
+        val currentActive = state?.let { database.syncKeyRingDao().key(syncSpaceId.value, it.activeEncryptionEpoch) }
+        when {
+            state != null && activeEpoch == state.activeEncryptionEpoch && currentActive == null ->
+                return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+            state != null && activeEpoch == state.activeEncryptionEpoch && currentActive!!.keyIdentity != activeKey.identity.value ->
+                return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+            state != null && activeEpoch == state.activeEncryptionEpoch -> reusedEpochs += activeEpoch
+            else -> {
+                val existingAtIncomingEpoch = database.syncKeyRingDao().key(syncSpaceId.value, activeEpoch)
+                when {
+                    existingAtIncomingEpoch == null -> adoptedEpochs += activeEpoch
+                    existingAtIncomingEpoch.keyIdentity == activeKey.identity.value -> reusedEpochs += activeEpoch
+                    else -> return@withWriteTransaction InstallSyncKeyPackageResult.IntegrityError
+                }
+            }
+        }
+
+        val adoption = SyncKeyPackageAdoption(adoptedEpochs, reusedEpochs)
+        historicalReferences.filter { it.keyEpoch in adoptedEpochs }.forEach { historical ->
+            database.syncKeyRingDao().saveKey(
+                SyncSpaceContentKeyRecord(
+                    syncSpaceId.value,
+                    historical.keyEpoch,
+                    historical.reference.value,
+                    historical.identity.value,
+                    SyncSpaceContentKeyUsage.DECRYPT_ONLY.name,
+                ),
+            )
+        }
+
+        return@withWriteTransaction when {
+            state == null -> {
+                database.syncKeyRingDao().saveKey(
+                    SyncSpaceContentKeyRecord(
+                        syncSpaceId.value,
+                        activeEpoch,
+                        activeKey.reference.value,
+                        activeKey.identity.value,
+                        SyncSpaceContentKeyUsage.ACTIVE.name,
+                    ),
+                )
+                database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, activeEpoch))
+                InstallSyncKeyPackageResult.Installed(adoption)
+            }
+            activeEpoch > state.activeEncryptionEpoch -> {
+                database.syncKeyRingDao().demoteActive(syncSpaceId.value)
+                if (activeEpoch in adoptedEpochs) {
+                    database.syncKeyRingDao().saveKey(
+                        SyncSpaceContentKeyRecord(
+                            syncSpaceId.value,
+                            activeEpoch,
+                            activeKey.reference.value,
+                            activeKey.identity.value,
+                            SyncSpaceContentKeyUsage.ACTIVE.name,
+                        ),
+                    )
+                } else {
+                    val existing = requireNotNull(database.syncKeyRingDao().key(syncSpaceId.value, activeEpoch))
+                    database.syncKeyRingDao().saveKey(existing.copy(usage = SyncSpaceContentKeyUsage.ACTIVE.name))
+                }
+                database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(syncSpaceId.value, activeEpoch))
+                InstallSyncKeyPackageResult.Advanced(adoption)
+            }
+            adoptedEpochs.isNotEmpty() -> InstallSyncKeyPackageResult.Repaired(adoption)
+            else -> InstallSyncKeyPackageResult.Idempotent(adoption)
+        }
+    }
+
+    /** Converts the unmerged v6 single-key record once, preserving it as the active key. */
+    private suspend fun migrateLegacyState(syncSpaceId: SyncSpaceId) {
+        if (database.syncKeyRingDao().state(syncSpaceId.value) != null) return
+        val legacy = database.syncKeyMetadataDao().keyEpoch(syncSpaceId.value) ?: return
+        database.syncKeyRingDao().saveState(SyncSpaceKeyStateRecord(legacy.syncSpaceId, legacy.acceptedKeyEpoch))
+        database.syncKeyRingDao().saveKey(SyncSpaceContentKeyRecord(legacy.syncSpaceId, legacy.acceptedKeyEpoch, legacy.contentKeySecretRef, legacy.contentKeySecretRef, SyncSpaceContentKeyUsage.ACTIVE.name))
+    }
+}
+
+/** D8 SYN-006 local enrollment metadata; server enrollment requests are never stored here. */
+class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDatabase) : LocalEnrollmentRepository {
+    override suspend fun state(accountId: dev.agenticscheduler.sync.AccountId): LocalEnrollmentState? =
+        database.localPairingEnrollmentDao().state(accountId.value)?.toLocalEnrollmentState()
+
+    override suspend fun savePending(value: LocalEnrollmentState.Pending) {
+        database.localPairingEnrollmentDao().save(value.toRecord())
+    }
+
+    override suspend fun saveActive(value: LocalEnrollmentState.Active) {
+        database.localPairingEnrollmentDao().save(value.toRecord())
+    }
+}
+
+private fun SyncSpaceKeyStateRecord.toState() = SyncSpaceKeyState(SyncSpaceId(syncSpaceId), activeEncryptionEpoch)
+private fun SyncSpaceContentKeyRecord.toMetadata() = SyncSpaceContentKeyMetadata(SyncSpaceId(syncSpaceId), keyEpoch, SecretReference(contentKeySecretRef), ContentKeyIdentity(keyIdentity.ifBlank { contentKeySecretRef }), SyncSpaceContentKeyUsage.valueOf(usage))
+
+private fun LocalPairingEnrollmentRecord.toLocalEnrollmentState(): LocalEnrollmentState = when (status) {
+    "PENDING" -> {
+        require(syncSpaceId == null && accountMasterKeySecretRef == null && deviceCredentialSecretRef == null) {
+            "Pending local enrollment must not carry active secret references."
+        }
+        LocalEnrollmentState.Pending(
+            dev.agenticscheduler.sync.AccountId(accountId),
+            dev.agenticscheduler.sync.DeviceId(deviceId),
+            dev.agenticscheduler.sync.EnrollmentRequestId(enrollmentRequestId),
+            dev.agenticscheduler.sync.HpkePublicKeyBase64Url(hpkePublicKeyBase64Url),
+            SecretReference(hpkePrivateKeySecretRef),
+        )
+    }
+    "ACTIVE" -> LocalEnrollmentState.Active(
+        dev.agenticscheduler.sync.AccountId(accountId),
+        dev.agenticscheduler.sync.DeviceId(deviceId),
+        dev.agenticscheduler.sync.EnrollmentRequestId(enrollmentRequestId),
+        dev.agenticscheduler.sync.HpkePublicKeyBase64Url(hpkePublicKeyBase64Url),
+        SecretReference(hpkePrivateKeySecretRef),
+        SyncSpaceId(requireNotNull(syncSpaceId)),
+        SecretReference(requireNotNull(accountMasterKeySecretRef)),
+        SecretReference(requireNotNull(deviceCredentialSecretRef)),
+    )
+    else -> error("Unknown local pairing enrollment status: $status")
+}
+
+private fun LocalEnrollmentState.Pending.toRecord() = LocalPairingEnrollmentRecord(
+    accountId.value, deviceId.value, enrollmentRequestId.value, hpkePublicKey.value, hpkePrivateKeyReference.value,
+    "PENDING", null, null, null,
+)
+
+private fun LocalEnrollmentState.Active.toRecord() = LocalPairingEnrollmentRecord(
+    accountId.value, deviceId.value, enrollmentRequestId.value, hpkePublicKey.value, hpkePrivateKeyReference.value,
+    "ACTIVE", syncSpaceId.value, accountMasterKeyReference.value, deviceCredentialReference.value,
+)
 
 private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))
 private val historyChangeComparator = compareBy<HistoryChange>({ it.hlc.physicalMillis }, { it.hlc.logical }, { it.hlc.replicaId.value }, { it.mutationId }, { it.ordinal })

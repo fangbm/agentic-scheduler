@@ -31,11 +31,19 @@ class MutationCoordinator(
     private val ids: UuidV7Generator,
     private val wallClock: MutationWallClock,
 ) {
-    suspend fun <T> execute(origin: MutationOrigin, block: suspend MutationScope.() -> T): MutationExecution<T> =
-        checkNotNull(executeIfAny(origin, block)) { "A committed MutationId must own at least one typed entity mutation." }
+    suspend fun <T> execute(
+        origin: MutationOrigin,
+        onCommitted: suspend (MutationExecution<T>) -> Unit = {},
+        block: suspend MutationScope.() -> T,
+    ): MutationExecution<T> =
+        checkNotNull(executeIfAny(origin, onCommitted, block)) { "A committed MutationId must own at least one typed entity mutation." }
 
     /** Allows a validated no-op outcome (for example stale Planner Apply) without allocating causal state. */
-    suspend fun <T> executeIfAny(origin: MutationOrigin, block: suspend MutationScope.() -> T): MutationExecution<T>? =
+    suspend fun <T> executeIfAny(
+        origin: MutationOrigin,
+        onCommitted: suspend (MutationExecution<T>) -> Unit = {},
+        block: suspend MutationScope.() -> T,
+    ): MutationExecution<T>? =
         transactions.inWriteTransaction {
             val scope = MutationScope()
             val value = scope.block()
@@ -54,7 +62,9 @@ class MutationCoordinator(
             journal.appendCommittedMutation(CommittedMutation(operation, now))
             journal.advanceFocusBlockTombstones(operation, mutations.filterIsInstance<FocusBlockDelete>())
             journal.saveLocalReplicaState(LocalReplicaCausalState(replicaId, nextCounter, dvv.observedContext(), hlc))
-            MutationExecution(value, mutationId)
+            val execution = MutationExecution(value, mutationId)
+            onCommitted(execution)
+            execution
         }
 
     private fun checkedIncrement(value: Long): Long = check(value < Long.MAX_VALUE) { "Causal counter overflow." }.let { value + 1 }

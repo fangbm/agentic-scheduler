@@ -2,6 +2,11 @@ package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictProjection
+import dev.agenticscheduler.application.history.SyncConflictWriteBlock
+import dev.agenticscheduler.application.history.SyncConflictWritePolicy
+import dev.agenticscheduler.application.history.toDomain
 import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.EventRepository
@@ -18,6 +23,7 @@ import dev.agenticscheduler.planner.PlanningHorizon
 import dev.agenticscheduler.planner.PlanningSnapshot
 import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.PlanningProfilePut
+import dev.agenticscheduler.sync.*
 import kotlin.time.Instant
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.flow.first
@@ -36,6 +42,8 @@ class DogfoodPlannerService(
     private val planner: DeterministicPlanner = DeterministicPlanner(),
     private val snapshotAssembler: PlanningSnapshotAssembler = PlanningSnapshotAssembler(),
     private val mutations: MutationCoordinator,
+    private val conflictWritePolicy: SyncConflictWritePolicy,
+    private val sourceFacts: ConflictAwareSourceFactQuery,
 ) {
     private val previews = PlannerPreviewService(planner, PlanBranchFactory(uuidV7))
 
@@ -73,6 +81,7 @@ class DogfoodPlannerService(
                 }
             },
             mutations = mutations,
+            conflictWritePolicy = conflictWritePolicy,
         ).apply(branch, applyNow)
     }
 
@@ -93,12 +102,20 @@ class DogfoodPlannerService(
     ): SnapshotAssembly {
         val profile = profiles.get(profileId)
             ?: return SnapshotAssembly.Invalid("PlanningProfile ${profileId.value} no longer exists.")
-        val semesters = academics.observeSemesters().first()
-        val courses = academics.observeCourses().first()
-        val rules = academics.observeCourseScheduleRules().first()
-        val templates = academics.observePeriodTemplates().first()
-        val holidays = academics.observeAcademicHolidays().first()
-        val exceptions = academics.observeCourseOccurrenceExceptions().first()
+        val projectedProfile = projectOne(PlanningProfilePut(null, profile.toSemanticImage())) { (it as? PlanningProfilePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("PlanningProfile ${profileId.value} has an unresolved sync conflict projection.")
+        val semesters = projectList(academics.observeSemesters().first(), { SemesterPut(null, it.toSemanticImage()) }) { (it as? SemesterPut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Semester source facts have an unresolved sync conflict projection.")
+        val courses = projectList(academics.observeCourses().first(), { CoursePut(null, it.toSemanticImage()) }) { (it as? CoursePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Course source facts have an unresolved sync conflict projection.")
+        val rules = projectList(academics.observeCourseScheduleRules().first(), { CourseScheduleRulePut(null, it.toSemanticImage()) }) { (it as? CourseScheduleRulePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Course schedule source facts have an unresolved sync conflict projection.")
+        val templates = projectList(academics.observePeriodTemplates().first(), { PeriodTemplatePut(null, it.toSemanticImage()) }) { (it as? PeriodTemplatePut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Period template source facts have an unresolved sync conflict projection.")
+        val holidays = projectList(academics.observeAcademicHolidays().first(), { AcademicHolidayPut(null, it.toSemanticImage()) }) { (it as? AcademicHolidayPut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Academic holiday source facts have an unresolved sync conflict projection.")
+        val exceptions = projectList(academics.observeCourseOccurrenceExceptions().first(), { CourseOccurrenceExceptionPut(null, it.toSemanticImage()) }) { (it as? CourseOccurrenceExceptionPut)?.after?.toDomain() }
+            ?: return SnapshotAssembly.Invalid("Course occurrence source facts have an unresolved sync conflict projection.")
         val academicIssues = mutableListOf<String>()
         val sessions = courses.flatMap { course ->
             val semester = semesters.firstOrNull { it.id == course.semesterId }
@@ -127,17 +144,60 @@ class DogfoodPlannerService(
         return SnapshotAssembly.Ready(snapshotAssembler.assemble(
             referenceNow = referenceNow,
             horizon = horizon,
-            profile = profile,
-            tasks = tasks.observeTasks().first(),
-            dependencies = tasks.observeDependencies().first(),
-            focusBlocks = tasks.observeFocusBlocks().first(),
-            events = events.observeAll().first(),
+            profile = projectedProfile,
+            tasks = projectList(tasks.observeTasks().first(), { TaskPut(null, it.toSemanticImage()) }) { (it as? TaskPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Task source facts have an unresolved sync conflict projection."),
+            dependencies = projectList(tasks.observeDependencies().first(), { TaskDependencyPut(null, it.toSemanticImage()) }) { (it as? TaskDependencyPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Task dependency source facts have an unresolved sync conflict projection."),
+            focusBlocks = projectFocusBlocks(tasks.observeFocusBlocks().first())
+                ?: return SnapshotAssembly.Invalid("FocusBlock source facts have an unresolved sync conflict projection."),
+            events = projectList(events.observeAll().first(), { EventPut(null, it.toSemanticImage()) }) { (it as? EventPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Event source facts have an unresolved sync conflict projection."),
             courseSessions = sessions,
-            exams = academics.observeExams().first(),
+            exams = projectList(academics.observeExams().first(), { ExamPut(null, it.toSemanticImage()) }) { (it as? ExamPut)?.after?.toDomain() }
+                ?: return SnapshotAssembly.Invalid("Exam source facts have an unresolved sync conflict projection."),
             constraints = emptyList(),
             askOverflowAuthorizedTaskIds = emptyList(),
         ))
     }
+
+    private suspend fun <T> projectOne(
+        durable: EntityMutation,
+        decode: (EntityMutation) -> T?,
+    ): T? = when (val projected = sourceFacts.project(durable)) {
+        is ConflictProjection.Projected -> projected.mutation?.let(decode)
+        is ConflictProjection.Unprojectable -> null
+    }
+
+    private suspend fun <T> projectList(
+        values: List<T>,
+        durable: (T) -> EntityMutation,
+        allowDeletion: Boolean = false,
+        decode: (EntityMutation) -> T?,
+    ): List<T>? {
+        val projected = mutableListOf<T>()
+        values.forEach { value ->
+            when (val result = sourceFacts.project(durable(value))) {
+                is ConflictProjection.Projected -> {
+                    if (result.mutation == null) {
+                        if (!allowDeletion) return null
+                    } else {
+                        projected += decode(result.mutation) ?: return null
+                    }
+                }
+                is ConflictProjection.Unprojectable -> return null
+            }
+        }
+        return projected
+    }
+
+    private suspend fun projectFocusBlocks(values: List<dev.agenticscheduler.domain.task.FocusBlock>): List<dev.agenticscheduler.domain.task.FocusBlock>? =
+        when (val result = sourceFacts.projectCollection(EntityKind.FOCUS_BLOCK, values.map { FocusBlockPut(null, it.toSemanticImage()) })) {
+            is dev.agenticscheduler.application.history.ConflictCollectionProjection.Projected -> result.mutations.map { mutation ->
+                (mutation as? FocusBlockPut)?.after?.toDomain() ?: return null
+            }
+            is dev.agenticscheduler.application.history.ConflictCollectionProjection.Unprojectable -> null
+        }
 
     private sealed interface SnapshotAssembly {
         data class Ready(val snapshot: PlanningSnapshot) : SnapshotAssembly
@@ -148,31 +208,55 @@ class DogfoodPlannerService(
     }
 }
 
+sealed interface PlanningProfileSettingsResult {
+    data class Success(val profile: PlanningProfile) : PlanningProfileSettingsResult
+    data class BlockedBySyncConflict(val blocks: kotlinx.collections.immutable.ImmutableList<SyncConflictWriteBlock>) : PlanningProfileSettingsResult
+}
+
 /** Profile settings writes use the application transaction boundary, never a platform DAO. */
 class PlanningProfileSettingsService(
     private val profiles: PlanningProfileRepository,
     private val uuidV7: UuidV7Generator,
     private val mutations: MutationCoordinator,
+    private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
-    suspend fun createUnconfigured(name: String): PlanningProfile {
+    suspend fun createUnconfigured(name: String): PlanningProfileSettingsResult {
         val profile = PlanningProfile(
             PlanningProfileId(uuidV7.next()),
             name,
             dev.agenticscheduler.domain.planning.PlanningProfileConfiguration.Unconfigured,
         )
-        return mutations.execute(MutationOrigin.User) {
-            profiles.upsert(profile)
-            record(PlanningProfilePut(null, profile.toSemanticImage()))
-            profile
-        }.value
+        var result: PlanningProfileSettingsResult? = null
+        val execution = mutations.executeIfAny(MutationOrigin.User) {
+            val proposed = PlanningProfilePut(null, profile.toSemanticImage())
+            val blocks = conflictWritePolicy.blocks(listOf(proposed))
+            result = if (blocks.isEmpty()) {
+                profiles.upsert(profile)
+                record(proposed)
+                PlanningProfileSettingsResult.Success(profile)
+            } else {
+                PlanningProfileSettingsResult.BlockedBySyncConflict(blocks.toImmutableList())
+            }
+            requireNotNull(result)
+        }
+        return execution?.value ?: requireNotNull(result)
     }
 
-    suspend fun save(profile: PlanningProfile): PlanningProfile {
-        return mutations.execute(MutationOrigin.User) {
+    suspend fun save(profile: PlanningProfile): PlanningProfileSettingsResult {
+        var result: PlanningProfileSettingsResult? = null
+        val execution = mutations.executeIfAny(MutationOrigin.User) {
             val before = profiles.get(profile.id)
-            profiles.upsert(profile)
-            record(PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage()))
-            profile
-        }.value
+            val proposed = PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage())
+            val blocks = conflictWritePolicy.blocks(listOf(proposed))
+            result = if (blocks.isEmpty()) {
+                profiles.upsert(profile)
+                record(proposed)
+                PlanningProfileSettingsResult.Success(profile)
+            } else {
+                PlanningProfileSettingsResult.BlockedBySyncConflict(blocks.toImmutableList())
+            }
+            requireNotNull(result)
+        }
+        return execution?.value ?: requireNotNull(result)
     }
 }

@@ -14,11 +14,13 @@ import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
 import dev.agenticscheduler.application.calendar.CalendarQueryService
 import dev.agenticscheduler.application.calendar.CalendarViewport
-import dev.agenticscheduler.application.calendar.RepositoryCalendarQueryService
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.calendar.intersectsLocalDate
 import dev.agenticscheduler.database.openAndroidDatabase
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomEventRepository
+import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import kotlinx.collections.immutable.toImmutableList
 import kotlin.time.Clock
@@ -30,7 +32,13 @@ import kotlinx.datetime.toLocalDateTime
 class WearMainActivity : ComponentActivity() {
     private val calendarQueryService: CalendarQueryService by lazy {
         val database = openAndroidDatabase(this)
-        RepositoryCalendarQueryService(RoomEventRepository(database), RoomTaskRepository(database), RoomAcademicRepository(database))
+        ConflictAwareSourceFactReadService(
+            RoomEventRepository(database),
+            RoomTaskRepository(database),
+            RoomPlanningProfileRepository(database),
+            RoomAcademicRepository(database),
+            NoActiveSyncSpaceSourceFactQuery,
+        )
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

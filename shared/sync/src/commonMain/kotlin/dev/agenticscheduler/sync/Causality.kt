@@ -2,6 +2,7 @@ package dev.agenticscheduler.sync
 
 import kotlinx.collections.immutable.ImmutableMap
 import kotlinx.collections.immutable.toImmutableMap
+import kotlinx.serialization.Serializable
 
 private val uuidV7Pattern = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
@@ -13,6 +14,7 @@ value class ReplicaId(val value: String) {
 
 /** One immutable, application-owned logical transaction. */
 @JvmInline
+@Serializable
 value class MutationId(val value: String) {
     init { require(uuidV7Pattern.matches(value)) { "MutationId must be lowercase RFC UUIDv7 text." } }
 }

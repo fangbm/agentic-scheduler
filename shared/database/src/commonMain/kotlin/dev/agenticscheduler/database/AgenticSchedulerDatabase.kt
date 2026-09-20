@@ -15,10 +15,12 @@ import dev.agenticscheduler.database.dao.*
         CourseRecord::class, PeriodTemplateRecord::class, AcademicPeriodRecord::class, CourseScheduleRuleRecord::class,
         CourseRuleWeekRecord::class, AcademicHolidayRecord::class, CourseOccurrenceExceptionRecord::class, ExamRecord::class,
         MutationRecord::class, ChangeLogEntryRecord::class, SyncOperationJournalRecord::class, ReplicaCausalStateRecord::class, FocusBlockTombstoneRecord::class,
+        SyncSpaceCursorRecord::class, ProtocolQuarantineRecord::class, SyncConflictRecord::class,
+        PendingSyncReceiveRecord::class, HandledReceiveDotRecord::class, SyncSpaceKeyEpochRecord::class, SyncSpaceKeyStateRecord::class, SyncSpaceContentKeyRecord::class, LocalPairingEnrollmentRecord::class,
     ],
-    version = 3,
+    version = 9,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5), AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9)],
 )
 @ConstructedBy(AgenticSchedulerDatabaseConstructor::class)
 abstract class AgenticSchedulerDatabase : RoomDatabase() {
@@ -37,6 +39,10 @@ abstract class AgenticSchedulerDatabase : RoomDatabase() {
     abstract fun workLogDao(): WorkLogDao
     abstract fun taskDependencyDao(): TaskDependencyDao
     abstract fun mutationJournalDao(): MutationJournalDao
+    abstract fun syncReceiveDao(): SyncReceiveDao
+    abstract fun syncKeyMetadataDao(): SyncKeyMetadataDao
+    abstract fun syncKeyRingDao(): SyncKeyRingDao
+    abstract fun localPairingEnrollmentDao(): LocalPairingEnrollmentDao
 }
 
 @Suppress("NO_ACTUAL_FOR_EXPECT")
