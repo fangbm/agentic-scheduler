@@ -26,7 +26,7 @@ private data class StoredEnvelopeWire(val serverCursor: Long, val envelope: Encr
 class KtorSyncTransport(
     private val client: HttpClient,
     baseUrl: String,
-    private val deviceCredential: suspend () -> String,
+    private val deviceCredential: suspend () -> DeviceCredential?,
     private val json: Json = Json { encodeDefaults = true; ignoreUnknownKeys = true },
 ) : SyncTransport {
     private val baseUrl = baseUrl.trimEnd('/')
@@ -75,8 +75,8 @@ class KtorSyncTransport(
     }
 
     private suspend fun io.ktor.client.request.HttpRequestBuilder.authorization() {
-        val credential = deviceCredential().takeIf(String::isNotBlank) ?: throw SyncTransportException("MISSING_DEVICE_CREDENTIAL")
-        header(HttpHeaders.Authorization, "Bearer $credential")
+        val credential = deviceCredential() ?: throw SyncTransportException("MISSING_DEVICE_CREDENTIAL")
+        header(HttpHeaders.Authorization, "Bearer ${credential.value}")
     }
 
     private fun envelopeUrl(syncSpaceId: SyncSpaceId): String =

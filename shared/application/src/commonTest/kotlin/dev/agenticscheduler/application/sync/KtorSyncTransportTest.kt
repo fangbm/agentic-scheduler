@@ -20,6 +20,7 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class KtorSyncTransportTest {
+    private val credential = DeviceCredential("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
     @Test
     fun `upload and fetch use bearer auth and cursor contract`() = runBlocking {
         val requests = mutableListOf<HttpRequestData>()
@@ -42,7 +43,7 @@ class KtorSyncTransportTest {
                 }
             }
         }
-        val transport = KtorSyncTransport(client, "https://sync.example", { "credential" })
+        val transport = KtorSyncTransport(client, "https://sync.example", { credential })
         val envelope = envelope()
 
         val upload = transport.upload(envelope)
@@ -51,7 +52,7 @@ class KtorSyncTransportTest {
         assertEquals(1, fetched.size)
         assertEquals(8L, fetched.single().serverCursor)
         assertEquals("https://sync.example/v1/sync/spaces/space%2Fa/envelopes", requests[0].url.toString())
-        assertEquals("Bearer credential", requests[0].headers[HttpHeaders.Authorization])
+        assertEquals("Bearer ${credential.value}", requests[0].headers[HttpHeaders.Authorization])
         assertEquals("7", requests[1].url.parameters["after"])
         assertEquals("20", requests[1].url.parameters["limit"])
         client.close()
@@ -63,7 +64,7 @@ class KtorSyncTransportTest {
         val client = HttpClient(MockEngine) {
             engine { addHandler { respond("", response) } }
         }
-        val transport = KtorSyncTransport(client, "https://sync.example", { "credential" })
+        val transport = KtorSyncTransport(client, "https://sync.example", { credential })
         assertIs<SyncUploadResult.IntegrityConflict>(transport.upload(envelope()))
         response = HttpStatusCode.ServiceUnavailable
         assertIs<SyncUploadResult.RetryableFailure>(transport.upload(envelope()))
@@ -73,7 +74,7 @@ class KtorSyncTransportTest {
     @Test
     fun `missing credential fails before request`() = runBlocking {
         val client = HttpClient(MockEngine) { engine { addHandler { error("request must not be sent") } } }
-        val transport = KtorSyncTransport(client, "https://sync.example", { "" })
+        val transport = KtorSyncTransport(client, "https://sync.example", { null })
         assertFailsWith<SyncTransportException> { transport.upload(envelope()) }
         client.close()
     }
@@ -121,7 +122,7 @@ class KtorSyncTransportTest {
                 }
             }
         }
-        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { "credential" })
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { credential })
         lifecycle.registerEnrollment(ClientEnrollmentRequest("account", "req", "target", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
         lifecycle.pendingEnrollments()
         lifecycle.approveEnrollment("req", "AQI")
@@ -129,7 +130,7 @@ class KtorSyncTransportTest {
         assertEquals("AQI", lifecycle.fetchRecoveryEnvelope())
         lifecycle.revokeDevice("target")
         assertEquals(null, requests.first().second)
-        assertTrue(requests.drop(1).all { it.second == "Bearer credential" })
+        assertTrue(requests.drop(1).all { it.second == "Bearer ${credential.value}" })
         client.close()
     }
 

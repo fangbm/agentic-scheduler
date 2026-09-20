@@ -57,7 +57,7 @@ private data class ClientBlob(val blobBase64Url: String)
 class KtorSyncLifecycleTransport(
     private val client: HttpClient,
     baseUrl: String,
-    private val deviceCredential: suspend () -> String,
+    private val deviceCredential: suspend () -> DeviceCredential?,
     private val json: Json = Json { encodeDefaults = true; ignoreUnknownKeys = true },
 ) {
     private val baseUrl = baseUrl.trimEnd('/')
@@ -124,8 +124,8 @@ class KtorSyncLifecycleTransport(
     }
 
     private suspend fun io.ktor.client.request.HttpRequestBuilder.authorization() {
-        val credential = deviceCredential().takeIf(String::isNotBlank) ?: throw SyncTransportException("MISSING_DEVICE_CREDENTIAL")
-        header(HttpHeaders.Authorization, "Bearer $credential")
+        val credential = deviceCredential() ?: throw SyncTransportException("MISSING_DEVICE_CREDENTIAL")
+        header(HttpHeaders.Authorization, "Bearer ${credential.value}")
     }
 
     private fun requireStatus(response: io.ktor.client.statement.HttpResponse, expected: HttpStatusCode) {

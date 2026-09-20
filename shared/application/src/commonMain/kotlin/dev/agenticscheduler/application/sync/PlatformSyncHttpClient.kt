@@ -7,5 +7,5 @@ expect fun createSyncHttpClient(): HttpClient
 
 fun createPlatformSyncTransport(
     baseUrl: String,
-    deviceCredential: suspend () -> String,
+    deviceCredential: suspend () -> DeviceCredential?,
 ): KtorSyncTransport = KtorSyncTransport(createSyncHttpClient(), baseUrl, deviceCredential)
