@@ -535,6 +535,75 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
+    @Test fun `pairing active write failure rolls back the Room key ring and leaves pending enrollment`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val local = RoomLocalEnrollmentRepository(database)
+        val account = dev.agenticscheduler.sync.AccountId("acct-1")
+        val device = dev.agenticscheduler.sync.DeviceId("device-1")
+        val request = dev.agenticscheduler.sync.EnrollmentRequestId("req-1")
+        val publicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(account, device, request, publicKey, dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private/1"))
+        local.savePending(pending)
+        val raw = ByteArray(32) { it.toByte() }
+        val plaintext = dev.agenticscheduler.sync.KeyPackagePlaintextV1(
+            accountId = account,
+            requestId = request,
+            targetDeviceId = device,
+            keyEpoch = 8,
+            accountMasterKeyBase64Url = dev.agenticscheduler.sync.encodeCanonicalBase64Url(raw),
+            syncSpace = dev.agenticscheduler.sync.SyncSpaceKeyPackageV1(
+                syncSpaceId = SyncSpaceId("personal-space"),
+                activeEpoch = 8,
+                activeKeyBase64Url = dev.agenticscheduler.sync.encodeCanonicalBase64Url(raw),
+                historicalKeys = emptyList(),
+            ),
+        )
+        val failingLocal = object : dev.agenticscheduler.application.sync.LocalEnrollmentRepository {
+            override suspend fun state(accountId: dev.agenticscheduler.sync.AccountId) = local.state(accountId)
+            override suspend fun savePending(value: dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending) = local.savePending(value)
+            override suspend fun saveActive(value: dev.agenticscheduler.application.sync.LocalEnrollmentState.Active): Nothing = error("active metadata write failed")
+        }
+        val privateKey = object : dev.agenticscheduler.application.sync.PairingPrivateKeyMaterial {}
+        val service = dev.agenticscheduler.application.sync.PairingRecipientAdmissionService(
+            enrollments = failingLocal,
+            privateKeys = object : dev.agenticscheduler.application.sync.PlatformPairingPrivateKeyStore {
+                override suspend fun generatePairingDeviceKey(): dev.agenticscheduler.application.sync.PersistedPairingDeviceKey = error("Not used")
+                override suspend fun privateKey(reference: dev.agenticscheduler.application.sync.SecretReference) = privateKey
+                override suspend fun delete(reference: dev.agenticscheduler.application.sync.SecretReference) = Unit
+            },
+            hpke = object : dev.agenticscheduler.application.sync.PairingHpke {
+                override fun generateDeviceKeyPair(): dev.agenticscheduler.application.sync.PairingDeviceKeyPair = error("Not used")
+                override fun encrypt(publicKey: dev.agenticscheduler.sync.HpkePublicKeyBase64Url, plaintext: ByteArray, contextInfo: ByteArray): dev.agenticscheduler.application.sync.HpkeCiphertextComponents = error("Not used")
+                override fun decrypt(privateKey: dev.agenticscheduler.application.sync.PairingPrivateKeyMaterial, encapsulatedKeyBase64Url: String, ciphertextBase64Url: String, contextInfo: ByteArray) = dev.agenticscheduler.sync.PairingWireCodec.encodePlaintext(plaintext).encodeToByteArray()
+            },
+            accountMasterKeys = object : dev.agenticscheduler.application.sync.PlatformAccountMasterKeyStore {
+                override suspend fun importAccountMasterKeyForPairing(material: dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial) = dev.agenticscheduler.application.sync.SecretReference("secure://amk/1")
+                override suspend fun delete(reference: dev.agenticscheduler.application.sync.SecretReference) = Unit
+            },
+            keyPackageInstaller = dev.agenticscheduler.application.sync.SyncKeyPackageInstaller(
+                object : dev.agenticscheduler.application.sync.PlatformKeyMaterialStore {
+                    override suspend fun importContentKey(material: dev.agenticscheduler.application.sync.ImportedContentKeyMaterial) = dev.agenticscheduler.application.sync.ImportedContentKey(dev.agenticscheduler.application.sync.SecretReference("secure://content/8"), dev.agenticscheduler.application.sync.ContentKeyIdentity("identity-8"))
+                    override suspend fun contentAead(reference: dev.agenticscheduler.application.sync.SecretReference) = null
+                    override suspend fun delete(reference: dev.agenticscheduler.application.sync.SecretReference) = Unit
+                },
+                RoomSyncKeyMetadataRepository(database),
+            ),
+            transactions = RoomApplicationTransactionRunner(database),
+        )
+        val envelope = dev.agenticscheduler.sync.KeyPackageEnvelopeV1(
+            accountId = account,
+            requestId = request,
+            targetDeviceId = device,
+            keyEpoch = 8,
+            encapsulatedKeyBase64Url = publicKey.value,
+            ciphertextBase64Url = "AQI",
+        )
+        assertEquals(dev.agenticscheduler.application.sync.PairingRecipientAdmissionResult.ActivationFailed, service.admit(envelope, dev.agenticscheduler.application.sync.SecretReference("secure://credential/1")))
+        assertEquals(pending, local.state(account))
+        assertEquals(null, RoomSyncKeyMetadataRepository(database).state(SyncSpaceId("personal-space")))
+        database.close()
+    }
+
     @Test fun `D8 key ring install is atomic monotonic and retains historical decrypt keys`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val keys = RoomSyncKeyMetadataRepository(database)
