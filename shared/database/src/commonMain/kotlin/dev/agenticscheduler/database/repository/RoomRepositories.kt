@@ -34,6 +34,8 @@ import dev.agenticscheduler.database.record.ProtocolQuarantineRecord
 import dev.agenticscheduler.database.record.SyncConflictRecord
 import dev.agenticscheduler.database.record.SyncSpaceCursorRecord
 import dev.agenticscheduler.application.sync.SecretReference
+import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
+import dev.agenticscheduler.application.sync.LocalEnrollmentState
 import dev.agenticscheduler.application.sync.SyncKeyRingRepository
 import dev.agenticscheduler.application.sync.SyncSpaceKeyState
 import dev.agenticscheduler.application.sync.SyncSpaceContentKeyMetadata
@@ -47,6 +49,7 @@ import dev.agenticscheduler.database.record.SyncSpaceKeyStateRecord
 import dev.agenticscheduler.database.record.SyncSpaceContentKeyRecord
 import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
 import dev.agenticscheduler.database.record.HandledReceiveDotRecord
+import dev.agenticscheduler.database.record.LocalPairingEnrollmentRecord
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
@@ -357,8 +360,58 @@ class RoomSyncKeyMetadataRepository(private val database: AgenticSchedulerDataba
     }
 }
 
+/** D8 SYN-006 local enrollment metadata; server enrollment requests are never stored here. */
+class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDatabase) : LocalEnrollmentRepository {
+    override suspend fun state(accountId: dev.agenticscheduler.sync.AccountId): LocalEnrollmentState? =
+        database.localPairingEnrollmentDao().state(accountId.value)?.toLocalEnrollmentState()
+
+    override suspend fun savePending(value: LocalEnrollmentState.Pending) {
+        database.localPairingEnrollmentDao().save(value.toRecord())
+    }
+
+    override suspend fun saveActive(value: LocalEnrollmentState.Active) {
+        database.localPairingEnrollmentDao().save(value.toRecord())
+    }
+}
+
 private fun SyncSpaceKeyStateRecord.toState() = SyncSpaceKeyState(SyncSpaceId(syncSpaceId), activeEncryptionEpoch)
 private fun SyncSpaceContentKeyRecord.toMetadata() = SyncSpaceContentKeyMetadata(SyncSpaceId(syncSpaceId), keyEpoch, SecretReference(contentKeySecretRef), ContentKeyIdentity(keyIdentity.ifBlank { contentKeySecretRef }), SyncSpaceContentKeyUsage.valueOf(usage))
+
+private fun LocalPairingEnrollmentRecord.toLocalEnrollmentState(): LocalEnrollmentState = when (status) {
+    "PENDING" -> {
+        require(syncSpaceId == null && accountMasterKeySecretRef == null && deviceCredentialSecretRef == null) {
+            "Pending local enrollment must not carry active secret references."
+        }
+        LocalEnrollmentState.Pending(
+            dev.agenticscheduler.sync.AccountId(accountId),
+            dev.agenticscheduler.sync.DeviceId(deviceId),
+            dev.agenticscheduler.sync.EnrollmentRequestId(enrollmentRequestId),
+            dev.agenticscheduler.sync.HpkePublicKeyBase64Url(hpkePublicKeyBase64Url),
+            SecretReference(hpkePrivateKeySecretRef),
+        )
+    }
+    "ACTIVE" -> LocalEnrollmentState.Active(
+        dev.agenticscheduler.sync.AccountId(accountId),
+        dev.agenticscheduler.sync.DeviceId(deviceId),
+        dev.agenticscheduler.sync.EnrollmentRequestId(enrollmentRequestId),
+        dev.agenticscheduler.sync.HpkePublicKeyBase64Url(hpkePublicKeyBase64Url),
+        SecretReference(hpkePrivateKeySecretRef),
+        SyncSpaceId(requireNotNull(syncSpaceId)),
+        SecretReference(requireNotNull(accountMasterKeySecretRef)),
+        SecretReference(requireNotNull(deviceCredentialSecretRef)),
+    )
+    else -> error("Unknown local pairing enrollment status: $status")
+}
+
+private fun LocalEnrollmentState.Pending.toRecord() = LocalPairingEnrollmentRecord(
+    accountId.value, deviceId.value, enrollmentRequestId.value, hpkePublicKey.value, hpkePrivateKeyReference.value,
+    "PENDING", null, null, null,
+)
+
+private fun LocalEnrollmentState.Active.toRecord() = LocalPairingEnrollmentRecord(
+    accountId.value, deviceId.value, enrollmentRequestId.value, hpkePublicKey.value, hpkePrivateKeyReference.value,
+    "ACTIVE", syncSpaceId.value, accountMasterKeyReference.value, deviceCredentialReference.value,
+)
 
 private fun ChangeLogEntryRecord.toHistoryChange(record: MutationRecord) = HistoryChange(mutationId, ordinal, dev.agenticscheduler.sync.EntityKind.valueOf(entityKind), entityId, operationKind, beforeImageJson, afterImageJson, HlcTimestamp(record.hlcPhysicalMillis, record.hlcLogical, ReplicaId(record.hlcReplicaId)))
 private val historyChangeComparator = compareBy<HistoryChange>({ it.hlc.physicalMillis }, { it.hlc.logical }, { it.hlc.replicaId.value }, { it.mutationId }, { it.ordinal })
