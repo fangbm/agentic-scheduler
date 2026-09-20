@@ -35,6 +35,55 @@ data class ImportedContentKey(
     val identity: ContentKeyIdentity,
 )
 
+/** Platform-owned content-key generation; raw key bytes never cross this boundary. */
+fun interface PlatformContentKeyGenerator {
+    suspend fun generateContentKey(): ImportedContentKey
+}
+
+sealed interface SyncKeyEpochRotationResult {
+    data class Installed(val keyEpoch: Long, val result: InstallSyncSpaceKeyEpochResult) : SyncKeyEpochRotationResult
+    data class Rejected(val result: InstallSyncSpaceKeyEpochResult) : SyncKeyEpochRotationResult
+    data class Failed(val detail: String) : SyncKeyEpochRotationResult
+}
+
+/**
+ * Advances one SyncSpace content epoch using platform-generated key material.
+ * AMK/recovery-envelope rotation is intentionally a separate lifecycle step.
+ */
+class SyncKeyEpochRotationService(
+    private val keyRing: SyncKeyRingRepository,
+    private val generator: PlatformContentKeyGenerator,
+    private val keyMaterial: PlatformKeyMaterialStore,
+) {
+    suspend fun rotate(syncSpaceId: SyncSpaceId): SyncKeyEpochRotationResult {
+        val current = keyRing.state(syncSpaceId)
+        val nextEpoch = current?.activeEncryptionEpoch?.let { check(it < Long.MAX_VALUE) { "Key epoch overflow." }; it + 1 } ?: 0L
+        val generated = try {
+            generator.generateContentKey()
+        } catch (failure: Throwable) {
+            return SyncKeyEpochRotationResult.Failed("CONTENT_KEY_GENERATION_FAILED")
+        }
+        val result = try {
+            keyRing.installNewEpoch(syncSpaceId, nextEpoch, generated.reference, generated.identity)
+        } catch (failure: Throwable) {
+            try { keyMaterial.delete(generated.reference) } catch (_: Throwable) { }
+            return SyncKeyEpochRotationResult.Failed("CONTENT_KEY_INSTALL_FAILED")
+        }
+        return when (result) {
+            InstallSyncSpaceKeyEpochResult.Installed,
+            InstallSyncSpaceKeyEpochResult.Advanced,
+            InstallSyncSpaceKeyEpochResult.Idempotent,
+            -> SyncKeyEpochRotationResult.Installed(nextEpoch, result)
+            InstallSyncSpaceKeyEpochResult.IntegrityError,
+            is InstallSyncSpaceKeyEpochResult.RejectedRollback,
+            -> {
+                try { keyMaterial.delete(generated.reference) } catch (_: Throwable) { }
+                SyncKeyEpochRotationResult.Rejected(result)
+            }
+        }
+    }
+}
+
 /** Opaque transient result of a platform HPKE/recovery decrypt; it must never be persisted in Room. */
 interface ImportedContentKeyMaterial
 
