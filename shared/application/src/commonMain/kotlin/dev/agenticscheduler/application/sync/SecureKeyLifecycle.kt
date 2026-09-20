@@ -1,6 +1,7 @@
 package dev.agenticscheduler.application.sync
 
 import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.requireCanonicalBase64Url
 
 /** Opaque platform-secure-store handle. It is metadata safe to persist in Room, never key material. */
 @JvmInline
@@ -38,6 +39,19 @@ data class ImportedContentKey(
 /** Platform-owned content-key generation; raw key bytes never cross this boundary. */
 fun interface PlatformContentKeyGenerator {
     suspend fun generateContentKey(): ImportedContentKey
+}
+
+/** Transport credential: canonical base64url encoding of exactly 32 random bytes. */
+@JvmInline
+value class DeviceCredential(val value: String) {
+    init { requireCanonicalBase64Url(value, 32, "DeviceCredential") }
+}
+
+/** Platform-secure storage boundary; ordinary Room rows retain only SecretReference. */
+interface PlatformDeviceCredentialStore {
+    suspend fun store(value: DeviceCredential): SecretReference
+    suspend fun load(reference: SecretReference): DeviceCredential?
+    suspend fun delete(reference: SecretReference)
 }
 
 sealed interface SyncKeyEpochRotationResult {
