@@ -32,6 +32,12 @@ data class SyncOperationJournalRecord(
     @androidx.room3.PrimaryKey @ColumnInfo(name = "mutation_id") val mutationId: String,
     @ColumnInfo(name = "codec_version") val codecVersion: Int,
     @ColumnInfo(name = "operation_json") val operationJson: String,
+    /** D8 transport metadata; ciphertext is retained separately from operation_json. */
+    @ColumnInfo(name = "outbound_sync_space_id") val outboundSyncSpaceId: String? = null,
+    @ColumnInfo(name = "outbound_sender_device_id") val outboundSenderDeviceId: String? = null,
+    @ColumnInfo(name = "outbound_key_epoch") val outboundKeyEpoch: Long? = null,
+    @ColumnInfo(name = "outbound_ciphertext_base64url") val outboundCiphertextBase64Url: String? = null,
+    @ColumnInfo(name = "outbound_uploaded", defaultValue = "0") val outboundUploaded: Boolean = false,
 )
 
 @Entity(tableName = "replica_causal_state")

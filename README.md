@@ -8,7 +8,7 @@ The repository includes the completed D1–D4 foundations, completed D5-01 Calen
 
 - `shared:domain`: pure Kotlin Multiplatform domain boundary, shared by Android, Desktop, and Wear OS.
 - `shared:application`: application-facing repository/transaction contracts plus shared Calendar projection and Event/Task editing orchestration.
-- `shared:database`: Room 3 / SQLite KMP persistence implementation, including the exported v1 schema, records, mappers, repositories, and platform database builders.
+- `shared:database`: Room 3 / SQLite KMP persistence implementation, including exported client schema v10, records, mappers, repositories, and platform database builders.
 - `shared:planner`: pure deterministic Planner and PlanBranch logic.
 - `shared:sync`: causal metadata and transport-neutral SyncOperation semantics.
 - `server:sync`: Ktor/PostgreSQL opaque encrypted-envelope relay; it never decodes SyncPayload or owns semantic merge.

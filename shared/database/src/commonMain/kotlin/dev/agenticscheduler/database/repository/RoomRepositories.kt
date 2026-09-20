@@ -50,6 +50,10 @@ import dev.agenticscheduler.database.record.SyncSpaceContentKeyRecord
 import dev.agenticscheduler.database.record.PendingSyncReceiveRecord
 import dev.agenticscheduler.database.record.HandledReceiveDotRecord
 import dev.agenticscheduler.database.record.LocalPairingEnrollmentRecord
+import dev.agenticscheduler.application.persistence.StoredOutboundEnvelope
+import dev.agenticscheduler.application.persistence.SyncOutboundEnvelopeRepository
+import dev.agenticscheduler.sync.DeviceId
+import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 
 class RoomApplicationTransactionRunner(private val database: AgenticSchedulerDatabase) : ApplicationTransactionRunner {
     override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = database.withWriteTransaction { block() }
@@ -202,6 +206,41 @@ class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) 
 
     override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> =
         database.syncReceiveDao().conflicts(syncSpaceId.value).map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+}
+
+class RoomSyncOutboundEnvelopeRepository(private val database: AgenticSchedulerDatabase) : SyncOutboundEnvelopeRepository {
+    override suspend fun envelope(syncSpaceId: SyncSpaceId, mutationId: String): StoredOutboundEnvelope? =
+        database.mutationJournalDao().syncOperation(mutationId)?.takeIf { it.outboundSyncSpaceId == syncSpaceId.value }?.let { record ->
+            StoredOutboundEnvelope(
+                syncSpaceId = SyncSpaceId(requireNotNull(record.outboundSyncSpaceId)),
+                mutationId = record.mutationId,
+                envelope = EncryptedEnvelopeV1(
+                    syncSpaceId = SyncSpaceId(requireNotNull(record.outboundSyncSpaceId)),
+                    mutationId = record.mutationId,
+                    senderDeviceId = DeviceId(requireNotNull(record.outboundSenderDeviceId)),
+                    keyEpoch = requireNotNull(record.outboundKeyEpoch),
+                    ciphertextBase64Url = requireNotNull(record.outboundCiphertextBase64Url),
+                ),
+                uploaded = record.outboundUploaded,
+            )
+        }
+
+    override suspend fun save(value: StoredOutboundEnvelope) {
+        val current = requireNotNull(database.mutationJournalDao().syncOperation(value.mutationId))
+        database.mutationJournalDao().upsertSyncOperation(current.copy(
+            outboundSyncSpaceId = value.syncSpaceId.value,
+            outboundSenderDeviceId = value.envelope.senderDeviceId.value,
+            outboundKeyEpoch = value.envelope.keyEpoch,
+            outboundCiphertextBase64Url = value.envelope.ciphertextBase64Url,
+            outboundUploaded = value.uploaded,
+        ))
+    }
+
+    override suspend fun markUploaded(syncSpaceId: SyncSpaceId, mutationId: String) {
+        val current = requireNotNull(database.mutationJournalDao().syncOperation(mutationId))
+        require(current.outboundSyncSpaceId == syncSpaceId.value)
+        database.mutationJournalDao().upsertSyncOperation(current.copy(outboundUploaded = true))
+    }
 }
 
 /** D8-02b key ring. Every write is one Room transaction and stores only opaque secure-store references. */

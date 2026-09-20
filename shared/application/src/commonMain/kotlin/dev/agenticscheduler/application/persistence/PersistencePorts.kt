@@ -12,6 +12,7 @@ import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.DvvSnapshot
 import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.ProtocolQuarantine
 import dev.agenticscheduler.sync.SyncConflict
 import dev.agenticscheduler.sync.FocusBlockDelete
@@ -77,6 +78,25 @@ interface SyncReceiveRepository {
     suspend fun saveConflict(value: SyncConflict)
     suspend fun conflict(conflictId: String): SyncConflict?
     suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict>
+}
+
+/** Durable outbound ciphertext; retaining the exact envelope makes retries idempotent. */
+interface SyncOutboundEnvelopeRepository {
+    suspend fun envelope(syncSpaceId: SyncSpaceId, mutationId: String): StoredOutboundEnvelope?
+    suspend fun save(value: StoredOutboundEnvelope)
+    suspend fun markUploaded(syncSpaceId: SyncSpaceId, mutationId: String)
+}
+
+data class StoredOutboundEnvelope(
+    val syncSpaceId: SyncSpaceId,
+    val mutationId: String,
+    val envelope: EncryptedEnvelopeV1,
+    val uploaded: Boolean,
+) {
+    init {
+        require(mutationId.isNotBlank())
+        require(envelope.syncSpaceId == syncSpaceId)
+    }
 }
 
 /** A valid but causally blocked D8 receipt. It is trusted-local transport state, never a Domain fact. */

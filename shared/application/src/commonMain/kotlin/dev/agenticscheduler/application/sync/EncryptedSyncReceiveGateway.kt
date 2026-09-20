@@ -14,7 +14,8 @@ import dev.agenticscheduler.application.history.SyncReceiveResult
 class EncryptedSyncReceiveGateway(
     private val envelopeCodec: AuthenticatedSyncEnvelopeCodec,
     private val syncEngine: SyncEngine,
-) {
+) : SyncEnvelopeReceiver {
+    override
     suspend fun receive(encodedEnvelope: String, serverCursor: Long): EncryptedSyncReceiveResult =
         when (val decrypted = envelopeCodec.decrypt(encodedEnvelope)) {
             is DecryptSyncEnvelopeResult.AuthenticatedPlaintext -> EncryptedSyncReceiveResult.Handled(

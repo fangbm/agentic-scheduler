@@ -520,6 +520,16 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
+    @Test fun `exported v9 schema migrates to v10 exact outbound envelope metadata`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(9)
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(10, emptyList())
+        migrated.prepare("SELECT outbound_sync_space_id, outbound_ciphertext_base64url, outbound_uploaded FROM sync_operation_journal").use { statement ->
+            assertEquals(false, statement.step())
+        }
+        migrated.close()
+    }
+
     @Test fun `local pending enrollment survives Room reopen with only a private key reference`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val enrollments = RoomLocalEnrollmentRepository(database)

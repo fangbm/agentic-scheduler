@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.Flow
     @Insert suspend fun insertMutationRecord(value: MutationRecord)
     @Insert suspend fun insertChangeLogEntries(values: List<ChangeLogEntryRecord>)
     @Insert suspend fun insertSyncOperation(value: SyncOperationJournalRecord)
+    @Upsert suspend fun upsertSyncOperation(value: SyncOperationJournalRecord)
     @Upsert suspend fun upsertFocusBlockTombstone(value: FocusBlockTombstoneRecord)
     @Query("SELECT * FROM sync_operation_journal WHERE mutation_id = :mutationId") suspend fun syncOperation(mutationId: String): SyncOperationJournalRecord?
     @Query("SELECT * FROM mutation_record WHERE mutation_id = :mutationId") suspend fun mutationRecord(mutationId: String): MutationRecord?

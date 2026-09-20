@@ -197,6 +197,9 @@ Ktor 3.5.2 thin server + PostgreSQL pgjdbc 42.7.13 + HikariCP 7.1.0
 server stores opaque encrypted envelopes only
 ```
 
+Current persistence baselines on the D8 review branch are client Room schema v10
+(outbound ciphertext retry metadata) and server SQL schema v1 (opaque relay).
+
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 
 OD-012 local database encryption remains a separate production-sensitive-data gate.
