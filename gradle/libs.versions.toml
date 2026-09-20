@@ -16,6 +16,7 @@ room = "3.0.3"
 sqliteBundled = "2.7.0"
 ksp = "2.3.12"
 tink = "1.23.0"
+jna = "5.19.1"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activity" }
@@ -34,6 +35,7 @@ androidx-room3-testing = { module = "androidx.room3:room3-testing", version.ref 
 androidx-sqlite-bundled = { module = "androidx.sqlite:sqlite-bundled", version.ref = "sqliteBundled" }
 tink = { module = "com.google.crypto.tink:tink", version.ref = "tink" }
 tink-android = { module = "com.google.crypto.tink:tink-android", version.ref = "tink" }
+jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

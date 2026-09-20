@@ -13,5 +13,5 @@ kotlin {
         commonTest.dependencies { implementation(kotlin("test")) }
     }
     sourceSets.named("androidMain") { dependencies { implementation(libs.tink.android) } }
-    sourceSets.named("desktopMain") { dependencies { implementation(libs.tink) } }
+    sourceSets.named("desktopMain") { dependencies { implementation(libs.tink); implementation(libs.jna.platform) } }
 }

@@ -17,6 +17,19 @@ value class SecretReference(val value: String) {
 @JvmInline
 value class ContentKeyIdentity(val value: String) {
     init { require(value.isNotBlank()) { "Content key identity must not be blank." } }
+
+    companion object {
+        /** SYN-005A's canonical base64url-no-padding SHA-256 fingerprint. */
+        fun fromRawAes256Key(value: ByteArray): ContentKeyIdentity {
+            require(value.size == AES_256_KEY_BYTES) { "A SyncSpace content key must be exactly 32 bytes." }
+            return ContentKeyIdentity(dev.agenticscheduler.sync.encodeCanonicalBase64Url(pairingSha256(value)))
+        }
+    }
+}
+
+/** Transient raw material may cross only platform secure-store boundaries. */
+interface PlatformSecretMaterial {
+    fun copyRawSecretBytesForSecureStore(): ByteArray
 }
 
 /**
@@ -36,10 +49,14 @@ data class ImportedContentKey(
 )
 
 /** Opaque transient result of a platform HPKE/recovery decrypt; it must never be persisted in Room. */
-interface ImportedContentKeyMaterial
+interface ImportedContentKeyMaterial : PlatformSecretMaterial
 
 /** Separate boundary for recovery secrets and device credentials. Room stores only SecretReference values. */
 interface PlatformSecretStore {
+    /** Stores a non-content secret (credential/recovery material) behind platform protection. */
+    suspend fun importSecret(material: PlatformSecretMaterial): SecretReference
+    /** Returns null for missing, corrupted, or wrong-type references; callers must fail closed. */
+    suspend fun readSecret(reference: SecretReference): PlatformSecretMaterial?
     suspend fun delete(reference: SecretReference)
 }
 
@@ -216,3 +233,5 @@ class SecureCurrentEncryptionKeyProvider(
             ?: CurrentEncryptionKeyLookup.Missing
     }
 }
+
+private const val AES_256_KEY_BYTES = 32

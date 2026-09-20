@@ -128,6 +128,7 @@ private class RawPairingKeyMaterial private constructor(
     private val raw: ByteArray,
 ) : PairingEphemeralKeyMaterial, ImportedContentKeyMaterial {
     override fun copyRawKeyBytesForPairing(): ByteArray = raw.copyOf()
+    override fun copyRawSecretBytesForSecureStore(): ByteArray = raw.copyOf()
 
     companion object {
         fun fromBase64Url(value: String): RawPairingKeyMaterial =

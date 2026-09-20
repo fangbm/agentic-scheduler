@@ -2,6 +2,9 @@ package dev.agenticscheduler.application.sync
 
 import com.google.crypto.tink.HybridDecrypt
 import com.google.crypto.tink.HybridEncrypt
+import com.google.crypto.tink.Aead
+import com.google.crypto.tink.BinaryKeysetReader
+import com.google.crypto.tink.BinaryKeysetWriter
 import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.hybrid.HpkeParameters
 import com.google.crypto.tink.hybrid.HpkePublicKey
@@ -11,6 +14,7 @@ import dev.agenticscheduler.sync.HpkePublicKeyBase64Url
 import dev.agenticscheduler.sync.decodeCanonicalBase64Url
 import dev.agenticscheduler.sync.requireCanonicalBase64Url
 import java.util.Base64
+import java.io.ByteArrayOutputStream
 
 /** Desktop Tink HPKE adapter for SYN-006A's X25519/HKDF-SHA256/AES-256-GCM RAW suite. */
 class TinkPairingHpke : PairingHpke {
@@ -56,7 +60,27 @@ class TinkPairingHpke : PairingHpke {
         return privateKey.handle.getPrimitive(HybridDecrypt::class.java).decrypt(combined, contextInfo)
     }
 
+    /**
+     * Serializes only for immediate handoff to [DesktopPlatformSecureStore].
+     * The returned bytes must never be persisted except through that store.
+     */
+    internal fun serializeForSecureStore(privateKey: PairingPrivateKeyMaterial): ByteArray {
+        require(privateKey is TinkPrivateKey)
+        val output = ByteArrayOutputStream()
+        privateKey.handle.write(BinaryKeysetWriter.withOutputStream(output), TransitAead)
+        return output.toByteArray()
+    }
+
+    internal fun restoreFromSecureStore(serialized: ByteArray): PairingPrivateKeyMaterial =
+        TinkPrivateKey(KeysetHandle.read(BinaryKeysetReader.withBytes(serialized), TransitAead))
+
     private data class TinkPrivateKey(val handle: KeysetHandle) : PairingPrivateKeyMaterial
+
+    /** The enclosing DPAPI or Secret Service store provides persistence encryption. */
+    private object TransitAead : Aead {
+        override fun encrypt(plaintext: ByteArray, associatedData: ByteArray): ByteArray = plaintext
+        override fun decrypt(ciphertext: ByteArray, associatedData: ByteArray): ByteArray = ciphertext
+    }
 
     private companion object {
         const val ENCAPSULATED_KEY_BYTES = 32

@@ -20,8 +20,10 @@ interface PlatformPairingKeyMaterialExporter {
 }
 
 /** A transient 256-bit secret supplied only by the platform pairing export boundary. */
-interface PairingEphemeralKeyMaterial {
+interface PairingEphemeralKeyMaterial : PlatformSecretMaterial {
     fun copyRawKeyBytesForPairing(): ByteArray
+
+    override fun copyRawSecretBytesForSecureStore(): ByteArray = copyRawKeyBytesForPairing()
 }
 
 data class ExportedPairingContentKey(
