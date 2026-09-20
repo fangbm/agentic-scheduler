@@ -17,11 +17,14 @@ import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.plugins.statuspages.exception
 import io.ktor.server.request.header
-import io.ktor.server.request.receive
+import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.readRemaining
+import kotlinx.io.readByteArray
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 
 fun main() {
@@ -66,7 +69,7 @@ fun Application.syncServerModule(
             if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
             val spaceId = call.parameters["spaceId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_SPACE"))
-            val envelope = call.receive<EncryptedEnvelopeV1>()
+            val envelope = call.receiveBoundedEnvelope(config.maxRequestBodyBytes)
             val validated = validateEnvelope(spaceId, envelope, config.maxCiphertextBytes)
             if (validated !is EnvelopeValidationResult.Valid) {
                 val code = (validated as EnvelopeValidationResult.Invalid).code
@@ -124,3 +127,17 @@ private fun io.ktor.server.application.ApplicationCall.bearerCredential(): Strin
 }
 
 class RequestTooLarge : RuntimeException()
+
+private val serverJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+
+private suspend fun io.ktor.server.application.ApplicationCall.receiveBoundedEnvelope(maxBytes: Long): EncryptedEnvelopeV1 {
+    val bytes = receiveChannel().readRemaining(maxBytes + 1).readByteArray()
+    if (bytes.size.toLong() > maxBytes) throw RequestTooLarge()
+    return try {
+        serverJson.decodeFromString(EncryptedEnvelopeV1.serializer(), bytes.decodeToString())
+    } catch (failure: SerializationException) {
+        throw BadRequestException("Malformed envelope", failure)
+    } catch (failure: IllegalArgumentException) {
+        throw BadRequestException("Invalid envelope", failure)
+    }
+}
