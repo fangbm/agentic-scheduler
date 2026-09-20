@@ -263,6 +263,21 @@ Decision: target-device Tink HPKE using the D8 device key; version + target + co
 Source: docs/SYNC_SECURITY_DECISIONS.md SYN-018
 ```
 
+## OD-043 — Secondary DeviceCredential handoff
+
+```text
+Status: PENDING
+Must resolve by: before production secondary-device pairing/recovery is enabled
+Impact: SECURITY / DEVICE INTEROPERABILITY
+```
+
+D8 v1 freezes an HPKE key package that intentionally excludes `DeviceCredential`.
+The server relay and client package admission therefore cannot infer how a newly
+paired or recovered device receives/registers its independent bearer credential.
+Define the one-time handoff/registration proof, replay protection, and rotation
+behavior before implementing that path. The opaque enrollment/package relay may
+be tested independently.
+
 ---
 
 # D9 Agent / context

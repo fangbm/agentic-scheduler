@@ -236,6 +236,12 @@ Future QR pairing may encode the same request identity/public key/SAS data witho
 
 Recovery enrollment is also supported: possession of the Recovery Secret decrypts the current recovery envelope, after which the new device registers as an enrolled device and rotates its server credential.
 
+Implementation boundary: the v1 HPKE key package intentionally excludes
+`DeviceCredential`. The exact one-time credential handoff/registration proof for
+secondary pairing and recovery is tracked as `OD-043` in
+`docs/OPEN_DECISIONS.md`; clients and the server must not infer it from the
+opaque package relay.
+
 ### SYN-006A — D8 v1 pairing wire and SAS contract (approved amendment)
 
 SYN-006A freezes the cross-device byte-level contract. Implementations must not
