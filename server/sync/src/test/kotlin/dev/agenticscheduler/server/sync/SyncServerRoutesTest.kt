@@ -20,6 +20,34 @@ import kotlin.test.assertTrue
 
 class SyncServerRoutesTest {
     @Test
+    fun `admin invitation and bootstrap are one time`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig().copy(adminToken = "admin")) }
+        val invitationBody = """{"accountId":"account","syncSpaceId":"space"}"""
+        assertEquals(HttpStatusCode.Unauthorized, client.post("/v1/admin/invitations") {
+            contentType(ContentType.Application.Json)
+            setBody(invitationBody)
+        }.status)
+        val invitation = client.post("/v1/admin/invitations") {
+            header("X-Sync-Admin-Token", "admin")
+            contentType(ContentType.Application.Json)
+            setBody(invitationBody)
+        }
+        assertEquals(HttpStatusCode.Created, invitation.status)
+        val bootstrapBody = """{"invitationToken":"invite","deviceId":"device"}"""
+        val bootstrap = client.post("/v1/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody(bootstrapBody)
+        }
+        assertEquals(HttpStatusCode.Created, bootstrap.status)
+        assertTrue(bootstrap.bodyAsText().contains("deviceCredential"))
+        assertEquals(HttpStatusCode.Conflict, client.post("/v1/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody(bootstrapBody)
+        }.status)
+    }
+
+    @Test
     fun `opaque upload is authenticated idempotent and cursor fetchable`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
@@ -85,8 +113,9 @@ class SyncServerRoutesTest {
 
     private fun testConfig() = SyncServerConfig("jdbc:test", "user", "password", maxFetchLimit = 10)
 
-    private class FakeRepository : OpaqueSyncRepository {
+    private class FakeRepository : OpaqueSyncRepository, ServerBootstrapRepository {
         private val stored = linkedMapOf<String, StoredEnvelope>()
+        private var consumed = false
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
 
@@ -102,5 +131,17 @@ class SyncServerRoutesTest {
 
         override fun fetch(actor: AuthenticatedDevice, spaceId: String, afterCursor: Long, limit: Int): List<StoredEnvelope> =
             stored.values.filter { it.serverCursor > afterCursor }.take(limit)
+
+        override fun createInvitation(accountId: String, syncSpaceId: String, ttlSeconds: Long) =
+            InvitationCreateResponse("invite", 123)
+
+        override fun bootstrap(request: BootstrapRequest): BootstrapResult = when {
+            request.invitationToken != "invite" -> BootstrapResult.InvalidInvitation
+            consumed -> BootstrapResult.DeviceAlreadyExists
+            else -> {
+                consumed = true
+                BootstrapResult.Created(BootstrapResponse("account", "space", request.deviceId, "credential"))
+            }
+        }
     }
 }

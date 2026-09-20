@@ -17,6 +17,7 @@ import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.plugins.statuspages.exception
 import io.ktor.server.request.header
+import io.ktor.server.request.receive
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -60,6 +61,32 @@ fun Application.syncServerModule(
     }
     routing {
         get("/health") { call.respond(mapOf("status" to "ok")) }
+        post("/v1/admin/invitations") {
+            val configured = config.adminToken
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("ADMIN_INVITATIONS_DISABLED"))
+            val supplied = call.request.header("X-Sync-Admin-Token")
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            if (!java.security.MessageDigest.isEqual(configured.toByteArray(), supplied.toByteArray())) {
+                return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            }
+            val bootstrap = repository as? ServerBootstrapRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("BOOTSTRAP_UNAVAILABLE"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            val request = call.receive<InvitationCreateRequest>()
+            call.respond(HttpStatusCode.Created, bootstrap.createInvitation(request.accountId, request.syncSpaceId, config.invitationTtlSeconds))
+        }
+        post("/v1/bootstrap") {
+            val bootstrap = repository as? ServerBootstrapRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("BOOTSTRAP_UNAVAILABLE"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            when (val result = bootstrap.bootstrap(call.receive<BootstrapRequest>())) {
+                is BootstrapResult.Created -> call.respond(HttpStatusCode.Created, result.value)
+                BootstrapResult.InvalidInvitation -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_INVITATION"))
+                BootstrapResult.DeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("DEVICE_ALREADY_EXISTS"))
+            }
+        }
         post("/v1/sync/spaces/{spaceId}/envelopes") {
             val credential = call.bearerCredential()
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))

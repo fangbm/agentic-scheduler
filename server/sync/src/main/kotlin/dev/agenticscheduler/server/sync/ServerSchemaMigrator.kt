@@ -6,7 +6,10 @@ import javax.sql.DataSource
 data class ServerMigration(val version: Int, val resource: String)
 
 object ServerMigrationCatalog {
-    val migrations = listOf(ServerMigration(1, "db/migration/V1__opaque_sync.sql"))
+    val migrations = listOf(
+        ServerMigration(1, "db/migration/V1__opaque_sync.sql"),
+        ServerMigration(2, "db/migration/V2__account_invitations.sql"),
+    )
 }
 
 class ServerSchemaMigrator(private val dataSource: DataSource) {

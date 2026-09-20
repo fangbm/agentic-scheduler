@@ -10,6 +10,9 @@ data class SyncServerConfig(
     val maxRequestBodyBytes: Long = 1_200_000,
     val maxCiphertextBytes: Int = 1_048_576,
     val maxFetchLimit: Int = 100,
+    val adminToken: String? = null,
+    val invitationTtlSeconds: Long = 900,
+    val tlsTerminated: Boolean = false,
 ) {
     init {
         require(jdbcUrl.isNotBlank()) { "SYNC_DATABASE_URL must not be blank." }
@@ -19,6 +22,10 @@ data class SyncServerConfig(
         require(maxRequestBodyBytes > 0)
         require(maxCiphertextBytes > 0)
         require(maxFetchLimit in 1..1000)
+        require(invitationTtlSeconds in 60..86_400)
+        require(isLoopback(bindHost) || tlsTerminated) {
+            "Non-loopback sync binding requires TLS at the server or an explicitly trusted TLS-terminating proxy."
+        }
     }
 
     companion object {
@@ -32,9 +39,14 @@ data class SyncServerConfig(
                 maxRequestBodyBytes = environment["SYNC_MAX_REQUEST_BYTES"]?.toLongOrNull() ?: 1_200_000,
                 maxCiphertextBytes = environment["SYNC_MAX_CIPHERTEXT_BYTES"]?.toIntOrNull() ?: 1_048_576,
                 maxFetchLimit = environment["SYNC_MAX_FETCH_LIMIT"]?.toIntOrNull() ?: 100,
+                adminToken = environment["SYNC_ADMIN_TOKEN"]?.takeIf(String::isNotBlank),
+                invitationTtlSeconds = environment["SYNC_INVITATION_TTL_SECONDS"]?.toLongOrNull() ?: 900,
+                tlsTerminated = environment["SYNC_TLS_TERMINATED"]?.toBooleanStrictOrNull() ?: false,
             )
 
         private fun Map<String, String>.required(name: String): String =
             get(name)?.takeIf(String::isNotBlank) ?: error("$name is required.")
+
+        private fun isLoopback(host: String): Boolean = host == "localhost" || host == "127.0.0.1" || host == "::1"
     }
 }

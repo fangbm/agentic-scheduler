@@ -4,12 +4,125 @@ import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.SyncSpaceId
 import java.security.MessageDigest
+import java.security.SecureRandom
+import java.time.Instant
+import java.util.Base64
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.Timestamp
 import javax.sql.DataSource
 
-class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository {
+class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository, ServerBootstrapRepository {
+    private val random = SecureRandom()
+
+    override fun createInvitation(accountId: String, syncSpaceId: String, ttlSeconds: Long): InvitationCreateResponse {
+        requireValidId(accountId, "accountId")
+        requireValidId(syncSpaceId, "syncSpaceId")
+        require(ttlSeconds in 60..86_400)
+        val tokenBytes = ByteArray(32).also(random::nextBytes)
+        val token = Base64.getUrlEncoder().withoutPadding().encodeToString(tokenBytes)
+        val expiresAt = Instant.now().plusSeconds(ttlSeconds)
+        dataSource.connection.use { connection ->
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement("INSERT INTO account(account_id) VALUES (?) ON CONFLICT (account_id) DO NOTHING").use { statement ->
+                    statement.setString(1, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "INSERT INTO sync_space(sync_space_id, account_id) VALUES (?, ?) " +
+                        "ON CONFLICT (sync_space_id) DO NOTHING",
+                ).use { statement ->
+                    statement.setString(1, syncSpaceId)
+                    statement.setString(2, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("SELECT account_id FROM sync_space WHERE sync_space_id = ?").use { statement ->
+                    statement.setString(1, syncSpaceId)
+                    statement.executeQuery().use { rs ->
+                        check(rs.next() && rs.getString(1) == accountId) { "Sync space belongs to another account." }
+                    }
+                }
+                connection.prepareStatement(
+                    "INSERT INTO account_invitation(invitation_hash, account_id, sync_space_id, expires_at) VALUES (?, ?, ?, ?)",
+                ).use { statement ->
+                    statement.setBytes(1, sha256(token))
+                    statement.setString(2, accountId)
+                    statement.setString(3, syncSpaceId)
+                    statement.setTimestamp(4, java.sql.Timestamp.from(expiresAt))
+                    statement.executeUpdate()
+                }
+                connection.commit()
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+        return InvitationCreateResponse(token, expiresAt.epochSecond)
+    }
+
+    override fun bootstrap(request: BootstrapRequest): BootstrapResult {
+        require(request.invitationToken.isNotBlank())
+        requireValidId(request.deviceId, "deviceId")
+        val credentialBytes = ByteArray(32).also(random::nextBytes)
+        val credential = Base64.getUrlEncoder().withoutPadding().encodeToString(credentialBytes)
+        return dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                val invitation = connection.prepareStatement(
+                    "SELECT account_id, sync_space_id FROM account_invitation " +
+                        "WHERE invitation_hash = ? AND consumed_at IS NULL AND expires_at > CURRENT_TIMESTAMP FOR UPDATE",
+                ).use { statement ->
+                    statement.setBytes(1, sha256(request.invitationToken))
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else rs.getString("account_id") to rs.getString("sync_space_id")
+                    }
+                } ?: run {
+                    connection.rollback()
+                    return@connection BootstrapResult.InvalidInvitation
+                }
+                val deviceExists = connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ?").use { statement ->
+                    statement.setString(1, request.deviceId)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (deviceExists) {
+                    connection.rollback()
+                    return@connection BootstrapResult.DeviceAlreadyExists
+                }
+                connection.prepareStatement(
+                    "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
+                ).use { statement ->
+                    statement.setString(1, request.deviceId)
+                    statement.setString(2, invitation.first)
+                    statement.setBytes(3, sha256(credential))
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "INSERT INTO sync_space_membership(sync_space_id, device_id) VALUES (?, ?)",
+                ).use { statement ->
+                    statement.setString(1, invitation.second)
+                    statement.setString(2, request.deviceId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "UPDATE account_invitation SET consumed_at = CURRENT_TIMESTAMP WHERE invitation_hash = ?",
+                ).use { statement ->
+                    statement.setBytes(1, sha256(request.invitationToken))
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                BootstrapResult.Created(BootstrapResponse(invitation.first, invitation.second, request.deviceId, credential))
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
     override fun authenticate(credential: String): AuthenticatedDevice? {
         val hash = sha256(credential)
         return dataSource.connection.use { connection ->
@@ -160,4 +273,8 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
 
     private fun sha256(value: String): ByteArray =
         MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+
+    private fun requireValidId(value: String, name: String) {
+        require(value.isNotBlank() && value.length <= 128) { "$name is invalid." }
+    }
 }
