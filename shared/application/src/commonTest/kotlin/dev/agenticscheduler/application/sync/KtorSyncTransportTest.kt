@@ -101,6 +101,38 @@ class KtorSyncTransportTest {
         client.close()
     }
 
+    @Test
+    fun `lifecycle mutations and recovery use bearer auth`() = runBlocking {
+        val requests = mutableListOf<Pair<String, String?>>()
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler { request ->
+                    requests += request.url.encodedPath to request.headers[HttpHeaders.Authorization]
+                    when {
+                        request.url.encodedPath.endsWith("/enrollments") && request.method == HttpMethod.Post ->
+                            respond("""{"requestId":"req","expiresAtEpochSeconds":1}""", status = HttpStatusCode.Created, headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                        request.url.encodedPath.endsWith("/enrollments/pending") ->
+                            respond("[]", headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                        request.url.encodedPath.endsWith("/recovery/envelope") && request.method == HttpMethod.Get ->
+                            respond("""{"blobBase64Url":"AQI"}""", headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                        request.url.encodedPath.endsWith("/approve") -> respond("{}", status = HttpStatusCode.Created)
+                        else -> respond("{}")
+                    }
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { "credential" })
+        lifecycle.registerEnrollment(ClientEnrollmentRequest("account", "req", "target", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
+        lifecycle.pendingEnrollments()
+        lifecycle.approveEnrollment("req", "AQI")
+        lifecycle.saveRecoveryEnvelope("AQI")
+        assertEquals("AQI", lifecycle.fetchRecoveryEnvelope())
+        lifecycle.revokeDevice("target")
+        assertEquals(null, requests.first().second)
+        assertTrue(requests.drop(1).all { it.second == "Bearer credential" })
+        client.close()
+    }
+
     private fun envelope() = EncryptedEnvelopeV1(
         syncSpaceId = SyncSpaceId("space/a"),
         mutationId = "mutation-1",
