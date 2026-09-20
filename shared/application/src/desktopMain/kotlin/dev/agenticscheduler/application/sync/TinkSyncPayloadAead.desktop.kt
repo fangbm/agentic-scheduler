@@ -48,7 +48,10 @@ class TinkSyncPayloadAead private constructor(
                 .setKeyBytes(SecretBytes.copyFrom(raw, InsecureSecretKeyAccess.get()))
                 .build()
             val handle = KeysetHandle.newBuilder()
-                .addEntry(KeysetHandle.importKey(key).makePrimary())
+                // Tink requires a local key ID in an in-memory keyset.  The
+                // NO_PREFIX variant keeps that ID out of the D8 v1 payload
+                // ciphertext, so replicas still share the raw AES key only.
+                .addEntry(KeysetHandle.importKey(key).withRandomId().makePrimary())
                 .build()
             return TinkSyncPayloadAead(handle.getPrimitive(Aead::class.java))
         }
