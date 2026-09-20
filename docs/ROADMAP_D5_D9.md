@@ -202,6 +202,8 @@ Current persistence baselines on the D8 review branch are client Room schema v10
 bootstrap, enrollment, recovery, and revocation metadata).
 Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
 and real multi-replica execution remain open acceptance work.
+Android/Wear `DeviceCredential` storage now has a Keystore-backed implementation;
+Windows DPAPI and Linux Secret Service adapters remain platform follow-ups.
 
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 
