@@ -21,7 +21,10 @@ class ServerSchemaTest {
         assertTrue(relaySql.contains("encrypted_operation_envelope"))
         assertTrue(relaySql.contains("ciphertext BYTEA"))
         assertTrue(relaySql.contains("server_cursor"))
-        val invitationSql = javaClass.classLoader.getResourceAsStream(migrations.last().resource)!!.bufferedReader().use { it.readText() }
+        val invitationSql = javaClass.classLoader.getResourceAsStream(migrations[1].resource)!!.bufferedReader().use { it.readText() }
         assertTrue(invitationSql.contains("account_invitation"))
+        val enrollmentSql = javaClass.classLoader.getResourceAsStream(migrations[2].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(enrollmentSql.contains("device_enrollment_request"))
+        assertTrue(enrollmentSql.contains("device_key_package"))
     }
 }

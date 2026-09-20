@@ -27,6 +27,7 @@ import io.ktor.utils.io.readRemaining
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import java.util.Base64
 
 fun main() {
     val config = SyncServerConfig.fromEnvironment()
@@ -86,6 +87,68 @@ fun Application.syncServerModule(
                 BootstrapResult.InvalidInvitation -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_INVITATION"))
                 BootstrapResult.DeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("DEVICE_ALREADY_EXISTS"))
             }
+        }
+        post("/v1/enrollments") {
+            val enrollment = repository as? ServerEnrollmentRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("ENROLLMENT_UNAVAILABLE"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            val request = call.receive<EnrollmentRequestWire>()
+            try {
+                decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
+            } catch (_: IllegalArgumentException) {
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_HPKE_KEY"))
+            }
+            when (val result = enrollment.registerEnrollment(request, config.enrollmentTtlSeconds)) {
+                is EnrollmentRegistrationResult.Created -> call.respond(HttpStatusCode.Created, EnrollmentCreatedResponse(request.requestId, result.expiresAtEpochSeconds))
+                EnrollmentRegistrationResult.UnknownAccount -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("UNKNOWN_ACCOUNT"))
+                EnrollmentRegistrationResult.DuplicateRequest -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("DUPLICATE_REQUEST"))
+            }
+        }
+        get("/v1/enrollments/pending") {
+            val enrollment = repository as? ServerEnrollmentRepository
+                ?: return@get call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("ENROLLMENT_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val pending = enrollment.pendingEnrollments(actor)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            call.respond(pending)
+        }
+        post("/v1/enrollments/{requestId}/approve") {
+            val enrollment = repository as? ServerEnrollmentRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("ENROLLMENT_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val requestId = call.parameters["requestId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_REQUEST"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            val packageRequest = call.receive<KeyPackageUploadRequest>()
+            val packageBytes = try {
+                decodeCanonicalBase64(packageRequest.packageBase64Url, null, config.maxCiphertextBytes)
+            } catch (_: IllegalArgumentException) {
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_KEY_PACKAGE"))
+            }
+            when (enrollment.approveEnrollment(actor, requestId, packageBytes)) {
+                EnrollmentApprovalResult.Approved -> call.respond(HttpStatusCode.Created, ServerErrorResponse("APPROVED"))
+                EnrollmentApprovalResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+                EnrollmentApprovalResult.AlreadyApproved -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_APPROVED"))
+            }
+        }
+        get("/v1/enrollments/{requestId}/package") {
+            val enrollment = repository as? ServerEnrollmentRepository
+                ?: return@get call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("ENROLLMENT_UNAVAILABLE"))
+            val requestId = call.parameters["requestId"]
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_REQUEST"))
+            val targetDeviceId = call.request.queryParameters["targetDeviceId"]
+                ?: return@get call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_TARGET"))
+            val packageBytes = enrollment.fetchKeyPackage(requestId, targetDeviceId)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            call.respond(KeyPackageResponse(Base64.getUrlEncoder().withoutPadding().encodeToString(packageBytes)))
         }
         post("/v1/sync/spaces/{spaceId}/envelopes") {
             val credential = call.bearerCredential()
@@ -167,4 +230,13 @@ private suspend fun io.ktor.server.application.ApplicationCall.receiveBoundedEnv
     } catch (failure: IllegalArgumentException) {
         throw BadRequestException("Invalid envelope", failure)
     }
+}
+
+private fun decodeCanonicalBase64(value: String, expectedBytes: Int?, maxBytes: Int): ByteArray {
+    require(value.isNotEmpty() && '=' !in value)
+    val decoded = Base64.getUrlDecoder().decode(value)
+    require(decoded.isNotEmpty() && decoded.size <= maxBytes)
+    require(expectedBytes == null || decoded.size == expectedBytes)
+    require(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value)
+    return decoded
 }

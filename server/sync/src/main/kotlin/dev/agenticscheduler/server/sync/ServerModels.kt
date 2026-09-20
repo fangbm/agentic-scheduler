@@ -35,6 +35,43 @@ data class BootstrapResponse(
     val deviceCredential: String,
 )
 
+@Serializable
+data class EnrollmentRequestWire(
+    val accountId: String,
+    val requestId: String,
+    val targetDeviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
+
+@Serializable
+data class EnrollmentCreatedResponse(val requestId: String, val expiresAtEpochSeconds: Long)
+
+@Serializable
+data class PendingEnrollmentResponse(
+    val accountId: String,
+    val requestId: String,
+    val targetDeviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
+
+@Serializable
+data class KeyPackageUploadRequest(val packageBase64Url: String)
+
+@Serializable
+data class KeyPackageResponse(val packageBase64Url: String)
+
+sealed interface EnrollmentRegistrationResult {
+    data class Created(val expiresAtEpochSeconds: Long) : EnrollmentRegistrationResult
+    data object UnknownAccount : EnrollmentRegistrationResult
+    data object DuplicateRequest : EnrollmentRegistrationResult
+}
+
+sealed interface EnrollmentApprovalResult {
+    data object Approved : EnrollmentApprovalResult
+    data object NotFound : EnrollmentApprovalResult
+    data object AlreadyApproved : EnrollmentApprovalResult
+}
+
 sealed interface BootstrapResult {
     data class Created(val value: BootstrapResponse) : BootstrapResult
     data object InvalidInvitation : BootstrapResult
@@ -73,4 +110,11 @@ interface OpaqueSyncRepository {
 interface ServerBootstrapRepository {
     fun createInvitation(accountId: String, syncSpaceId: String, ttlSeconds: Long): InvitationCreateResponse
     fun bootstrap(request: BootstrapRequest): BootstrapResult
+}
+
+interface ServerEnrollmentRepository {
+    fun registerEnrollment(request: EnrollmentRequestWire, ttlSeconds: Long): EnrollmentRegistrationResult
+    fun pendingEnrollments(actor: AuthenticatedDevice): List<PendingEnrollmentResponse>?
+    fun approveEnrollment(actor: AuthenticatedDevice, requestId: String, packageBytes: ByteArray): EnrollmentApprovalResult
+    fun fetchKeyPackage(requestId: String, targetDeviceId: String): ByteArray?
 }

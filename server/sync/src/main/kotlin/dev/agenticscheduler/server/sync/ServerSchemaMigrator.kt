@@ -9,6 +9,7 @@ object ServerMigrationCatalog {
     val migrations = listOf(
         ServerMigration(1, "db/migration/V1__opaque_sync.sql"),
         ServerMigration(2, "db/migration/V2__account_invitations.sql"),
+        ServerMigration(3, "db/migration/V3__device_enrollment.sql"),
     )
 }
 

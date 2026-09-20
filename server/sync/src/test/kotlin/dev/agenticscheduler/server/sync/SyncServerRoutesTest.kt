@@ -48,6 +48,29 @@ class SyncServerRoutesTest {
     }
 
     @Test
+    fun `secondary enrollment relays HPKE request and opaque package`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val publicKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        val requestBody = """{"accountId":"account","requestId":"req-1","targetDeviceId":"target","hpkePublicKeyBase64Url":"$publicKey"}"""
+        assertEquals(HttpStatusCode.Created, client.post("/v1/enrollments") {
+            contentType(ContentType.Application.Json)
+            setBody(requestBody)
+        }.status)
+        assertEquals(HttpStatusCode.OK, client.get("/v1/enrollments/pending") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }.status)
+        assertEquals(HttpStatusCode.Created, client.post("/v1/enrollments/req-1/approve") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"packageBase64Url":"AQI"}""")
+        }.status)
+        val packageResponse = client.get("/v1/enrollments/req-1/package?targetDeviceId=target")
+        assertEquals(HttpStatusCode.OK, packageResponse.status)
+        assertTrue(packageResponse.bodyAsText().contains("AQI"))
+    }
+
+    @Test
     fun `opaque upload is authenticated idempotent and cursor fetchable`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
@@ -113,8 +136,10 @@ class SyncServerRoutesTest {
 
     private fun testConfig() = SyncServerConfig("jdbc:test", "user", "password", maxFetchLimit = 10)
 
-    private class FakeRepository : OpaqueSyncRepository, ServerBootstrapRepository {
+    private class FakeRepository : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository {
         private val stored = linkedMapOf<String, StoredEnvelope>()
+        private var enrollment: EnrollmentRequestWire? = null
+        private var packageBytes: ByteArray? = null
         private var consumed = false
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
@@ -143,5 +168,24 @@ class SyncServerRoutesTest {
                 BootstrapResult.Created(BootstrapResponse("account", "space", request.deviceId, "credential"))
             }
         }
+
+        override fun registerEnrollment(request: EnrollmentRequestWire, ttlSeconds: Long): EnrollmentRegistrationResult {
+            if (enrollment != null) return EnrollmentRegistrationResult.DuplicateRequest
+            enrollment = request
+            return EnrollmentRegistrationResult.Created(123)
+        }
+
+        override fun pendingEnrollments(actor: AuthenticatedDevice): List<PendingEnrollmentResponse>? =
+            enrollment?.let { listOf(PendingEnrollmentResponse(it.accountId, it.requestId, it.targetDeviceId, it.hpkePublicKeyBase64Url)) }
+
+        override fun approveEnrollment(actor: AuthenticatedDevice, requestId: String, packageBytes: ByteArray): EnrollmentApprovalResult {
+            if (enrollment?.requestId != requestId) return EnrollmentApprovalResult.NotFound
+            if (this.packageBytes != null) return EnrollmentApprovalResult.AlreadyApproved
+            this.packageBytes = packageBytes
+            return EnrollmentApprovalResult.Approved
+        }
+
+        override fun fetchKeyPackage(requestId: String, targetDeviceId: String): ByteArray? =
+            if (enrollment?.requestId == requestId && enrollment?.targetDeviceId == targetDeviceId) packageBytes else null
     }
 }

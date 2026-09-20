@@ -12,6 +12,7 @@ data class SyncServerConfig(
     val maxFetchLimit: Int = 100,
     val adminToken: String? = null,
     val invitationTtlSeconds: Long = 900,
+    val enrollmentTtlSeconds: Long = 900,
     val tlsTerminated: Boolean = false,
 ) {
     init {
@@ -23,6 +24,7 @@ data class SyncServerConfig(
         require(maxCiphertextBytes > 0)
         require(maxFetchLimit in 1..1000)
         require(invitationTtlSeconds in 60..86_400)
+        require(enrollmentTtlSeconds in 60..86_400)
         require(isLoopback(bindHost) || tlsTerminated) {
             "Non-loopback sync binding requires TLS at the server or an explicitly trusted TLS-terminating proxy."
         }
@@ -41,6 +43,7 @@ data class SyncServerConfig(
                 maxFetchLimit = environment["SYNC_MAX_FETCH_LIMIT"]?.toIntOrNull() ?: 100,
                 adminToken = environment["SYNC_ADMIN_TOKEN"]?.takeIf(String::isNotBlank),
                 invitationTtlSeconds = environment["SYNC_INVITATION_TTL_SECONDS"]?.toLongOrNull() ?: 900,
+                enrollmentTtlSeconds = environment["SYNC_ENROLLMENT_TTL_SECONDS"]?.toLongOrNull() ?: 900,
                 tlsTerminated = environment["SYNC_TLS_TERMINATED"]?.toBooleanStrictOrNull() ?: false,
             )
 

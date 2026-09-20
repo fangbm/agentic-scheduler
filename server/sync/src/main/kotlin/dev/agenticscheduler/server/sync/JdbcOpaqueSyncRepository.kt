@@ -12,7 +12,7 @@ import java.sql.ResultSet
 import java.sql.Timestamp
 import javax.sql.DataSource
 
-class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository, ServerBootstrapRepository {
+class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository {
     private val random = SecureRandom()
 
     override fun createInvitation(accountId: String, syncSpaceId: String, ttlSeconds: Long): InvitationCreateResponse {
@@ -123,6 +123,135 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         }
     }
 
+    override fun registerEnrollment(request: EnrollmentRequestWire, ttlSeconds: Long): EnrollmentRegistrationResult {
+        requireValidId(request.accountId, "accountId")
+        requireValidId(request.requestId, "requestId")
+        requireValidId(request.targetDeviceId, "targetDeviceId")
+        require(ttlSeconds in 60..86_400)
+        val publicKey = decodeCanonical(request.hpkePublicKeyBase64Url, 32)
+        val expiresAt = Instant.now().plusSeconds(ttlSeconds)
+        return dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                val accountExists = connection.prepareStatement("SELECT 1 FROM account WHERE account_id = ?").use { statement ->
+                    statement.setString(1, request.accountId)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (!accountExists) {
+                    connection.rollback()
+                    return@connection EnrollmentRegistrationResult.UnknownAccount
+                }
+                val duplicate = connection.prepareStatement("SELECT 1 FROM device_enrollment_request WHERE request_id = ?").use { statement ->
+                    statement.setString(1, request.requestId)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (duplicate) {
+                    connection.rollback()
+                    return@connection EnrollmentRegistrationResult.DuplicateRequest
+                }
+                connection.prepareStatement(
+                    "INSERT INTO device_enrollment_request(request_id, account_id, target_device_id, hpke_public_key, expires_at) VALUES (?, ?, ?, ?, ?)",
+                ).use { statement ->
+                    statement.setString(1, request.requestId)
+                    statement.setString(2, request.accountId)
+                    statement.setString(3, request.targetDeviceId)
+                    statement.setBytes(4, publicKey)
+                    statement.setTimestamp(5, java.sql.Timestamp.from(expiresAt))
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                EnrollmentRegistrationResult.Created(expiresAt.epochSecond)
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    override fun pendingEnrollments(actor: AuthenticatedDevice): List<PendingEnrollmentResponse>? = dataSource.connection.use { connection ->
+        if (!activeAccountDevice(connection, actor)) return@use null
+        connection.prepareStatement(
+            "SELECT account_id, request_id, target_device_id, hpke_public_key FROM device_enrollment_request " +
+                "WHERE account_id = ? AND approved_at IS NULL AND expires_at > CURRENT_TIMESTAMP ORDER BY request_id ASC",
+        ).use { statement ->
+            statement.setString(1, actor.accountId)
+            statement.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) add(
+                        PendingEnrollmentResponse(
+                            accountId = rs.getString("account_id"),
+                            requestId = rs.getString("request_id"),
+                            targetDeviceId = rs.getString("target_device_id"),
+                            hpkePublicKeyBase64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(rs.getBytes("hpke_public_key")),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    override fun approveEnrollment(actor: AuthenticatedDevice, requestId: String, packageBytes: ByteArray): EnrollmentApprovalResult =
+        dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                if (!activeAccountDevice(connection, actor)) {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.NotFound
+                }
+                val request = connection.prepareStatement(
+                    "SELECT account_id, approved_at FROM device_enrollment_request " +
+                        "WHERE request_id = ? AND expires_at > CURRENT_TIMESTAMP FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, requestId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else rs.getString("account_id") to (rs.getTimestamp("approved_at") != null)
+                    }
+                } ?: run {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.NotFound
+                }
+                if (request.first != actor.accountId) {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.NotFound
+                }
+                if (request.second) {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.AlreadyApproved
+                }
+                connection.prepareStatement("INSERT INTO device_key_package(request_id, package_bytes) VALUES (?, ?)").use { statement ->
+                    statement.setString(1, requestId)
+                    statement.setBytes(2, packageBytes)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("UPDATE device_enrollment_request SET approved_at = CURRENT_TIMESTAMP WHERE request_id = ?").use { statement ->
+                    statement.setString(1, requestId)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                EnrollmentApprovalResult.Approved
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+
+    override fun fetchKeyPackage(requestId: String, targetDeviceId: String): ByteArray? = dataSource.connection.use { connection ->
+        connection.prepareStatement(
+            "SELECT p.package_bytes FROM device_key_package p " +
+                "JOIN device_enrollment_request r ON r.request_id = p.request_id " +
+                "WHERE p.request_id = ? AND r.target_device_id = ? AND r.approved_at IS NOT NULL " +
+                "AND r.expires_at > CURRENT_TIMESTAMP",
+        ).use { statement ->
+            statement.setString(1, requestId)
+            statement.setString(2, targetDeviceId)
+            statement.executeQuery().use { rs -> if (rs.next()) rs.getBytes(1) else null }
+        }
+    }
+
     override fun authenticate(credential: String): AuthenticatedDevice? {
         val hash = sha256(credential)
         return dataSource.connection.use { connection ->
@@ -228,7 +357,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     }
 
     private fun isMember(connection: Connection, actor: AuthenticatedDevice, spaceId: String): Boolean =
-        connection.prepareStatement(
+            connection.prepareStatement(
             "SELECT 1 FROM sync_space_membership m " +
                 "JOIN sync_space s ON s.sync_space_id = m.sync_space_id " +
                 "JOIN device d ON d.device_id = m.device_id " +
@@ -239,6 +368,13 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             statement.setString(2, actor.deviceId)
             statement.setString(3, actor.accountId)
             statement.setString(4, actor.accountId)
+            statement.executeQuery().use(ResultSet::next)
+        }
+
+    private fun activeAccountDevice(connection: Connection, actor: AuthenticatedDevice): Boolean =
+        connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ? AND account_id = ? AND revoked_at IS NULL").use { statement ->
+            statement.setString(1, actor.deviceId)
+            statement.setString(2, actor.accountId)
             statement.executeQuery().use(ResultSet::next)
         }
 
@@ -273,6 +409,14 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
 
     private fun sha256(value: String): ByteArray =
         MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+
+    private fun decodeCanonical(value: String, expectedBytes: Int): ByteArray {
+        require(value.isNotEmpty() && '=' !in value)
+        val decoded = Base64.getUrlDecoder().decode(value)
+        require(decoded.size == expectedBytes)
+        require(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value)
+        return decoded
+    }
 
     private fun requireValidId(value: String, name: String) {
         require(value.isNotBlank() && value.length <= 128) { "$name is invalid." }
