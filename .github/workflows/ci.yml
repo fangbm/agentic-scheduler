@@ -42,7 +42,6 @@ jobs:
           retention-days: 14
 
   desktop-windows:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -53,9 +52,13 @@ jobs:
       - uses: android-actions/setup-android@v4
       - name: Install Android build SDK
         run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+      - name: Verify Windows DPAPI secure store
+        run: .\gradlew.bat :shared:application:desktopTest --tests "*DesktopPlatformSecureStoreTest" --no-daemon
       - name: Build Windows Desktop dogfood app
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: .\gradlew.bat :apps:desktop:createDistributable --no-daemon
       - name: Upload Windows Desktop dogfood app
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@v4
         with:
           name: agentic-scheduler-desktop-windows
