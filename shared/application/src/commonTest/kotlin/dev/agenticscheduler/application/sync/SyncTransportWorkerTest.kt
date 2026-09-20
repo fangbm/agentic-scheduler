@@ -25,6 +25,9 @@ import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.AllDayRangeImage
 import dev.agenticscheduler.sync.SyncConflict
+import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.SyncWireCodec
+import dev.agenticscheduler.application.history.SyncReceiveResult
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -67,6 +70,41 @@ class SyncTransportWorkerTest {
         assertEquals(firstEnvelope, transport.uploaded.last())
         assertEquals(1, transport.encryptions)
     }
+
+    @Test
+    fun `direct and relay routes produce the same receive outcome`() = runBlocking {
+        val remote = RemoteSyncEnvelope(
+            3,
+            EncryptedEnvelopeV1(
+                syncSpaceId = SyncSpaceId("space"),
+                mutationId = "00000000-0000-7000-8000-000000000099",
+                senderDeviceId = DeviceId("remote"),
+                keyEpoch = 0,
+                ciphertextBase64Url = "AQI",
+            ),
+        )
+        val directSeen = mutableListOf<String>()
+        val relaySeen = mutableListOf<String>()
+        val direct = workerFor(ReplayTransport(remote), directSeen)
+        val relay = workerFor(ReplayTransport(remote), relaySeen)
+        assertEquals(direct.run(SyncSpaceId("space")), relay.run(SyncSpaceId("space")))
+        assertEquals(directSeen, relaySeen)
+        assertEquals(listOf(SyncWireCodec.encodeEnvelope(remote.envelope)), directSeen)
+    }
+
+    private fun workerFor(transport: SyncTransport, seen: MutableList<String>) = SyncTransportWorker(
+        history = MemoryHistory(emptyList()),
+        outbound = MemoryOutbound(),
+        receive = MemoryReceive(),
+        codec = AuthenticatedSyncEnvelopeCodec(CountingKeys {}, CountingKeys {}),
+        encryptionKeys = CountingKeys {},
+        deviceId = DeviceId("device"),
+        transport = transport,
+        receiveGateway = SyncEnvelopeReceiver { encoded, _ ->
+            seen += encoded
+            EncryptedSyncReceiveResult.Handled(SyncReceiveResult.Duplicate(MutationId("00000000-0000-7000-8000-000000000099")))
+        },
+    )
 
     private class CountingKeys(private val onEncrypt: () -> Unit) : SyncPayloadKeyProvider, CurrentEncryptionKeyProvider {
         private val aead = object : SyncPayloadAead {
@@ -117,12 +155,20 @@ class SyncTransportWorkerTest {
         override suspend fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int) = emptyList<RemoteSyncEnvelope>()
     }
 
-    private class MemoryHistory(private val value: SyncOperation) : HistoryRepository {
-        override suspend fun timeline() = listOf(CommittedMutation(value, 0))
+    private class MemoryHistory(private val values: List<SyncOperation>) : HistoryRepository {
+        constructor(value: SyncOperation) : this(listOf(value))
+        override suspend fun timeline() = values.map { CommittedMutation(it, 0) }
         override suspend fun mutation(mutationId: String) = null
         override suspend fun entityChanges(entityKind: dev.agenticscheduler.sync.EntityKind, entityId: String) = emptyList<HistoryChange>()
         override suspend fun diff(mutationId: String) = emptyList<HistoryChange>()
         override suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstone? = null
+    }
+
+    private class ReplayTransport(private val remote: RemoteSyncEnvelope) : SyncTransport {
+        private var delivered = false
+        override suspend fun upload(envelope: EncryptedEnvelopeV1) = SyncUploadResult.Stored(1)
+        override suspend fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int): List<RemoteSyncEnvelope> =
+            if (delivered) emptyList() else listOf(remote).also { delivered = true }
     }
 
     private class MemoryReceive : SyncReceiveRepository {
