@@ -14,6 +14,7 @@ sealed interface SyncUploadResult {
     data class Idempotent(val serverCursor: Long) : SyncUploadResult
     data class RetryableFailure(val detail: String) : SyncUploadResult
     data class IntegrityConflict(val detail: String) : SyncUploadResult
+    data class NonRetryableFailure(val detail: String) : SyncUploadResult
 }
 
 interface SyncTransport {
@@ -80,7 +81,7 @@ class SyncTransportWorker(
                         outbound.markUploaded(syncSpaceId, operation.mutationId)
                         uploaded++
                     }
-                    is SyncUploadResult.RetryableFailure, is SyncUploadResult.IntegrityConflict ->
+                    is SyncUploadResult.RetryableFailure, is SyncUploadResult.IntegrityConflict, is SyncUploadResult.NonRetryableFailure ->
                         return SyncTransportRunResult(uploaded, 0, 0, result)
                 }
             }

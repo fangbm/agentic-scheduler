@@ -180,7 +180,7 @@ Status:
 D8-00 protocol/security decisions  FROZEN
 D8-01 client SyncEngine/merge      IMPLEMENTED / TARGETED TESTS PASS
 D8-02 E2EE/key lifecycle           IMPLEMENTED / TARGETED TESTS PASS
-D8-03 thin server/Wear transport   OPAQUE RELAY BASELINE IMPLEMENTED / LIFECYCLE + WEAR PENDING
+D8-03 thin server/Wear transport   OPAQUE RELAY + HTTPS/OFFLINE CLIENT BASELINE IMPLEMENTED / LIFECYCLE + WEAR PENDING
 ```
 
 Frozen baseline includes:

@@ -2,7 +2,7 @@
 
 A local-first Kotlin Multiplatform scheduler. D8 client E2EE and the first opaque sync-server relay slice are implemented on the D8 review branch; the full multi-device/server acceptance gate is still open.
 
-The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, and implemented D7 mutation/history/causality foundation. D5-02/D6.5 build and packaging verification passed locally on 2026-09-20; Desktop dogfood passed interactively, and the Android Planner surface plus New Task dialog respond on the API 36 emulator. Full Android Planner input smoke remains pending. D8 client SyncEngine/E2EE and the `:server:sync` opaque relay baseline are implemented on the D8 review branch; server lifecycle, network catch-up, Wear route-equivalence, and multi-device adversarial gates remain pending.
+The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, and implemented D7 mutation/history/causality foundation. D5-02/D6.5 build and packaging verification passed locally on 2026-09-20; Desktop dogfood passed interactively, and the Android Planner surface plus New Task dialog respond on the API 36 emulator. Full Android Planner input smoke remains pending. D8 client SyncEngine/E2EE, local exact-envelope retry, Ktor HTTPS transport, and the `:server:sync` opaque relay baseline are implemented on the D8 review branch; server lifecycle, production catch-up wiring, Wear route-equivalence, and multi-device adversarial gates remain pending.
 
 ## Modules
 
