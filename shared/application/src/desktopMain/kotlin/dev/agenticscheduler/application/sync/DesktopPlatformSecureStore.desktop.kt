@@ -154,15 +154,19 @@ internal class LinuxSecretServiceSecureBackend(
     override val referencePrefix = "linux-secret-service://"
 
     override fun store(id: String, value: ByteArray) {
-        val process = ProcessBuilder(command, "store", "--label=Agentic Scheduler D8 Secret", "service", SERVICE, "reference", id)
-            .redirectErrorStream(true)
-            .start()
-        process.outputStream.bufferedWriter().use { writer ->
-            writer.write(Base64.getUrlEncoder().withoutPadding().encodeToString(value))
-            writer.newLine()
+        try {
+            val process = ProcessBuilder(command, "store", "--label=Agentic Scheduler D8 Secret", "service", SERVICE, "reference", id)
+                .redirectErrorStream(true)
+                .start()
+            process.outputStream.bufferedWriter().use { writer ->
+                writer.write(Base64.getUrlEncoder().withoutPadding().encodeToString(value))
+                writer.newLine()
+            }
+            process.inputStream.readBytes()
+            check(process.waitFor() == 0) { "Secret Service store command failed." }
+        } catch (failure: Throwable) {
+            throw SecureStoreUnavailableException(UNAVAILABLE_MESSAGE, failure)
         }
-        process.inputStream.readBytes()
-        check(process.waitFor() == 0) { "Linux Secret Service rejected secure-store write." }
     }
 
     override fun read(id: String): ByteArray? = try {
@@ -176,12 +180,20 @@ internal class LinuxSecretServiceSecureBackend(
     }
 
     override fun delete(id: String) {
-        val process = ProcessBuilder(command, "clear", "service", SERVICE, "reference", id)
-            .redirectErrorStream(true)
-            .start()
-        process.inputStream.readBytes()
-        check(process.waitFor() == 0) { "Linux Secret Service rejected secure-store delete." }
+        try {
+            val process = ProcessBuilder(command, "clear", "service", SERVICE, "reference", id)
+                .redirectErrorStream(true)
+                .start()
+            process.inputStream.readBytes()
+            check(process.waitFor() == 0) { "Secret Service clear command failed." }
+        } catch (failure: Throwable) {
+            throw SecureStoreUnavailableException(UNAVAILABLE_MESSAGE, failure)
+        }
     }
 
-    private companion object { const val SERVICE = "agentic-scheduler" }
+    private companion object {
+        const val SERVICE = "agentic-scheduler"
+        const val UNAVAILABLE_MESSAGE =
+            "Linux Secret Service is unavailable or locked. Start and unlock a Secret Service keyring, then retry sync or pairing."
+    }
 }

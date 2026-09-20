@@ -5,6 +5,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFails
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -49,6 +50,18 @@ class DesktopPlatformSecureStoreTest {
 
         assertFails { store.importContentKey(RawMaterial(0)) }
         Unit
+    }
+
+    @Test
+    fun `unavailable Linux Secret Service is explicit and never falls back to a file`() {
+        val failure = assertFailsWith<SecureStoreUnavailableException> {
+            LinuxSecretServiceSecureBackend(command = "agentic-scheduler-no-secret-tool").store("test", ByteArray(32))
+        }
+
+        assertEquals(
+            "Linux Secret Service is unavailable or locked. Start and unlock a Secret Service keyring, then retry sync or pairing.",
+            failure.message,
+        )
     }
 
     @Test

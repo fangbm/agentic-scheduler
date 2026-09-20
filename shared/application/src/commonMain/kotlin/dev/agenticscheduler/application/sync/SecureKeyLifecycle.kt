@@ -60,6 +60,14 @@ interface PlatformSecretStore {
     suspend fun delete(reference: SecretReference)
 }
 
+/**
+ * A platform key store cannot satisfy a write/delete request. Callers must
+ * surface this as a retryable secure-store problem; they must not fall back to
+ * plaintext persistence or publish a reference that was never stored.
+ */
+class SecureStoreUnavailableException(message: String, cause: Throwable? = null) :
+    IllegalStateException(message, cause)
+
 /** Durable non-secret key metadata. A key epoch is monotonic for one SyncSpace. */
 enum class SyncSpaceContentKeyUsage { ACTIVE, DECRYPT_ONLY }
 

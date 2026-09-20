@@ -65,3 +65,49 @@ jobs:
           path: apps/desktop/build/compose/binaries/main/app/**
           if-no-files-found: error
           retention-days: 14
+
+  linux-secret-service:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android build SDK
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+      - name: Install Secret Service test runtime
+        run: sudo apt-get update && sudo apt-get install --yes libsecret-tools gnome-keyring dbus-x11
+      - name: Verify Linux Secret Service secure store
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            export AGENTIC_SCHEDULER_SECRET_SERVICE_INTEGRATION=1
+            eval "$(gnome-keyring-daemon --start --components=secrets)"
+            ./gradlew :shared:application:desktopTest --tests "*LinuxSecretServiceSecureStoreIntegrationTest" --no-daemon
+          '
+
+  android-keystore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Install Android build SDK
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Verify Android Keystore secure store
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: ./gradlew :apps:android:connectedDebugAndroidTest --no-daemon --stacktrace
