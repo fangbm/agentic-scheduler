@@ -187,6 +187,10 @@ fun decodeCanonicalBase64Url(value: String, expectedBytes: Int?, name: String): 
     return unpaddedUrlSafeBase64.decode(value)
 }
 
+/** Emits SYN-006A canonical base64url-no-padding text for transient key-package material. */
+@OptIn(ExperimentalEncodingApi::class)
+fun encodeCanonicalBase64Url(value: ByteArray): String = unpaddedUrlSafeBase64.encode(value)
+
 /** SYN-006A accepts and emits canonical base64url without '=' padding. */
 @OptIn(ExperimentalEncodingApi::class)
 private val unpaddedUrlSafeBase64 = Base64.UrlSafe.withPadding(Base64.PaddingOption.ABSENT)
