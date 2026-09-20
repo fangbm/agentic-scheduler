@@ -48,6 +48,7 @@ class DesktopPlatformSecureStoreTest {
         val store = DesktopPlatformSecureStore(ThrowingBackend, TinkPairingHpke())
 
         assertFails { store.importContentKey(RawMaterial(0)) }
+        Unit
     }
 
     @Test
