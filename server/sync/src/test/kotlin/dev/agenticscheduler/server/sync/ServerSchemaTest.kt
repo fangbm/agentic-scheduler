@@ -28,5 +28,7 @@ class ServerSchemaTest {
         assertTrue(enrollmentSql.contains("device_key_package"))
         val recoverySql = javaClass.classLoader.getResourceAsStream(migrations[3].resource)!!.bufferedReader().use { it.readText() }
         assertTrue(recoverySql.contains("recovery_envelope"))
+        val enrollmentCredentialSql = javaClass.classLoader.getResourceAsStream(migrations[4].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(enrollmentCredentialSql.contains("credential_hash"))
     }
 }

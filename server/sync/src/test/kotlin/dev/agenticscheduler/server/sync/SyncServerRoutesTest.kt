@@ -53,7 +53,7 @@ class SyncServerRoutesTest {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
         val publicKey = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
-        val requestBody = """{"accountId":"account","requestId":"req-1","targetDeviceId":"target","hpkePublicKeyBase64Url":"$publicKey"}"""
+        val requestBody = """{"accountId":"account","requestId":"req-1","targetDeviceId":"target","hpkePublicKeyBase64Url":"$publicKey","credentialHashBase64Url":"$publicKey"}"""
         assertEquals(HttpStatusCode.Created, client.post("/v1/enrollments") {
             contentType(ContentType.Application.Json)
             setBody(requestBody)

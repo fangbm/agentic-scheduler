@@ -41,6 +41,7 @@ data class EnrollmentRequestWire(
     val requestId: String,
     val targetDeviceId: String,
     val hpkePublicKeyBase64Url: String,
+    val credentialHashBase64Url: String,
 )
 
 @Serializable
@@ -76,6 +77,7 @@ sealed interface EnrollmentApprovalResult {
     data object Approved : EnrollmentApprovalResult
     data object NotFound : EnrollmentApprovalResult
     data object AlreadyApproved : EnrollmentApprovalResult
+    data object TargetDeviceAlreadyExists : EnrollmentApprovalResult
 }
 
 sealed interface DeviceRevocationResult {

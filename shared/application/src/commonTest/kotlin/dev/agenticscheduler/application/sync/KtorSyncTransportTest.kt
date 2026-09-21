@@ -123,7 +123,7 @@ class KtorSyncTransportTest {
             }
         }
         val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { credential })
-        lifecycle.registerEnrollment(ClientEnrollmentRequest("account", "req", "target", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
+        lifecycle.registerEnrollment(ClientEnrollmentRequest("account", "req", "target", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
         lifecycle.pendingEnrollments()
         lifecycle.approveEnrollment("req", "AQI")
         lifecycle.saveRecoveryEnvelope("AQI")

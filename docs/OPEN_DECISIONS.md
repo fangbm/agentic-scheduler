@@ -272,11 +272,15 @@ Impact: SECURITY / DEVICE INTEROPERABILITY
 ```
 
 D8 v1 freezes an HPKE key package that intentionally excludes `DeviceCredential`.
-The server relay and client package admission therefore cannot infer how a newly
-paired or recovered device receives/registers its independent bearer credential.
-Define the one-time handoff/registration proof, replay protection, and rotation
-behavior before implementing that path. The opaque enrollment/package relay may
-be tested independently.
+The approved pairing handoff is now device-generated: the target creates and
+securely stores a random 256-bit credential, sends only its canonical
+`SHA-256(DeviceCredential)` enrollment hash, and the approving device atomically
+creates the target device, membership rows, and opaque key package. The raw
+credential never enters the package or server database. Duplicate target device
+IDs are rejected without consuming the request.
+
+Recovery still needs the approved RecoverySecret-only rotating proof and atomic
+credential/key rotation contract before production recovery enrollment is enabled.
 
 ---
 

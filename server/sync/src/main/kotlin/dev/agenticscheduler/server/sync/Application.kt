@@ -97,8 +97,9 @@ fun Application.syncServerModule(
             val request = call.receive<EnrollmentRequestWire>()
             try {
                 decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
+                decodeCanonicalBase64(request.credentialHashBase64Url, 32, 32)
             } catch (_: IllegalArgumentException) {
-                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_HPKE_KEY"))
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_ENROLLMENT_CRYPTO"))
             }
             when (val result = enrollment.registerEnrollment(request, config.enrollmentTtlSeconds)) {
                 is EnrollmentRegistrationResult.Created -> call.respond(HttpStatusCode.Created, EnrollmentCreatedResponse(request.requestId, result.expiresAtEpochSeconds))
@@ -138,6 +139,7 @@ fun Application.syncServerModule(
                 EnrollmentApprovalResult.Approved -> call.respond(HttpStatusCode.Created, ServerErrorResponse("APPROVED"))
                 EnrollmentApprovalResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
                 EnrollmentApprovalResult.AlreadyApproved -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_APPROVED"))
+                EnrollmentApprovalResult.TargetDeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("TARGET_DEVICE_EXISTS"))
             }
         }
         get("/v1/enrollments/{requestId}/package") {

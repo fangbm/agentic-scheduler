@@ -129,6 +129,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         requireValidId(request.targetDeviceId, "targetDeviceId")
         require(ttlSeconds in 60..86_400)
         val publicKey = decodeCanonical(request.hpkePublicKeyBase64Url, 32)
+        val credentialHash = decodeCanonical(request.credentialHashBase64Url, 32)
         val expiresAt = Instant.now().plusSeconds(ttlSeconds)
         return dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
@@ -150,13 +151,14 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     return@connection EnrollmentRegistrationResult.DuplicateRequest
                 }
                 connection.prepareStatement(
-                    "INSERT INTO device_enrollment_request(request_id, account_id, target_device_id, hpke_public_key, expires_at) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO device_enrollment_request(request_id, account_id, target_device_id, hpke_public_key, credential_hash, expires_at) VALUES (?, ?, ?, ?, ?, ?)",
                 ).use { statement ->
                     statement.setString(1, request.requestId)
                     statement.setString(2, request.accountId)
                     statement.setString(3, request.targetDeviceId)
                     statement.setBytes(4, publicKey)
-                    statement.setTimestamp(5, java.sql.Timestamp.from(expiresAt))
+                    statement.setBytes(5, credentialHash)
+                    statement.setTimestamp(6, java.sql.Timestamp.from(expiresAt))
                     statement.executeUpdate()
                 }
                 connection.commit()
@@ -201,28 +203,58 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     return@connection EnrollmentApprovalResult.NotFound
                 }
                 val request = connection.prepareStatement(
-                    "SELECT account_id, approved_at FROM device_enrollment_request " +
+                    "SELECT account_id, target_device_id, credential_hash, approved_at FROM device_enrollment_request " +
                         "WHERE request_id = ? AND expires_at > CURRENT_TIMESTAMP FOR UPDATE",
                 ).use { statement ->
                     statement.setString(1, requestId)
                     statement.executeQuery().use { rs ->
-                        if (!rs.next()) null else rs.getString("account_id") to (rs.getTimestamp("approved_at") != null)
+                        if (!rs.next()) null else EnrollmentApprovalRow(
+                            accountId = rs.getString("account_id"),
+                            targetDeviceId = rs.getString("target_device_id"),
+                            credentialHash = rs.getBytes("credential_hash"),
+                            approved = rs.getTimestamp("approved_at") != null,
+                        )
                     }
                 } ?: run {
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.NotFound
                 }
-                if (request.first != actor.accountId) {
+                if (request.accountId != actor.accountId) {
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.NotFound
                 }
-                if (request.second) {
+                if (request.approved) {
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.AlreadyApproved
+                }
+                val targetExists = connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ?").use { statement ->
+                    statement.setString(1, request.targetDeviceId)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (targetExists) {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.TargetDeviceAlreadyExists
                 }
                 connection.prepareStatement("INSERT INTO device_key_package(request_id, package_bytes) VALUES (?, ?)").use { statement ->
                     statement.setString(1, requestId)
                     statement.setBytes(2, packageBytes)
+                    statement.executeUpdate()
+                }
+                require(request.credentialHash != null) { "Enrollment request is missing credential hash." }
+                connection.prepareStatement(
+                    "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
+                ).use { statement ->
+                    statement.setString(1, request.targetDeviceId)
+                    statement.setString(2, request.accountId)
+                    statement.setBytes(3, request.credentialHash)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "INSERT INTO sync_space_membership(sync_space_id, device_id) " +
+                        "SELECT sync_space_id, ? FROM sync_space WHERE account_id = ?",
+                ).use { statement ->
+                    statement.setString(1, request.targetDeviceId)
+                    statement.setString(2, request.accountId)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement("UPDATE device_enrollment_request SET approved_at = CURRENT_TIMESTAMP WHERE request_id = ?").use { statement ->
@@ -464,6 +496,13 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         val senderDeviceId: String,
         val keyEpoch: Long,
         val ciphertext: ByteArray,
+    )
+
+    private data class EnrollmentApprovalRow(
+        val accountId: String,
+        val targetDeviceId: String,
+        val credentialHash: ByteArray?,
+        val approved: Boolean,
     )
 
     private fun sha256(value: String): ByteArray =

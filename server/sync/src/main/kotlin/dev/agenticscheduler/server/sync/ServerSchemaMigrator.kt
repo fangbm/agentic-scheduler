@@ -11,6 +11,7 @@ object ServerMigrationCatalog {
         ServerMigration(2, "db/migration/V2__account_invitations.sql"),
         ServerMigration(3, "db/migration/V3__device_enrollment.sql"),
         ServerMigration(4, "db/migration/V4__recovery_envelope.sql"),
+        ServerMigration(5, "db/migration/V5__enrollment_credential_hash.sql"),
     )
 }
 

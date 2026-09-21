@@ -201,9 +201,9 @@ Ktor 3.5.2 thin server + PostgreSQL pgjdbc 42.7.13 + HikariCP 7.1.0
 server stores opaque encrypted envelopes only
 ```
 
-Current persistence baselines on the D8 review branch are client Room schema v10
-(outbound ciphertext retry metadata) and server SQL schema v4 (opaque relay,
-bootstrap, enrollment, recovery, and revocation metadata).
+Current persistence baselines on the D8 review branch are client Room schema v11
+(outbound eligibility plus ciphertext retry metadata) and server SQL schema v5
+(opaque relay, bootstrap, enrollment credential hashes, recovery, and revocation metadata).
 Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
 and real multi-replica execution remain open acceptance work.
 Android/Wear `DeviceCredential` storage now has a Keystore-backed implementation;

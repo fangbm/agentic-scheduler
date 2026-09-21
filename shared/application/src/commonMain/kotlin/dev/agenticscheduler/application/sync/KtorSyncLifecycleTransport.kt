@@ -20,7 +20,24 @@ data class ClientEnrollmentRequest(
     val requestId: String,
     val targetDeviceId: String,
     val hpkePublicKeyBase64Url: String,
-)
+    val credentialHashBase64Url: String,
+) {
+    companion object {
+        fun fromCredential(
+            accountId: String,
+            requestId: String,
+            targetDeviceId: String,
+            hpkePublicKeyBase64Url: String,
+            credential: DeviceCredential,
+        ) = ClientEnrollmentRequest(
+            accountId,
+            requestId,
+            targetDeviceId,
+            hpkePublicKeyBase64Url,
+            DeviceCredentialHashing.sha256Base64Url(credential),
+        )
+    }
+}
 
 @Serializable
 data class ClientPendingEnrollment(

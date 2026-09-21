@@ -510,6 +510,14 @@ All non-loopback production transport requires TLS. A reverse proxy is allowed, 
 
 DeviceCredential is revocable/rotatable and stored in platform secure storage. Agent/provider code never receives it.
 
+Secondary pairing uses a target-generated credential. The target creates 32 random
+bytes in platform secure storage and sends only
+`base64url-no-padding(SHA-256(DeviceCredential))` in `EnrollmentRequestWire`.
+The existing device's approval transaction stores that hash with the new device,
+creates its account memberships, stores the opaque HPKE package, and marks the
+request approved. The raw credential is never sent to the server or included in
+the key package; an existing target device ID is rejected atomically.
+
 ---
 
 # SYN-009 — Platform secure-key boundary
