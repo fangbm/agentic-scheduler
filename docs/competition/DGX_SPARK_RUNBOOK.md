@@ -29,7 +29,7 @@ Never commit real values or place model credentials in the Desktop bundle.
 2. Start :server:agent-gateway with the required environment.
 3. Check GET /health and GET /v1/model/health.
 4. Start Desktop with AGENT_GATEWAY_URL and AGENT_GATEWAY_TOKEN.
-5. Run read → proposed write → confirmation → Planner preview/apply demo.
+5. Run `task.list`/`task.get` → proposed `task.create` → confirmation → Planner preview/apply demo.
 6. Capture the response, Tool call, MutationId, and History evidence.
 ```
 

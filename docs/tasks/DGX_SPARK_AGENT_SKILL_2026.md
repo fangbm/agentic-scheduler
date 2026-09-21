@@ -15,6 +15,9 @@ now holds write proposals in a visible confirmation dialog; confirmed
 `CONFIRMATION_REQUIRED` without mutating state. The next slice is the remote
 DGX smoke run and evidence capture.
 
+Implementation commits currently on this branch: `1568460` (gateway/Desktop
+slice) and `1231d66` (local confirmation bridge).
+
 ## Competition record
 
 This task targets the registered **3rd NVIDIA DGX Spark Hackathon — Agent
