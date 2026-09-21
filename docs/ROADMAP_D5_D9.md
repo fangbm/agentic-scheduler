@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10 + Post-project Hackathon
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8/D9 specs frozen; D10 planned; post-project DGX Spark hackathon fork planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 client/E2EE plus opaque server-relay baseline in review (full gate pending); D9 specs frozen; D10 planned; post-project DGX Spark hackathon fork planned
 > Date: 2026-09-20
 
 ---
@@ -18,7 +18,7 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    SPEC FROZEN — READY AFTER D6.5 VERIFICATION
+D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY BASELINE IN PR #5
  ↓
 D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
 D9-02  Agent history sync amendment            AFTER D9-01
@@ -182,9 +182,9 @@ Status:
 
 ```text
 D8-00 protocol/security decisions  FROZEN
-D8-01 client SyncEngine/merge      READY AFTER D6.5 VERIFICATION
-D8-02 E2EE/key lifecycle           READY AFTER D6.5 VERIFICATION
-D8-03 thin server/Wear transport   READY AFTER D6.5 VERIFICATION
+D8-01 client SyncEngine/merge      IMPLEMENTED / TARGETED TESTS PASS
+D8-02 E2EE/key lifecycle           IMPLEMENTED / EPOCH ROTATION BOUNDARY + TARGETED TESTS PASS / APP-LEVEL AMK STAGING PENDING
+D8-03 thin server/Wear transport   OPAQUE RELAY + HTTPS/OFFLINE CLIENT + CREDENTIAL HASH + ROTATING RECOVERY + ATOMIC ROTATION PUBLICATION IMPLEMENTED / APP WIRING + WEAR EQUIVALENCE PENDING
 ```
 
 Frozen baseline includes:
@@ -200,6 +200,15 @@ client semantic merge + explicit SyncConflict; no LWW
 Ktor 3.5.2 thin server + PostgreSQL pgjdbc 42.7.13 + HikariCP 7.1.0
 server stores opaque encrypted envelopes only
 ```
+
+Current persistence baselines on the D8 review branch are client Room schema v11
+(outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
+(opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
+atomic rotation, recovery, and revocation metadata).
+Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
+and real multi-replica execution remain open acceptance work.
+Android/Wear `DeviceCredential` storage now has a Keystore-backed implementation;
+Windows DPAPI and Linux Secret Service adapters remain platform follow-ups.
 
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 
@@ -339,7 +348,7 @@ D10 may add presentation-only models/state and platform-specific layout code, bu
 
 # Post-project — DGX Spark Server-Agent Hackathon Fork
 
-> Status: **PLANNED / OPTIONAL — create only after the main D5–D10 product is complete**  
+> Status: **PLANNED / OPTIONAL — create only after the main D5–D10 product is complete**
 > Intended branch: `hackathon/dgx-spark-server-agent`
 
 This is an isolated hackathon architecture fork, not D11 and not a replacement for the completed main product. Create it from the final D10 completion commit/tag so the Local-first/E2EE product remains preserved on `main`.

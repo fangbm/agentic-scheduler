@@ -15,12 +15,13 @@ This document is about **ownership**, not just directory names. If a coding agen
 :shared:planner
 :shared:sync
 :shared:database
+:server:sync
 :apps:android
 :apps:desktop
 :apps:wear
 ```
 
-D4 introduced `:shared:application`; D6 introduced `:shared:planner`; D7 introduced `:shared:sync`. Future modules from the architecture/roadmap remain conceptual until a Task Spec explicitly creates them.
+D4 introduced `:shared:application`; D6 introduced `:shared:planner`; D7 introduced `:shared:sync`; D8 introduced `:server:sync` for the thin opaque relay. Future modules from the architecture/roadmap remain conceptual until a Task Spec explicitly creates them.
 
 ---
 
@@ -40,6 +41,10 @@ Platform Apps
     ↓               ├──────────────→ :shared:application
 :shared:domain       │
                     └──────────────→ :shared:domain
+
+:server:sync ───────→ opaque transport metadata only
+       │
+       └──────────────→ :shared:sync (wire DTOs; never Domain plaintext)
 ```
 
 Future Agent modules remain higher-level consumers of Domain/Application/Planner/Sync contracts rather than dependencies of `shared:domain`.
@@ -89,6 +94,7 @@ Crypto implementation
 | Semantic merge | Sync + domain merge policy | UI resolves conflicts | generic JSON merge |
 | Tombstone lifecycle | Sync/persistence | Domain delete initiates | DB cascade alone |
 | E2EE encrypt/decrypt | crypto/infrastructure boundary | Sync transports ciphertext | server plaintext logic |
+| Opaque envelope relay | `server:sync` | clients provide encrypted bytes | server decrypt/merge/planner/agent |
 | Key storage | platform security infrastructure | crypto consumes | Domain |
 | AgentThread | Agent/application persistence | ContextAssembler reads | Provider session |
 | ContextAnchor | platform/session UI layer | ContextAssembler reads | Sync |

@@ -1,6 +1,11 @@
 package dev.agenticscheduler.application.calendar
 
 import dev.agenticscheduler.application.persistence.*
+import dev.agenticscheduler.application.history.ActiveConflictAwareSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictAwareProjection
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
+import dev.agenticscheduler.application.history.ConflictCollectionProjection
 import dev.agenticscheduler.domain.academic.*
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.*
@@ -8,6 +13,7 @@ import dev.agenticscheduler.domain.planning.Flexibility
 import dev.agenticscheduler.domain.planning.PinState
 import dev.agenticscheduler.domain.task.*
 import dev.agenticscheduler.domain.time.*
+import dev.agenticscheduler.sync.*
 import kotlin.test.*
 import kotlin.time.Instant
 import kotlinx.collections.immutable.ImmutableList
@@ -152,6 +158,51 @@ class CalendarProjectionTest {
         assertEquals("Update", next.await().items.single().title)
     }
 
+    @Test fun `conflict aware calendar projects the shared source fact boundary without mutating Active State`() = runBlocking {
+        val durable = event(60, "Durable", ZonedTimeRange(Instant.parse("2026-03-08T14:00:00Z"), Instant.parse("2026-03-08T15:00:00Z"), TimeZone.UTC))
+        val candidate = durable.copy(title = "Provisional")
+        val durableTime = durable.time as ZonedTimeRange
+        val candidateTime = candidate.time as ZonedTimeRange
+        val localReplica = id(61); val remoteReplica = id(62)
+        val local = SyncOperation(id(64), DvvSnapshot(emptyList(), DotSnapshot(localReplica, 1)), HlcSnapshot(1, 0, localReplica), MutationOrigin.User, listOf(EventPut(null, EventImage(durable.id.value, durable.title, EventTimeImage.Zoned(ZonedTimeRangeImage(durableTime.start.toString(), durableTime.endExclusive.toString(), durableTime.timeZone.id)), FlexibilityImage.HARD, PinStateImage.PINNED))))
+        val remote = SyncOperation(id(63), DvvSnapshot(emptyList(), DotSnapshot(remoteReplica, 1)), HlcSnapshot(2, 0, remoteReplica), MutationOrigin.User, listOf(EventPut(null, EventImage(candidate.id.value, candidate.title, EventTimeImage.Zoned(ZonedTimeRangeImage(candidateTime.start.toString(), candidateTime.endExclusive.toString(), candidateTime.timeZone.id)), FlexibilityImage.HARD, PinStateImage.PINNED))))
+        val participants = listOf(local, remote).sortedBy(SyncOperation::mutationId).map { SyncConflictParticipant(MutationId(it.mutationId), it.dvv, LocalJournalCodec.encode(it)) }
+        val receive = CalendarMemoryReceive(listOf(SyncConflict("calendar-conflict", SyncSpaceId("personal-space"), listOf(SyncConflictEntityRef(EntityKind.EVENT, durable.id.value, listOf("title"))), participants, MutationId(remote.mutationId), SyncConflictKind.SEMANTIC, commonCausalContextOf(participants), SyncConflictStatus.OPEN)))
+        val events = FakeEventRepository().apply { values.value = listOf(durable).toImmutableList() }
+        val service = ConflictAwareSourceFactReadService(
+            events,
+            FakeTaskRepository(),
+            FakePlanningProfileRepository(),
+            FakeAcademicRepository(),
+            ActiveConflictAwareSourceFactQuery(ConflictAwareProjection(receive), SyncSpaceId("personal-space")),
+        )
+
+        val result = service.observe(viewport).first()
+
+        assertEquals("Provisional", result.items.single().title)
+        assertEquals("Durable", events.values.value.single().title, "D8-P01 projection must not mutate Active State.")
+        assertEquals(0, receive.writeCount, "D8-P01 projection must not journal or alter receive state.")
+    }
+
+    @Test fun `conflict aware calendar fails closed rather than rendering raw unprojectable source facts`() = runBlocking {
+        val durable = event(65, "Must not render", ZonedTimeRange(Instant.parse("2026-03-08T14:00:00Z"), Instant.parse("2026-03-08T15:00:00Z"), TimeZone.UTC))
+        val sourceFacts = object : ConflictAwareSourceFactQuery {
+            override suspend fun project(durable: EntityMutation) = error("Calendar reads collections.")
+            override suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>) =
+                if (entityKind == EntityKind.EVENT) ConflictCollectionProjection.Unprojectable(listOf("conflict-65"), "Event candidate is unavailable.")
+                else ConflictCollectionProjection.Projected(durable.toList())
+        }
+        val events = FakeEventRepository().apply { values.value = listOf(durable).toImmutableList() }
+        val service = ConflictAwareSourceFactReadService(events, FakeTaskRepository(), FakePlanningProfileRepository(), FakeAcademicRepository(), sourceFacts)
+
+        val result = service.observe(viewport).first()
+
+        assertTrue(result.items.isEmpty())
+        val issue = assertIs<CalendarProjectionIssue.SyncConflictUnprojectable>(result.issues.single())
+        assertEquals(listOf("conflict-65"), issue.conflictIds)
+        assertEquals("Must not render", events.values.value.single().title, "Raw Active State is retained but deliberately not rendered.")
+    }
+
     private fun input(
         courses: List<Course> = emptyList(), rules: List<CourseScheduleRule> = emptyList(), exams: List<Exam> = emptyList(),
     ) = CalendarProjectionInput(listOf(semester()).toImmutableList(), courses.toImmutableList(), rules.toImmutableList(), emptyList<PeriodTemplate>().toImmutableList(), emptyList<AcademicHoliday>().toImmutableList(), emptyList<CourseOccurrenceException>().toImmutableList(), exams.toImmutableList())
@@ -197,4 +248,28 @@ private class FakeAcademicRepository : AcademicRepository {
     override fun observeAcademicHolidays() = empty<AcademicHoliday>(); override suspend fun getAcademicHoliday(id: AcademicHolidayId): AcademicHoliday? = null; override suspend fun upsertAcademicHoliday(value: AcademicHoliday) = Unit
     override fun observeCourseOccurrenceExceptions() = empty<CourseOccurrenceException>(); override suspend fun getCourseOccurrenceException(id: CourseOccurrenceExceptionId): CourseOccurrenceException? = null; override suspend fun upsertCourseOccurrenceException(value: CourseOccurrenceException) = Unit
     override fun observeExams() = empty<Exam>(); override suspend fun getExam(id: ExamId): Exam? = null; override suspend fun upsertExam(value: Exam) = Unit
+}
+
+private class FakePlanningProfileRepository : PlanningProfileRepository {
+    override fun observeAll(): Flow<ImmutableList<dev.agenticscheduler.domain.planning.PlanningProfile>> = MutableStateFlow(emptyList<dev.agenticscheduler.domain.planning.PlanningProfile>().toImmutableList())
+    override suspend fun get(id: PlanningProfileId): dev.agenticscheduler.domain.planning.PlanningProfile? = null
+    override suspend fun upsert(profile: dev.agenticscheduler.domain.planning.PlanningProfile) = Unit
+}
+
+private class CalendarMemoryReceive(private val conflictsValue: List<SyncConflict>) : SyncReceiveRepository {
+    var writeCount = 0
+    override suspend fun serverCursor(syncSpaceId: SyncSpaceId) = 0L
+    override suspend fun saveServerCursor(syncSpaceId: SyncSpaceId, cursor: Long) { writeCount++ }
+    override suspend fun pending(syncSpaceId: SyncSpaceId, mutationId: String): PendingSyncReceive? = null
+    override suspend fun pending(syncSpaceId: SyncSpaceId): List<PendingSyncReceive> = emptyList()
+    override suspend fun savePending(value: PendingSyncReceive) { writeCount++ }
+    override suspend fun removePending(syncSpaceId: SyncSpaceId, mutationId: String) { writeCount++ }
+    override suspend fun handledDot(syncSpaceId: SyncSpaceId, replicaId: ReplicaId, counter: Long): HandledReceiveDot? = null
+    override suspend fun handledDots(syncSpaceId: SyncSpaceId): List<HandledReceiveDot> = emptyList()
+    override suspend fun saveHandledDot(value: HandledReceiveDot) { writeCount++ }
+    override suspend fun quarantine(value: ProtocolQuarantine) { writeCount++ }
+    override suspend fun quarantine(syncSpaceId: SyncSpaceId, mutationId: String): ProtocolQuarantine? = null
+    override suspend fun saveConflict(value: SyncConflict) { writeCount++ }
+    override suspend fun conflict(conflictId: String): SyncConflict? = conflictsValue.firstOrNull { it.conflictId == conflictId }
+    override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> = conflictsValue
 }

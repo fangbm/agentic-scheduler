@@ -263,6 +263,33 @@ Decision: target-device Tink HPKE using the D8 device key; version + target + co
 Source: docs/SYNC_SECURITY_DECISIONS.md SYN-018
 ```
 
+## OD-043 — Secondary DeviceCredential handoff
+
+```text
+Status: RESOLVED
+Resolved by: D8 credential-hash, rotating-proof, and atomic-rotation implementation
+Impact: SECURITY / DEVICE INTEROPERABILITY
+```
+
+D8 v1 freezes an HPKE key package that intentionally excludes `DeviceCredential`.
+The approved pairing handoff is now device-generated: the target creates and
+securely stores a random 256-bit credential, sends only its canonical
+`SHA-256(DeviceCredential)` enrollment hash, and the approving device atomically
+creates the target device, membership rows, and opaque key package. The raw
+credential never enters the package or server database. Duplicate target device
+IDs are rejected without consuming the request.
+
+Recovery uses the approved RecoverySecret-only rotating proof: the client sends
+`HMAC-SHA256(RecoverySecret, "agentic-scheduler-recovery-registration-v1" ||
+0x00 || U32BE(LP(accountId)) || U64BE(counter))`, plus the SHA-256 hash of the
+next proof. The server stores only the current proof hash and counter, verifies
+the submitted proof, and advances both atomically. The raw RecoverySecret never
+crosses the HTTP boundary. Revocation publication uses one idempotent server
+transaction keyed by `rotationId`: it validates the complete package set for
+every remaining active device, stores the opaque new recovery envelope and
+packages, and marks the target revoked together. A different payload under the
+same rotation ID is rejected.
+
 ---
 
 # D9 Agent / context

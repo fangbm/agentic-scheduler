@@ -109,6 +109,10 @@ Calendar/Planner/Agent deterministic local operations do not require server reac
 
 Implement SYN-003 through SYN-009 exactly.
 
+SYN-005A is frozen for D8 v1: active outbound encryption epoch and retained
+historical decrypt-only key ring are separate. Key-package rollback protection
+applies to durable key-state transitions, never to valid old ciphertext.
+
 Important invariants:
 
 ```text

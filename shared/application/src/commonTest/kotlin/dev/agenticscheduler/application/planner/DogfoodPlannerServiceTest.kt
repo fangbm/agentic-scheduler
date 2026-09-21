@@ -5,6 +5,10 @@ import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictProjection
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.ApplicationTransactionRunner
 import dev.agenticscheduler.application.persistence.CommittedMutation
@@ -51,6 +55,8 @@ class DogfoodPlannerServiceTest {
             academics = EmptyAcademics,
             uuidV7 = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
             mutations = coordinator(),
+            conflictWritePolicy = NoActiveSyncSpaceWritePolicy,
+            sourceFacts = NoActiveSyncSpaceSourceFactQuery,
         )
         val referenceNow = Instant.parse("2026-01-05T08:00:00Z")
         val preview = assertIs<PlannerPreview.Applicable>(service.fullReplan(
@@ -123,6 +129,32 @@ class DogfoodPlannerServiceTest {
         Unit
     }
 
+    @Test fun `Planner preview fails closed when a synchronized source fact is unprojectable`() = runBlocking {
+        val profile = configuredProfile()
+        val sourceFacts = object : ConflictAwareSourceFactQuery {
+            override suspend fun project(durable: dev.agenticscheduler.sync.EntityMutation) =
+                if (durable is dev.agenticscheduler.sync.EventPut) ConflictProjection.Unprojectable(listOf("conflict-1"), "Event conflict cannot be projected.")
+                else ConflictProjection.Projected(durable, emptyList())
+            override suspend fun projectCollection(entityKind: dev.agenticscheduler.sync.EntityKind, durable: Collection<dev.agenticscheduler.sync.EntityMutation>) =
+                dev.agenticscheduler.application.history.ConflictCollectionProjection.Projected(durable.toList())
+        }
+        val service = DogfoodPlannerService(
+            tasks = MemoryTasks(task()),
+            events = MemoryEvents(listOf(blockingEvent(9, 10))),
+            profiles = MemoryProfiles(profile),
+            academics = EmptyAcademics,
+            uuidV7 = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+            mutations = coordinator(),
+            conflictWritePolicy = NoActiveSyncSpaceWritePolicy,
+            sourceFacts = sourceFacts,
+        )
+
+        val result = service.fullReplan(profile.id, Instant.parse("2026-01-05T08:00:00Z"), horizon(Instant.parse("2026-01-05T08:00:00Z")))
+
+        assertIs<PlannerPreview.InvalidInput>(result)
+        Unit
+    }
+
     @Test fun `PlanningProfile commands journal create and update through the mandatory coordinator`() = runBlocking {
         val profiles = MemoryProfiles(configuredProfile())
         val journal = DogfoodJournal()
@@ -130,9 +162,10 @@ class DogfoodPlannerServiceTest {
             profiles,
             RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
             coordinator(journal),
+            NoActiveSyncSpaceWritePolicy,
         )
-        val created = settings.createUnconfigured("Draft")
-        val saved = settings.save(created.copy(name = "Ready"))
+        val created = assertIs<PlanningProfileSettingsResult.Success>(settings.createUnconfigured("Draft")).profile
+        val saved = assertIs<PlanningProfileSettingsResult.Success>(settings.save(created.copy(name = "Ready"))).profile
         assertEquals(saved, profiles.get(saved.id))
         assertEquals(2, journal.mutations.size)
         val puts = journal.mutations.map { it.operation.orderedMutations.single() as dev.agenticscheduler.sync.PlanningProfilePut }
@@ -165,6 +198,8 @@ class DogfoodPlannerServiceTest {
         tasks, events, MemoryProfiles(profile), EmptyAcademics,
         RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
         mutations = coordinator(),
+        conflictWritePolicy = NoActiveSyncSpaceWritePolicy,
+        sourceFacts = NoActiveSyncSpaceSourceFactQuery,
     )
 
     private fun coordinator(journal: DogfoodJournal = DogfoodJournal()) = MutationCoordinator(

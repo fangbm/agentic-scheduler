@@ -5,6 +5,9 @@ import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.SyncConflictWriteBlock
+import dev.agenticscheduler.application.history.SyncConflictWritePolicy
 import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
 import dev.agenticscheduler.application.persistence.MutationJournalRepository
@@ -61,7 +64,7 @@ class PlanBranchTest {
         val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(1)), PlanningRequest.FullReplan, snapshot,
             persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC)))), persistentListOf(), persistentListOf())
-        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner)) { snapshot.copy(referenceNow = Instant.parse("2026-01-02T09:30:00Z")) }
+        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner), NoActiveSyncSpaceWritePolicy) { snapshot.copy(referenceNow = Instant.parse("2026-01-02T09:30:00Z")) }
         assertEquals(0, repository.blocks.size)
         assertEquals(PlanBranchStatus.APPLIED, assertIs<PlanBranchApplyResult.Applied>(applier.apply(branch, Instant.parse("2026-01-02T09:30:00Z"))).branch.status)
         assertEquals(1, repository.blocks.size)
@@ -70,7 +73,7 @@ class PlanBranchTest {
     @Test fun `structurally changed current facts refuse stale apply`() = runBlocking {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(3)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
-        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner)) { snapshot.copy(profile = PlanningProfile(PlanningProfileId(id(9)), "changed", PlanningProfileConfiguration.Unconfigured)) }
+        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner), NoActiveSyncSpaceWritePolicy) { snapshot.copy(profile = PlanningProfile(PlanningProfileId(id(9)), "changed", PlanningProfileConfiguration.Unconfigured)) }
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
     }
 
@@ -79,7 +82,7 @@ class PlanBranchTest {
         val branch = PlanBranch(PlanBranchId(id(30)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
         EmptyJournal.reset()
         val coordinator = MutationCoordinator(IdentityTransactionRunner, EmptyJournal, generator(), MutationWallClock { 1 })
-        val applier = PlanBranchApplier(repository, generator(), coordinator) { snapshot }
+        val applier = PlanBranchApplier(repository, generator(), coordinator, NoActiveSyncSpaceWritePolicy) { snapshot }
         assertEquals(PlanBranchStatus.APPLIED, assertIs<PlanBranchApplyResult.Applied>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
         assertEquals(0, EmptyJournal.appended)
     }
@@ -87,7 +90,7 @@ class PlanBranchTest {
     @Test fun `unresolvable current source facts refuse stale apply`() = runBlocking {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(6)), PlanningRequest.FullReplan, snapshot, persistentListOf(), persistentListOf(), persistentListOf())
-        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner)) { null }
+        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner), NoActiveSyncSpaceWritePolicy) { null }
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
     }
 
@@ -95,7 +98,7 @@ class PlanBranchTest {
         val snapshot = snapshot(); val repository = InMemoryTasks()
         val branch = PlanBranch(PlanBranchId(id(4)), PlanningRequest.FullReplan, snapshot,
             persistentListOf(FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T10:00:00Z"), TimeZone.UTC)))), persistentListOf(), persistentListOf())
-        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner)) { snapshot }
+        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner), NoActiveSyncSpaceWritePolicy) { snapshot }
         assertEquals(PlanBranchStatus.STALE, assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))).branch.status)
         assertEquals(0, repository.blocks.size)
     }
@@ -113,7 +116,7 @@ class PlanBranchTest {
             PlanBranchId(id(7)), PlanningRequest.FullReplan, snapshot,
             persistentListOf(FocusBlockMutation.Delete(started.id, started.taskId)), persistentListOf(), persistentListOf(),
         )
-        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner)) { snapshot }
+        val applier = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner), NoActiveSyncSpaceWritePolicy) { snapshot }
         assertEquals(
             PlanBranchStatus.STALE,
             assertIs<PlanBranchApplyResult.Stale>(applier.apply(branch, Instant.parse("2026-01-02T10:05:00Z"))).branch.status,
@@ -130,7 +133,7 @@ class PlanBranchTest {
         var failed = false
         val transactions = RollingBackTransactions(repository)
         EmptyJournal.reset()
-        try { PlanBranchApplier(repository, generator(), coordinator(transactions)) { snapshot }.apply(branch, Instant.parse("2026-01-02T09:00:00Z")) } catch (_: IllegalStateException) { failed = true }
+        try { PlanBranchApplier(repository, generator(), coordinator(transactions), NoActiveSyncSpaceWritePolicy) { snapshot }.apply(branch, Instant.parse("2026-01-02T09:00:00Z")) } catch (_: IllegalStateException) { failed = true }
         assertEquals(true, failed)
         assertEquals(0, repository.blocks.size)
         assertEquals(emptyList(), EmptyJournal.mutations, "An Active State failure must not journal a partial Planner Apply.")
@@ -144,13 +147,35 @@ class PlanBranchTest {
             FocusBlockMutation.Create(FocusBlockDraft(TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T11:00:00Z"), Instant.parse("2026-01-02T12:00:00Z"), TimeZone.UTC))),
         ), persistentListOf(), persistentListOf())
         EmptyJournal.reset()
-        val result = PlanBranchApplier(repository, uniqueGenerator(), MutationCoordinator(IdentityTransactionRunner, EmptyJournal, uniqueGenerator(), MutationWallClock { 1 })) { snapshot }.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))
+        val result = PlanBranchApplier(repository, uniqueGenerator(), MutationCoordinator(IdentityTransactionRunner, EmptyJournal, uniqueGenerator(), MutationWallClock { 1 }), NoActiveSyncSpaceWritePolicy) { snapshot }.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))
 
         assertIs<PlanBranchApplyResult.Applied>(result)
         assertEquals(2, repository.blocks.size)
         assertEquals(1, EmptyJournal.mutations.size)
         assertEquals(2, EmptyJournal.mutations.single().operation.orderedMutations.size)
         assertEquals(dev.agenticscheduler.sync.MutationOrigin.Planner, EmptyJournal.mutations.single().operation.origin)
+    }
+
+    @Test fun `one conflicted planner child blocks the whole branch before writes or journal`() = runBlocking {
+        val left = FocusBlock(FocusBlockId(id(51)), TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T10:00:00Z"), Instant.parse("2026-01-02T11:00:00Z"), TimeZone.UTC), dev.agenticscheduler.domain.planning.Flexibility.SOFT, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
+        val right = FocusBlock(FocusBlockId(id(52)), TaskId(id(2)), ZonedTimeRange(Instant.parse("2026-01-02T11:00:00Z"), Instant.parse("2026-01-02T12:00:00Z"), TimeZone.UTC), dev.agenticscheduler.domain.planning.Flexibility.SOFT, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
+        val snapshot = snapshot(left, right)
+        val repository = InMemoryTasks().also { it.blocks[left.id] = left; it.blocks[right.id] = right }
+        val branch = PlanBranch(PlanBranchId(id(53)), PlanningRequest.FullReplan, snapshot, persistentListOf(
+            FocusBlockMutation.Move(left.id, left.taskId, ZonedTimeRange(Instant.parse("2026-01-02T12:00:00Z"), Instant.parse("2026-01-02T13:00:00Z"), TimeZone.UTC)),
+            FocusBlockMutation.Move(right.id, right.taskId, ZonedTimeRange(Instant.parse("2026-01-02T13:00:00Z"), Instant.parse("2026-01-02T14:00:00Z"), TimeZone.UTC)),
+        ), persistentListOf(), persistentListOf())
+        val policy = SyncConflictWritePolicy { proposed ->
+            if (proposed.any { it.entityId == right.id.value }) listOf(SyncConflictWriteBlock("conflict-1", dev.agenticscheduler.sync.EntityKind.FOCUS_BLOCK, right.id.value, listOf("time"))) else emptyList()
+        }
+        EmptyJournal.reset()
+        val result = PlanBranchApplier(repository, generator(), coordinator(IdentityTransactionRunner), policy) { snapshot }.apply(branch, Instant.parse("2026-01-02T09:00:00Z"))
+
+        assertEquals(PlanBranchStatus.CONFLICTED, assertIs<PlanBranchApplyResult.BlockedBySyncConflict>(result).branch.status)
+        assertEquals(left, repository.blocks[left.id])
+        assertEquals(right, repository.blocks[right.id])
+        assertEquals(emptyList(), EmptyJournal.mutations)
+        assertEquals(null, EmptyJournal.state)
     }
 
     private fun snapshot(vararg focusBlocks: FocusBlock) = PlanningSnapshot(Instant.parse("2026-01-02T09:00:00Z"), PlanningHorizon(Instant.parse("2026-01-02T09:00:00Z"), Instant.parse("2026-01-02T12:00:00Z")), PlanningProfile(PlanningProfileId(id(9)), "profile", PlanningProfileConfiguration.Unconfigured), persistentListOf(), persistentListOf(), focusBlocks.toList().toImmutableList(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf(), persistentListOf())

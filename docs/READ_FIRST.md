@@ -83,6 +83,7 @@ Current modules are:
 :shared:planner
 :shared:sync
 :shared:database
+:server:sync
 :apps:android
 :apps:desktop
 :apps:wear
@@ -99,6 +100,11 @@ D4 resolved the local persistence and repository boundary:
 → implements :shared:application persistence contracts
 → maps Room records ↔ Domain
 → owns Room/SQLite schema/migrations
+
+:server:sync
+→ owns only opaque encrypted-envelope transport/account metadata
+→ uses JDBC/HikariCP/PostgreSQL migrations
+→ must not decode user payloads or run Domain/Planner/Agent semantics
 ```
 
 The concrete D4 stack is frozen by `docs/PERSISTENCE_DECISIONS.md` and `docs/tasks/D4_PERSISTENCE.md`.

@@ -54,6 +54,8 @@ data class CalendarConflict(val first: CalendarSourceRef, val second: CalendarSo
 sealed interface CalendarProjectionIssue {
     data class AcademicResolution(val courseId: CourseId, val issue: CourseSessionResolutionIssue) : CalendarProjectionIssue
     data class MissingSemester(val courseId: CourseId, val semesterId: dev.agenticscheduler.domain.id.SemesterId) : CalendarProjectionIssue
+    /** D8-P02: source facts were deliberately withheld rather than falling back to raw Active State. */
+    data class SyncConflictUnprojectable(val conflictIds: List<String>, val reason: String) : CalendarProjectionIssue
 }
 
 data class CalendarProjectionResult(

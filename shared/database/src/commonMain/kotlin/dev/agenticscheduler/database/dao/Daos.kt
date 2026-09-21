@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.Flow
     @Insert suspend fun insertMutationRecord(value: MutationRecord)
     @Insert suspend fun insertChangeLogEntries(values: List<ChangeLogEntryRecord>)
     @Insert suspend fun insertSyncOperation(value: SyncOperationJournalRecord)
+    @Upsert suspend fun upsertSyncOperation(value: SyncOperationJournalRecord)
     @Upsert suspend fun upsertFocusBlockTombstone(value: FocusBlockTombstoneRecord)
     @Query("SELECT * FROM sync_operation_journal WHERE mutation_id = :mutationId") suspend fun syncOperation(mutationId: String): SyncOperationJournalRecord?
     @Query("SELECT * FROM mutation_record WHERE mutation_id = :mutationId") suspend fun mutationRecord(mutationId: String): MutationRecord?
@@ -36,4 +37,40 @@ import kotlinx.coroutines.flow.Flow
     @Query("SELECT * FROM change_log_entry WHERE mutation_id = :mutationId ORDER BY ordinal ASC") suspend fun entries(mutationId: String): List<ChangeLogEntryRecord>
     @Query("SELECT * FROM change_log_entry WHERE entity_kind = :entityKind AND entity_id = :entityId ORDER BY mutation_id ASC, ordinal ASC") suspend fun entityEntries(entityKind: String, entityId: String): List<ChangeLogEntryRecord>
     @Query("SELECT * FROM focus_block_tombstone WHERE focus_block_id = :focusBlockId") suspend fun focusBlockTombstone(focusBlockId: String): FocusBlockTombstoneRecord?
+}
+
+@Dao interface SyncReceiveDao {
+    @Query("SELECT * FROM sync_space_cursor WHERE sync_space_id = :syncSpaceId") suspend fun cursor(syncSpaceId: String): SyncSpaceCursorRecord?
+    @Upsert suspend fun saveCursor(value: SyncSpaceCursorRecord)
+    @Query("SELECT * FROM pending_sync_receive WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun pending(syncSpaceId: String, mutationId: String): PendingSyncReceiveRecord?
+    @Query("SELECT * FROM pending_sync_receive WHERE sync_space_id = :syncSpaceId ORDER BY server_cursor ASC, mutation_id ASC") suspend fun pending(syncSpaceId: String): List<PendingSyncReceiveRecord>
+    @Upsert suspend fun savePending(value: PendingSyncReceiveRecord)
+    @Query("DELETE FROM pending_sync_receive WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun removePending(syncSpaceId: String, mutationId: String)
+    @Query("SELECT * FROM handled_receive_dot WHERE sync_space_id = :syncSpaceId AND replica_id = :replicaId AND counter = :counter") suspend fun handledDot(syncSpaceId: String, replicaId: String, counter: Long): HandledReceiveDotRecord?
+    @Query("SELECT * FROM handled_receive_dot WHERE sync_space_id = :syncSpaceId ORDER BY replica_id ASC, counter ASC") suspend fun handledDots(syncSpaceId: String): List<HandledReceiveDotRecord>
+    @Upsert suspend fun saveHandledDot(value: HandledReceiveDotRecord)
+    @Query("SELECT * FROM protocol_quarantine WHERE sync_space_id = :syncSpaceId AND mutation_id = :mutationId") suspend fun quarantine(syncSpaceId: String, mutationId: String): ProtocolQuarantineRecord?
+    @Upsert suspend fun saveQuarantine(value: ProtocolQuarantineRecord)
+    @Query("SELECT * FROM sync_conflict WHERE conflict_id = :conflictId") suspend fun conflict(conflictId: String): SyncConflictRecord?
+    @Query("SELECT * FROM sync_conflict WHERE sync_space_id = :syncSpaceId ORDER BY conflict_id ASC") suspend fun conflicts(syncSpaceId: String): List<SyncConflictRecord>
+    @Upsert suspend fun saveConflict(value: SyncConflictRecord)
+}
+
+@Dao interface SyncKeyMetadataDao {
+    @Query("SELECT * FROM sync_space_key_epoch WHERE sync_space_id = :syncSpaceId") suspend fun keyEpoch(syncSpaceId: String): SyncSpaceKeyEpochRecord?
+    @Upsert suspend fun saveKeyEpoch(value: SyncSpaceKeyEpochRecord)
+}
+
+@Dao interface SyncKeyRingDao {
+    @Query("SELECT * FROM sync_space_key_state WHERE sync_space_id = :syncSpaceId") suspend fun state(syncSpaceId: String): SyncSpaceKeyStateRecord?
+    @Query("SELECT * FROM sync_space_content_key WHERE sync_space_id = :syncSpaceId AND key_epoch = :keyEpoch") suspend fun key(syncSpaceId: String, keyEpoch: Long): SyncSpaceContentKeyRecord?
+    @Query("SELECT * FROM sync_space_content_key WHERE sync_space_id = :syncSpaceId AND usage = 'DECRYPT_ONLY' ORDER BY key_epoch ASC") suspend fun historicalKeys(syncSpaceId: String): List<SyncSpaceContentKeyRecord>
+    @Query("UPDATE sync_space_content_key SET usage = 'DECRYPT_ONLY' WHERE sync_space_id = :syncSpaceId AND usage = 'ACTIVE'") suspend fun demoteActive(syncSpaceId: String)
+    @Upsert suspend fun saveState(value: SyncSpaceKeyStateRecord)
+    @Upsert suspend fun saveKey(value: SyncSpaceContentKeyRecord)
+}
+
+@Dao interface LocalPairingEnrollmentDao {
+    @Query("SELECT * FROM local_pairing_enrollment WHERE account_id = :accountId") suspend fun state(accountId: String): LocalPairingEnrollmentRecord?
+    @Upsert suspend fun save(value: LocalPairingEnrollmentRecord)
 }

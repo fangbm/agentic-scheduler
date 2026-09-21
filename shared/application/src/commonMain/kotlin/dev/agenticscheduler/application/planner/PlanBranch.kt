@@ -3,6 +3,8 @@ package dev.agenticscheduler.application.planner
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationScope
+import dev.agenticscheduler.application.history.SyncConflictWriteBlock
+import dev.agenticscheduler.application.history.SyncConflictWritePolicy
 import dev.agenticscheduler.application.history.toSemanticImage
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.domain.id.FocusBlockId
@@ -18,6 +20,7 @@ import dev.agenticscheduler.planner.PlannerResult
 import dev.agenticscheduler.planner.PlanningSnapshot
 import dev.agenticscheduler.sync.FocusBlockDelete
 import dev.agenticscheduler.sync.FocusBlockPut
+import dev.agenticscheduler.sync.EntityMutation
 import dev.agenticscheduler.sync.MutationOrigin
 import kotlin.time.Instant
 import kotlinx.collections.immutable.ImmutableList
@@ -94,6 +97,7 @@ class PlannerPreviewService(
 sealed interface PlanBranchApplyResult {
     data class Applied(val branch: PlanBranch) : PlanBranchApplyResult
     data class Stale(val branch: PlanBranch) : PlanBranchApplyResult
+    data class BlockedBySyncConflict(val branch: PlanBranch, val blocks: ImmutableList<SyncConflictWriteBlock>) : PlanBranchApplyResult
 }
 
 /**
@@ -104,6 +108,7 @@ class PlanBranchApplier(
     private val tasks: TaskRepository,
     private val uuidV7: UuidV7Generator,
     private val mutations: MutationCoordinator,
+    private val conflictWritePolicy: SyncConflictWritePolicy,
     /** A null snapshot means the current facts cannot be resolved safely, so Apply is stale. */
     private val currentSnapshot: suspend () -> PlanningSnapshot?,
 ) {
@@ -139,28 +144,55 @@ class PlanBranchApplier(
         if (existing.values.filterNotNull().any { it.time.start <= applyNow }) {
             return PlanBranchApplyResult.Stale(branch.copy(status = PlanBranchStatus.STALE))
         }
-        branch.mutations.forEach { mutation -> when (mutation) {
+        val planned = branch.mutations.map { mutation -> when (mutation) {
             is FocusBlockMutation.Create -> {
-                val created = FocusBlock(
-                id = FocusBlockId(uuidV7.next()), taskId = mutation.draft.taskId, time = mutation.draft.time,
-                flexibility = Flexibility.SOFT, pinState = PinState.UNPINNED,
+                PlannedFocusBlockMutation.Put(
+                    before = null,
+                    after = FocusBlock(
+                        id = FocusBlockId(uuidV7.next()), taskId = mutation.draft.taskId, time = mutation.draft.time,
+                        flexibility = Flexibility.SOFT, pinState = PinState.UNPINNED,
+                    ),
                 )
-                tasks.upsertFocusBlock(created)
-                scope.record(FocusBlockPut(null, created.toSemanticImage()))
             }
             is FocusBlockMutation.Move -> {
                 val before = requireNotNull(existing[mutation.id]); val after = before.copy(time = mutation.time)
-                tasks.upsertFocusBlock(after); scope.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
+                PlannedFocusBlockMutation.Put(before, after)
             }
             is FocusBlockMutation.Resize -> {
                 val before = requireNotNull(existing[mutation.id]); val after = before.copy(time = mutation.time)
-                tasks.upsertFocusBlock(after); scope.record(FocusBlockPut(before.toSemanticImage(), after.toSemanticImage()))
+                PlannedFocusBlockMutation.Put(before, after)
             }
             is FocusBlockMutation.Delete -> {
-                val before = requireNotNull(existing[mutation.id]); tasks.deleteFocusBlock(mutation.id); scope.record(FocusBlockDelete(before.toSemanticImage()))
+                PlannedFocusBlockMutation.Delete(requireNotNull(existing[mutation.id]))
+            }
+        } }
+        val blocks = conflictWritePolicy.blocks(planned.map(PlannedFocusBlockMutation::operation))
+        if (blocks.isNotEmpty()) {
+            return PlanBranchApplyResult.BlockedBySyncConflict(branch.copy(status = PlanBranchStatus.CONFLICTED), blocks.toImmutableList())
+        }
+        planned.forEach { mutation -> when (mutation) {
+            is PlannedFocusBlockMutation.Put -> {
+                tasks.upsertFocusBlock(mutation.after)
+                scope.record(mutation.operation)
+            }
+            is PlannedFocusBlockMutation.Delete -> {
+                tasks.deleteFocusBlock(mutation.before.id)
+                scope.record(mutation.operation)
             }
         } }
         return PlanBranchApplyResult.Applied(branch.copy(status = PlanBranchStatus.APPLIED))
+    }
+}
+
+private sealed interface PlannedFocusBlockMutation {
+    val operation: EntityMutation
+
+    data class Put(val before: FocusBlock?, val after: FocusBlock) : PlannedFocusBlockMutation {
+        override val operation: EntityMutation = FocusBlockPut(before?.toSemanticImage(), after.toSemanticImage())
+    }
+
+    data class Delete(val before: FocusBlock) : PlannedFocusBlockMutation {
+        override val operation: EntityMutation = FocusBlockDelete(before.toSemanticImage())
     }
 }
 
