@@ -1,8 +1,8 @@
 # DGX Spark Agent Skills Competition — Preliminary Demo
 
-> Status: **IN PROGRESS — competition branch only**  
-> Branch: `hackathon/dgx-spark-agent-skill`  
-> Baseline: merged `main` commit `3b74a84`  
+> Status: **IN PROGRESS — competition branch only**
+> Branch: `hackathon/dgx-spark-agent-skill`
+> Baseline: merged `main` commit `3b74a84`
 > Last verified: 2026-09-21
 
 Current implementation status: DGX-00 docs/branch baseline, DGX-01 shared
