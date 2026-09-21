@@ -67,6 +67,33 @@ data class OpaqueBlobRequest(val blobBase64Url: String)
 @Serializable
 data class OpaqueBlobResponse(val blobBase64Url: String)
 
+@Serializable
+data class RecoveryProofRegistrationRequest(val proofHashBase64Url: String, val counter: Long)
+
+@Serializable
+data class RecoveryEnrollmentRequestWire(
+    val accountId: String,
+    val requestId: String,
+    val targetDeviceId: String,
+    val credentialHashBase64Url: String,
+    val proofBase64Url: String,
+    val counter: Long,
+    val nextProofHashBase64Url: String,
+)
+
+@Serializable
+data class RecoveryEnrollmentCreatedResponse(val accountId: String, val deviceId: String)
+
+@Serializable
+data class RotationPackageUpload(val deviceId: String, val packageBase64Url: String)
+
+@Serializable
+data class AtomicRevocationRequest(
+    val rotationId: String,
+    val recoveryEnvelopeBase64Url: String,
+    val packages: List<RotationPackageUpload>,
+)
+
 sealed interface EnrollmentRegistrationResult {
     data class Created(val expiresAtEpochSeconds: Long) : EnrollmentRegistrationResult
     data object UnknownAccount : EnrollmentRegistrationResult
@@ -78,6 +105,7 @@ sealed interface EnrollmentApprovalResult {
     data object NotFound : EnrollmentApprovalResult
     data object AlreadyApproved : EnrollmentApprovalResult
     data object TargetDeviceAlreadyExists : EnrollmentApprovalResult
+    data object MissingCredentialHash : EnrollmentApprovalResult
 }
 
 sealed interface DeviceRevocationResult {
@@ -85,6 +113,30 @@ sealed interface DeviceRevocationResult {
     data object NotFound : DeviceRevocationResult
     data object AlreadyRevoked : DeviceRevocationResult
     data object SelfRevocationDenied : DeviceRevocationResult
+}
+
+sealed interface AtomicRevocationResult {
+    data object Applied : AtomicRevocationResult
+    data object AlreadyApplied : AtomicRevocationResult
+    data object NotFound : AtomicRevocationResult
+    data object SelfRevocationDenied : AtomicRevocationResult
+    data object AlreadyRevoked : AtomicRevocationResult
+    data object IntegrityConflict : AtomicRevocationResult
+    data object InvalidPackageSet : AtomicRevocationResult
+}
+
+sealed interface RecoveryProofRegistrationResult {
+    data object Stored : RecoveryProofRegistrationResult
+    data object NotFound : RecoveryProofRegistrationResult
+    data object RejectedRollback : RecoveryProofRegistrationResult
+    data object IntegrityConflict : RecoveryProofRegistrationResult
+}
+
+sealed interface RecoveryEnrollmentResult {
+    data class Created(val accountId: String, val deviceId: String) : RecoveryEnrollmentResult
+    data object InvalidProof : RecoveryEnrollmentResult
+    data object TargetDeviceAlreadyExists : RecoveryEnrollmentResult
+    data object UnknownAccount : RecoveryEnrollmentResult
 }
 
 sealed interface BootstrapResult {
@@ -135,6 +187,9 @@ interface ServerEnrollmentRepository {
 }
 
 interface ServerSecurityLifecycleRepository {
+    fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult
+    fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult
+    fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
     fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?
     fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult

@@ -140,6 +140,7 @@ fun Application.syncServerModule(
                 EnrollmentApprovalResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
                 EnrollmentApprovalResult.AlreadyApproved -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_APPROVED"))
                 EnrollmentApprovalResult.TargetDeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("TARGET_DEVICE_EXISTS"))
+                EnrollmentApprovalResult.MissingCredentialHash -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("MISSING_CREDENTIAL_HASH"))
             }
         }
         get("/v1/enrollments/{requestId}/package") {
@@ -173,6 +174,46 @@ fun Application.syncServerModule(
             }
             call.respond(HttpStatusCode.OK, ServerErrorResponse("STORED"))
         }
+        put("/v1/recovery/proof") {
+            val security = repository as? ServerSecurityLifecycleRepository
+                ?: return@put call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val request = call.receive<RecoveryProofRegistrationRequest>()
+            try {
+                decodeCanonicalBase64(request.proofHashBase64Url, 32, 32)
+                require(request.counter >= 0)
+            } catch (_: IllegalArgumentException) {
+                return@put call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_RECOVERY_PROOF"))
+            }
+            when (security.registerRecoveryProof(actor, request)) {
+                RecoveryProofRegistrationResult.Stored -> call.respond(HttpStatusCode.OK)
+                RecoveryProofRegistrationResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+                RecoveryProofRegistrationResult.RejectedRollback -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("PROOF_ROLLBACK"))
+                RecoveryProofRegistrationResult.IntegrityConflict -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("PROOF_INTEGRITY_CONFLICT"))
+            }
+        }
+        post("/v1/recovery/enroll") {
+            val security = repository as? ServerSecurityLifecycleRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
+            val request = call.receive<RecoveryEnrollmentRequestWire>()
+            try {
+                decodeCanonicalBase64(request.credentialHashBase64Url, 32, 32)
+                decodeCanonicalBase64(request.proofBase64Url, 32, 32)
+                decodeCanonicalBase64(request.nextProofHashBase64Url, 32, 32)
+                require(request.counter >= 0)
+            } catch (_: IllegalArgumentException) {
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_RECOVERY_PROOF"))
+            }
+            when (val result = security.enrollWithRecovery(request)) {
+                is RecoveryEnrollmentResult.Created -> call.respond(HttpStatusCode.Created, RecoveryEnrollmentCreatedResponse(result.accountId, result.deviceId))
+                RecoveryEnrollmentResult.InvalidProof -> call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("INVALID_RECOVERY_PROOF"))
+                RecoveryEnrollmentResult.TargetDeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("TARGET_DEVICE_EXISTS"))
+                RecoveryEnrollmentResult.UnknownAccount -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            }
+        }
         get("/v1/recovery/envelope") {
             val lifecycle = repository as? ServerSecurityLifecycleRepository
                 ?: return@get call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
@@ -198,6 +239,38 @@ fun Application.syncServerModule(
                 DeviceRevocationResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
                 DeviceRevocationResult.AlreadyRevoked -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_REVOKED"))
                 DeviceRevocationResult.SelfRevocationDenied -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("SELF_REVOCATION_DENIED"))
+            }
+        }
+        post("/v1/devices/{deviceId}/revoke-and-rotate") {
+            val lifecycle = repository as? ServerSecurityLifecycleRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val target = call.parameters["deviceId"]
+                ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_DEVICE"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            val request = call.receive<AtomicRevocationRequest>()
+            try {
+                decodeCanonicalBase64(request.recoveryEnvelopeBase64Url, null, config.maxCiphertextBytes)
+                require(request.rotationId.isNotBlank() && request.packages.isNotEmpty())
+                request.packages.forEach { packageUpload ->
+                    require(packageUpload.deviceId.isNotBlank())
+                    decodeCanonicalBase64(packageUpload.packageBase64Url, null, config.maxCiphertextBytes)
+                }
+            } catch (_: IllegalArgumentException) {
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_ROTATION"))
+            }
+            when (lifecycle.revokeAndRotate(actor, target, request)) {
+                AtomicRevocationResult.Applied -> call.respond(HttpStatusCode.OK, ServerErrorResponse("ROTATED"))
+                AtomicRevocationResult.AlreadyApplied -> call.respond(HttpStatusCode.OK, ServerErrorResponse("ALREADY_APPLIED"))
+                AtomicRevocationResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+                AtomicRevocationResult.SelfRevocationDenied -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("SELF_REVOCATION_DENIED"))
+                AtomicRevocationResult.AlreadyRevoked -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_REVOKED"))
+                AtomicRevocationResult.IntegrityConflict -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ROTATION_INTEGRITY_CONFLICT"))
+                AtomicRevocationResult.InvalidPackageSet -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_PACKAGE_SET"))
             }
         }
         post("/v1/sync/spaces/{spaceId}/envelopes") {

@@ -48,6 +48,33 @@ data class ClientPendingEnrollment(
 )
 
 @Serializable
+data class ClientRecoveryProofRegistration(val proofHashBase64Url: String, val counter: Long)
+
+@Serializable
+data class ClientRecoveryEnrollmentRequest(
+    val accountId: String,
+    val requestId: String,
+    val targetDeviceId: String,
+    val credentialHashBase64Url: String,
+    val proofBase64Url: String,
+    val counter: Long,
+    val nextProofHashBase64Url: String,
+)
+
+@Serializable
+data class ClientRecoveryEnrollmentCreated(val accountId: String, val deviceId: String)
+
+@Serializable
+data class ClientRotationPackage(val deviceId: String, val packageBase64Url: String)
+
+@Serializable
+data class ClientAtomicRevocationRequest(
+    val rotationId: String,
+    val recoveryEnvelopeBase64Url: String,
+    val packages: List<ClientRotationPackage>,
+)
+
+@Serializable
 data class ClientEnrollmentCreated(val requestId: String, val expiresAtEpochSeconds: Long)
 
 @Serializable
@@ -120,6 +147,24 @@ class KtorSyncLifecycleTransport(
         return decode(response.bodyAsText(), ClientPackageResponse.serializer()).packageBase64Url
     }
 
+    suspend fun registerRecoveryProof(proofHashBase64Url: String, counter: Long) {
+        val response = client.put("$baseUrl/v1/recovery/proof") {
+            authorization()
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(ClientRecoveryProofRegistration.serializer(), ClientRecoveryProofRegistration(proofHashBase64Url, counter)))
+        }
+        requireStatus(response, HttpStatusCode.OK)
+    }
+
+    suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
+        val response = client.post("$baseUrl/v1/recovery/enroll") {
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(ClientRecoveryEnrollmentRequest.serializer(), request))
+        }
+        requireStatus(response, HttpStatusCode.Created)
+        return decode(response.bodyAsText(), ClientRecoveryEnrollmentCreated.serializer())
+    }
+
     suspend fun saveRecoveryEnvelope(blobBase64Url: String) {
         val response = client.put("$baseUrl/v1/recovery/envelope") {
             authorization()
@@ -137,6 +182,15 @@ class KtorSyncLifecycleTransport(
 
     suspend fun revokeDevice(deviceId: String) {
         val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke") { authorization() }
+        requireStatus(response, HttpStatusCode.OK)
+    }
+
+    suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
+        val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke-and-rotate") {
+            authorization()
+            contentType(ContentType.Application.Json)
+            setBody(json.encodeToString(ClientAtomicRevocationRequest.serializer(), request))
+        }
         requireStatus(response, HttpStatusCode.OK)
     }
 

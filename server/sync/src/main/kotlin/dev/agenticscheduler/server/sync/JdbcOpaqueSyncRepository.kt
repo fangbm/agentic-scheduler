@@ -10,6 +10,7 @@ import java.util.Base64
 import java.sql.Connection
 import java.sql.ResultSet
 import java.sql.Timestamp
+import java.nio.ByteBuffer
 import javax.sql.DataSource
 
 class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncRepository, ServerBootstrapRepository, ServerEnrollmentRepository, ServerSecurityLifecycleRepository {
@@ -91,6 +92,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection BootstrapResult.DeviceAlreadyExists
                 }
+                lockAccount(connection, invitation.first)
                 connection.prepareStatement(
                     "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
                 ).use { statement ->
@@ -227,6 +229,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.AlreadyApproved
                 }
+                val credentialHash = request.credentialHash ?: run {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.MissingCredentialHash
+                }
+                lockAccount(connection, request.accountId)
                 val targetExists = connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ?").use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.executeQuery().use(ResultSet::next)
@@ -235,18 +242,25 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.TargetDeviceAlreadyExists
                 }
+                val credentialExists = connection.prepareStatement("SELECT 1 FROM device WHERE credential_hash = ?").use { statement ->
+                    statement.setBytes(1, credentialHash)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (credentialExists) {
+                    connection.rollback()
+                    return@connection EnrollmentApprovalResult.TargetDeviceAlreadyExists
+                }
                 connection.prepareStatement("INSERT INTO device_key_package(request_id, package_bytes) VALUES (?, ?)").use { statement ->
                     statement.setString(1, requestId)
                     statement.setBytes(2, packageBytes)
                     statement.executeUpdate()
                 }
-                require(request.credentialHash != null) { "Enrollment request is missing credential hash." }
                 connection.prepareStatement(
                     "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
                 ).use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.setString(2, request.accountId)
-                    statement.setBytes(3, request.credentialHash)
+                    statement.setBytes(3, credentialHash)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -283,6 +297,276 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             statement.executeQuery().use { rs -> if (rs.next()) rs.getBytes(1) else null }
         }
     }
+
+    override fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult =
+        dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                if (!activeAccountDevice(connection, actor)) {
+                    connection.rollback()
+                    return@connection RecoveryProofRegistrationResult.NotFound
+                }
+                require(request.counter >= 0)
+                val proofHash = decodeCanonical(request.proofHashBase64Url, 32)
+                val existing = connection.prepareStatement(
+                    "SELECT proof_hash, counter FROM recovery_proof WHERE account_id = ? FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, actor.accountId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else rs.getBytes("proof_hash") to rs.getLong("counter")
+                    }
+                }
+                when {
+                    existing == null -> {
+                        connection.prepareStatement("INSERT INTO recovery_proof(account_id, proof_hash, counter) VALUES (?, ?, ?)").use { statement ->
+                            statement.setString(1, actor.accountId)
+                            statement.setBytes(2, proofHash)
+                            statement.setLong(3, request.counter)
+                            statement.executeUpdate()
+                        }
+                    }
+                    request.counter < existing.second -> {
+                        connection.rollback()
+                        return@connection RecoveryProofRegistrationResult.RejectedRollback
+                    }
+                    request.counter == existing.second && !MessageDigest.isEqual(proofHash, existing.first) -> {
+                        connection.rollback()
+                        return@connection RecoveryProofRegistrationResult.IntegrityConflict
+                    }
+                    request.counter == existing.second -> {
+                        connection.rollback()
+                        return@connection RecoveryProofRegistrationResult.Stored
+                    }
+                    else -> connection.prepareStatement(
+                        "UPDATE recovery_proof SET proof_hash = ?, counter = ?, updated_at = CURRENT_TIMESTAMP WHERE account_id = ?",
+                    ).use { statement ->
+                        statement.setBytes(1, proofHash)
+                        statement.setLong(2, request.counter)
+                        statement.setString(3, actor.accountId)
+                        statement.executeUpdate()
+                    }
+                }
+                connection.commit()
+                RecoveryProofRegistrationResult.Stored
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+
+    override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
+        dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                requireValidId(request.accountId, "accountId")
+                requireValidId(request.requestId, "requestId")
+                requireValidId(request.targetDeviceId, "targetDeviceId")
+                require(request.counter >= 0)
+                val credentialHash = decodeCanonical(request.credentialHashBase64Url, 32)
+                val proof = decodeCanonical(request.proofBase64Url, 32)
+                val nextProofHash = decodeCanonical(request.nextProofHashBase64Url, 32)
+                val completed = connection.prepareStatement(
+                    "SELECT account_id, target_device_id FROM recovery_enrollment_request WHERE request_id = ?",
+                ).use { statement ->
+                    statement.setString(1, request.requestId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else rs.getString("account_id") to rs.getString("target_device_id")
+                    }
+                }
+                if (completed != null) {
+                    connection.rollback()
+                    return@connection if (completed.first == request.accountId && completed.second == request.targetDeviceId) {
+                        RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
+                    } else {
+                        RecoveryEnrollmentResult.InvalidProof
+                    }
+                }
+                lockAccount(connection, request.accountId)
+                val verifier = connection.prepareStatement(
+                    "SELECT proof_hash, counter FROM recovery_proof WHERE account_id = ? FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, request.accountId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else rs.getBytes("proof_hash") to rs.getLong("counter")
+                    }
+                } ?: run {
+                    connection.rollback()
+                    return@connection RecoveryEnrollmentResult.UnknownAccount
+                }
+                if (request.counter != verifier.second || !MessageDigest.isEqual(verifier.first, sha256Bytes(proof)) || MessageDigest.isEqual(verifier.first, nextProofHash)) {
+                    connection.rollback()
+                    return@connection RecoveryEnrollmentResult.InvalidProof
+                }
+                val targetExists = connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ?").use { statement ->
+                    statement.setString(1, request.targetDeviceId)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (targetExists) {
+                    connection.rollback()
+                    return@connection RecoveryEnrollmentResult.TargetDeviceAlreadyExists
+                }
+                val credentialExists = connection.prepareStatement("SELECT 1 FROM device WHERE credential_hash = ?").use { statement ->
+                    statement.setBytes(1, credentialHash)
+                    statement.executeQuery().use(ResultSet::next)
+                }
+                if (credentialExists) {
+                    connection.rollback()
+                    return@connection RecoveryEnrollmentResult.TargetDeviceAlreadyExists
+                }
+                connection.prepareStatement("INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)").use { statement ->
+                    statement.setString(1, request.targetDeviceId)
+                    statement.setString(2, request.accountId)
+                    statement.setBytes(3, credentialHash)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "INSERT INTO sync_space_membership(sync_space_id, device_id) SELECT sync_space_id, ? FROM sync_space WHERE account_id = ?",
+                ).use { statement ->
+                    statement.setString(1, request.targetDeviceId)
+                    statement.setString(2, request.accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "UPDATE recovery_proof SET proof_hash = ?, counter = ?, updated_at = CURRENT_TIMESTAMP WHERE account_id = ?",
+                ).use { statement ->
+                    statement.setBytes(1, nextProofHash)
+                    statement.setLong(2, request.counter + 1)
+                    statement.setString(3, request.accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("INSERT INTO recovery_enrollment_request(request_id, account_id, target_device_id) VALUES (?, ?, ?)").use { statement ->
+                    statement.setString(1, request.requestId)
+                    statement.setString(2, request.accountId)
+                    statement.setString(3, request.targetDeviceId)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+
+    override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
+        dataSource.connection.use connection@{ connection ->
+            connection.autoCommit = false
+            try {
+                requireValidId(targetDeviceId, "targetDeviceId")
+                requireValidId(request.rotationId, "rotationId")
+                if (targetDeviceId == actor.deviceId) {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.SelfRevocationDenied
+                }
+                if (!activeAccountDevice(connection, actor)) {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.NotFound
+                }
+                lockAccount(connection, actor.accountId)
+                val envelope = decodeCanonical(request.recoveryEnvelopeBase64Url, null)
+                if (envelope.isEmpty() || request.packages.isEmpty()) {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.InvalidPackageSet
+                }
+                val packages = request.packages.map { packageUpload ->
+                    requireValidId(packageUpload.deviceId, "packageDeviceId")
+                    packageUpload.deviceId to decodeCanonical(packageUpload.packageBase64Url, null)
+                }.sortedBy { it.first }
+                if (packages.map { it.first }.toSet().size != packages.size) {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.InvalidPackageSet
+                }
+                val requestHash = rotationRequestHash(request.rotationId, targetDeviceId, envelope, packages)
+                val existing = connection.prepareStatement(
+                    "SELECT account_id, request_hash FROM sync_key_rotation WHERE rotation_id = ? FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, request.rotationId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else rs.getString("account_id") to rs.getBytes("request_hash")
+                    }
+                }
+                if (existing != null) {
+                    connection.rollback()
+                    return@connection if (existing.first == actor.accountId && MessageDigest.isEqual(existing.second, requestHash)) {
+                        AtomicRevocationResult.AlreadyApplied
+                    } else {
+                        AtomicRevocationResult.IntegrityConflict
+                    }
+                }
+                val targetState = connection.prepareStatement(
+                    "SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, targetDeviceId)
+                    statement.setString(2, actor.accountId)
+                    statement.executeQuery().use { rs -> if (!rs.next()) null else rs.getTimestamp("revoked_at") != null }
+                } ?: run {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.NotFound
+                }
+                if (targetState) {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.AlreadyRevoked
+                }
+                val expectedDevices = connection.prepareStatement(
+                    "SELECT device_id FROM device WHERE account_id = ? AND revoked_at IS NULL AND device_id <> ? ORDER BY device_id",
+                ).use { statement ->
+                    statement.setString(1, actor.accountId)
+                    statement.setString(2, targetDeviceId)
+                    statement.executeQuery().use { rs ->
+                        buildList { while (rs.next()) add(rs.getString("device_id")) }
+                    }
+                }
+                if (expectedDevices != packages.map { it.first }) {
+                    connection.rollback()
+                    return@connection AtomicRevocationResult.InvalidPackageSet
+                }
+                connection.prepareStatement(
+                    "INSERT INTO sync_key_rotation(rotation_id, account_id, revoked_device_id, request_hash, recovery_envelope) VALUES (?, ?, ?, ?, ?)",
+                ).use { statement ->
+                    statement.setString(1, request.rotationId)
+                    statement.setString(2, actor.accountId)
+                    statement.setString(3, targetDeviceId)
+                    statement.setBytes(4, requestHash)
+                    statement.setBytes(5, envelope)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement(
+                    "INSERT INTO sync_key_rotation_package(rotation_id, device_id, package_bytes) VALUES (?, ?, ?)",
+                ).use { statement ->
+                    packages.forEach { (deviceId, bytes) ->
+                        statement.setString(1, request.rotationId)
+                        statement.setString(2, deviceId)
+                        statement.setBytes(3, bytes)
+                        statement.addBatch()
+                    }
+                    statement.executeBatch()
+                }
+                connection.prepareStatement(
+                    "INSERT INTO recovery_envelope(account_id, envelope_bytes) VALUES (?, ?) " +
+                        "ON CONFLICT (account_id) DO UPDATE SET envelope_bytes = EXCLUDED.envelope_bytes, updated_at = CURRENT_TIMESTAMP",
+                ).use { statement ->
+                    statement.setString(1, actor.accountId)
+                    statement.setBytes(2, envelope)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("UPDATE device SET revoked_at = CURRENT_TIMESTAMP WHERE device_id = ? AND account_id = ?").use { statement ->
+                    statement.setString(1, targetDeviceId)
+                    statement.setString(2, actor.accountId)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                AtomicRevocationResult.Applied
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
+            }
+        }
 
     override fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean =
         dataSource.connection.use connection@{ connection ->
@@ -469,6 +753,13 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             statement.executeQuery().use(ResultSet::next)
         }
 
+    private fun lockAccount(connection: Connection, accountId: String) {
+        connection.prepareStatement("SELECT account_id FROM account WHERE account_id = ? FOR UPDATE").use { statement ->
+            statement.setString(1, accountId)
+            check(statement.executeQuery().use(ResultSet::next)) { "Account does not exist." }
+        }
+    }
+
     private fun findEnvelope(connection: Connection, spaceId: String, mutationId: String): ExistingEnvelope? =
         connection.prepareStatement(
             "SELECT server_cursor, sender_device_id, key_epoch, ciphertext " +
@@ -508,10 +799,31 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     private fun sha256(value: String): ByteArray =
         MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
 
-    private fun decodeCanonical(value: String, expectedBytes: Int): ByteArray {
+    private fun sha256Bytes(value: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(value)
+
+    private fun rotationRequestHash(
+        rotationId: String,
+        targetDeviceId: String,
+        envelope: ByteArray,
+        packages: List<Pair<String, ByteArray>>,
+    ): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        fun updateBytes(value: ByteArray) {
+            digest.update(ByteBuffer.allocate(4).putInt(value.size).array())
+            digest.update(value)
+        }
+        fun updateString(value: String) = updateBytes(value.toByteArray(Charsets.UTF_8))
+        updateString(rotationId)
+        updateString(targetDeviceId)
+        updateBytes(envelope)
+        packages.forEach { (deviceId, bytes) -> updateString(deviceId); updateBytes(bytes) }
+        return digest.digest()
+    }
+
+    private fun decodeCanonical(value: String, expectedBytes: Int?): ByteArray {
         require(value.isNotEmpty() && '=' !in value)
         val decoded = Base64.getUrlDecoder().decode(value)
-        require(decoded.size == expectedBytes)
+        if (expectedBytes != null) require(decoded.size == expectedBytes)
         require(Base64.getUrlEncoder().withoutPadding().encodeToString(decoded) == value)
         return decoded
     }

@@ -279,8 +279,16 @@ creates the target device, membership rows, and opaque key package. The raw
 credential never enters the package or server database. Duplicate target device
 IDs are rejected without consuming the request.
 
-Recovery still needs the approved RecoverySecret-only rotating proof and atomic
-credential/key rotation contract before production recovery enrollment is enabled.
+Recovery uses the approved RecoverySecret-only rotating proof: the client sends
+`HMAC-SHA256(RecoverySecret, "agentic-scheduler-recovery-registration-v1" ||
+0x00 || U32BE(LP(accountId)) || U64BE(counter))`, plus the SHA-256 hash of the
+next proof. The server stores only the current proof hash and counter, verifies
+the submitted proof, and advances both atomically. The raw RecoverySecret never
+crosses the HTTP boundary. Revocation publication uses one idempotent server
+transaction keyed by `rotationId`: it validates the complete package set for
+every remaining active device, stores the opaque new recovery envelope and
+packages, and marks the target revoked together. A different payload under the
+same rotation ID is rejected.
 
 ---
 

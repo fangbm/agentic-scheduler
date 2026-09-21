@@ -202,8 +202,9 @@ server stores opaque encrypted envelopes only
 ```
 
 Current persistence baselines on the D8 review branch are client Room schema v11
-(outbound eligibility plus ciphertext retry metadata) and server SQL schema v5
-(opaque relay, bootstrap, enrollment credential hashes, recovery, and revocation metadata).
+(outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
+(opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
+atomic rotation, recovery, and revocation metadata).
 Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
 and real multi-replica execution remain open acceptance work.
 Android/Wear `DeviceCredential` storage now has a Keystore-backed implementation;

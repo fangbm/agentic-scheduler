@@ -72,6 +72,36 @@ class SyncServerRoutesTest {
     }
 
     @Test
+    fun `recovery proof registration and enrollment use rotating verifier`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val hash = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        assertEquals(HttpStatusCode.OK, client.put("/v1/recovery/proof") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"proofHashBase64Url":"$hash","counter":0}""")
+        }.status)
+        val response = client.post("/v1/recovery/enroll") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"accountId":"account","requestId":"recovery-1","targetDeviceId":"recovered","credentialHashBase64Url":"$hash","proofBase64Url":"$hash","counter":0,"nextProofHashBase64Url":"$hash"}""")
+        }
+        assertEquals(HttpStatusCode.Created, response.status)
+    }
+
+    @Test
+    fun `atomic revocation accepts opaque package set`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val blob = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        val response = client.post("/v1/devices/other/revoke-and-rotate") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"rotationId":"rotation-1","recoveryEnvelopeBase64Url":"$blob","packages":[{"deviceId":"device","packageBase64Url":"$blob"}]}""")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
     fun `recovery envelope is opaque and device revocation is account-bound`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
@@ -163,6 +193,7 @@ class SyncServerRoutesTest {
         private var enrollment: EnrollmentRequestWire? = null
         private var packageBytes: ByteArray? = null
         private var recoveryBytes: ByteArray? = null
+        private var recoveryProof: RecoveryProofRegistrationRequest? = null
         private var consumed = false
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
@@ -215,6 +246,17 @@ class SyncServerRoutesTest {
             recoveryBytes = envelopeBytes
             return true
         }
+
+        override fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult {
+            recoveryProof = request
+            return RecoveryProofRegistrationResult.Stored
+        }
+
+        override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
+            RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
+
+        override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
+            AtomicRevocationResult.Applied
 
         override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = recoveryBytes
 

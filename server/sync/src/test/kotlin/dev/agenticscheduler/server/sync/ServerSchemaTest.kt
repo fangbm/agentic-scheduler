@@ -30,5 +30,9 @@ class ServerSchemaTest {
         assertTrue(recoverySql.contains("recovery_envelope"))
         val enrollmentCredentialSql = javaClass.classLoader.getResourceAsStream(migrations[4].resource)!!.bufferedReader().use { it.readText() }
         assertTrue(enrollmentCredentialSql.contains("credential_hash"))
+        val recoveryProofSql = javaClass.classLoader.getResourceAsStream(migrations[5].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(recoveryProofSql.contains("recovery_proof"))
+        val rotationSql = javaClass.classLoader.getResourceAsStream(migrations[6].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(rotationSql.contains("sync_key_rotation"))
     }
 }

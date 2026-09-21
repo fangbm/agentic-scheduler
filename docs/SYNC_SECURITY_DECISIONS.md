@@ -518,6 +518,31 @@ creates its account memberships, stores the opaque HPKE package, and marks the
 request approved. The raw credential is never sent to the server or included in
 the key package; an existing target device ID is rejected atomically.
 
+Recovery enrollment uses a rotating proof. After an enrolled device publishes
+the initial verifier, the client proves possession with:
+
+```text
+proof = HMAC-SHA256(
+  RecoverySecret,
+  ASCII("agentic-scheduler-recovery-registration-v1") || 0x00 ||
+  U32BE(LP(accountId)) || U64BE(counter)
+)
+```
+
+The recovery request carries the proof, its counter, and the SHA-256 hash of the
+next proof. The server stores only the current proof hash/counter and atomically
+creates the target device, advances the verifier, and records the request ID.
+Retries of the same request ID are idempotent; older counters and reused proof
+hashes are rejected. The RecoverySecret itself is never sent to the server.
+
+Revocation publication is atomic and idempotent. The client stages a new AMK,
+content-key epoch, per-device HPKE packages, and recovery envelope locally,
+then submits them with a unique `rotationId`. The server requires exactly one
+opaque package for each remaining active device and, in one transaction, stores
+the packages and recovery envelope before marking the target device revoked.
+Retries with the same payload are idempotent; a different payload for the same
+rotation ID is an integrity conflict.
+
 ---
 
 # SYN-009 — Platform secure-key boundary

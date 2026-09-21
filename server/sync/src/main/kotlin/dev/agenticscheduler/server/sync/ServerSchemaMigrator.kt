@@ -12,6 +12,8 @@ object ServerMigrationCatalog {
         ServerMigration(3, "db/migration/V3__device_enrollment.sql"),
         ServerMigration(4, "db/migration/V4__recovery_envelope.sql"),
         ServerMigration(5, "db/migration/V5__enrollment_credential_hash.sql"),
+        ServerMigration(6, "db/migration/V6__recovery_proof.sql"),
+        ServerMigration(7, "db/migration/V7__atomic_key_rotation.sql"),
     )
 }
 
