@@ -7,12 +7,14 @@ data class AgentGatewayConfig(
     val modelName: String,
     val modelApiKey: String? = null,
     val gatewayToken: String,
+    val maxRequestBytes: Long = 512_000,
 ) {
     init {
         require(modelBaseUrl.startsWith("http://") || modelBaseUrl.startsWith("https://"))
         require(modelName.isNotBlank())
-        require(gatewayToken.isNotBlank())
+        require(gatewayToken.length >= 16)
         require(port in 1..65_535)
+        require(maxRequestBytes in 16_384..8_000_000)
     }
 
     companion object {

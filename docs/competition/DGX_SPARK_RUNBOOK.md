@@ -21,6 +21,8 @@ AGENT_GATEWAY_TOKEN  same demo token; inject at process launch only
 ```
 
 Never commit real values or place model credentials in the Desktop bundle.
+Expose the gateway only behind HTTPS termination; its listener is intended for
+the private DGX host or a local reverse-proxy hop.
 
 ## Operator flow
 
@@ -42,6 +44,18 @@ malformed tool call → rejected before local execution
 rejected confirmation → no MutationId and no state change
 stale PlanBranch    → stale result; preview again
 ```
+
+## Verified local checks
+
+```text
+JDK: Temurin 17.0.20 (user-local)
+:shared:agent:desktopTest
+:server:agent-gateway:test
+:apps:desktop:compileKotlin
+```
+
+All three passed on 2026-09-21. Remote DGX health/model/tool-call evidence is
+still required before calling the demo production-ready.
 
 ## Resume ledger
 

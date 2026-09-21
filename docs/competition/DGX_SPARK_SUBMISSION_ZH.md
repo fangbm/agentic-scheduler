@@ -37,3 +37,16 @@ DGX Spark 运行 Agent Gateway 连接的本地 vLLM 兼容模型。模型地址�
 - 运行截图、Tool trace、PlanBranch 预览/确认截图；
 - 3–5 分钟中文演示脚本和失败恢复说明；
 - 实际测试命令与结果，不得填写未运行的验证。
+
+## 当前工程验证
+
+2026-09-21 已使用 Temurin JDK 17.0.20 完成：
+
+```text
+:shared:agent:desktopTest
+:server:agent-gateway:test
+:apps:desktop:compileKotlin
+```
+
+三项均通过。仍需补充远程 DGX 的模型健康检查、真实 Tool call、HTTPS
+反向代理和完整演示录屏证据。

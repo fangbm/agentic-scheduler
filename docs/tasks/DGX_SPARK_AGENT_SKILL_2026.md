@@ -7,8 +7,8 @@
 
 Current implementation status: DGX-00 docs/branch baseline, DGX-01 shared
 wire/run-loop scaffolding, DGX-02 authenticated gateway scaffolding, and the
-Desktop connection panel are present. Local targeted Gradle verification is
-blocked until this host uses JDK 17; the repository currently resolves Java 8.
+Desktop connection panel are present. A user-local Temurin JDK 17.0.20 is now
+available for verification.
 The first local read Tools (`task.list` and `task.get`) are wired. The Desktop
 now holds write proposals in a visible confirmation dialog; confirmed
 `task.create` is the first local mutation path. Other writes return
@@ -16,7 +16,18 @@ now holds write proposals in a visible confirmation dialog; confirmed
 DGX smoke run and evidence capture.
 
 Implementation commits currently on this branch: `1568460` (gateway/Desktop
-slice) and `1231d66` (local confirmation bridge).
+slice), `1231d66` (local confirmation bridge), and `83b9824` (Desktop wiring).
+
+Targeted verification completed on 2026-09-21:
+
+```text
+:shared:agent:desktopTest                 PASS
+:server:agent-gateway:test                PASS
+:apps:desktop:compileKotlin               PASS
+```
+
+The PR-hosted build remains an external runner issue when Docker socket access
+is denied; it is not a substitute for the local JDK 17 verification above.
 
 ## Competition record
 
@@ -64,6 +75,10 @@ Required security rules: HTTPS outside local development, bearer gateway auth,
 DGX-only model credentials, no prompt/schedule/secret bodies in ordinary logs,
 no direct model-to-database writes, and mandatory typed Tool validation plus
 local permission/confirmation.
+
+For production deployment, terminate HTTPS at a controlled reverse proxy or
+load balancer in front of the gateway. Do not expose the gateway’s plain HTTP
+listener directly to the public network.
 
 ## Preliminary exclusions
 
