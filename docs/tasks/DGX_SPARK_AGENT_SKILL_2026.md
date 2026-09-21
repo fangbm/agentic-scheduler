@@ -9,10 +9,11 @@ Current implementation status: DGX-00 docs/branch baseline, DGX-01 shared
 wire/run-loop scaffolding, DGX-02 authenticated gateway scaffolding, and the
 Desktop connection panel are present. Local targeted Gradle verification is
 blocked until this host uses JDK 17; the repository currently resolves Java 8.
-The first local read Tools (`task.list` and `task.get`) are wired. Unsupported
-write Tools return `CONFIRMATION_REQUIRED` without mutating state; the next
-implementation slice adds the visible confirmation bridge, followed by the
-remote DGX smoke run.
+The first local read Tools (`task.list` and `task.get`) are wired. The Desktop
+now holds write proposals in a visible confirmation dialog; confirmed
+`task.create` is the first local mutation path. Other writes return
+`CONFIRMATION_REQUIRED` without mutating state. The next slice is the remote
+DGX smoke run and evidence capture.
 
 ## Competition record
 

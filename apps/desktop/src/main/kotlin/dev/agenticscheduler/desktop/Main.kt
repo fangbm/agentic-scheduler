@@ -26,6 +26,7 @@ import dev.agenticscheduler.application.calendar.CalendarProjectionResult
 import dev.agenticscheduler.application.calendar.CalendarSourceRef
 import dev.agenticscheduler.agent.AgentMessageV1
 import dev.agenticscheduler.agent.AgentRunLoop
+import dev.agenticscheduler.agent.AgentToolCallV1
 import dev.agenticscheduler.agent.GeneralSchedulerSkillV1
 import dev.agenticscheduler.agent.AgentTurnRequestV1
 import dev.agenticscheduler.application.calendar.CalendarViewport
@@ -137,7 +138,7 @@ private fun DesktopScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
-        item { AgentPanel(agentClient, tasks) }
+        item { AgentPanel(agentClient, tasks, taskEditor) }
         item {
             Text("Agenda / Day: $selectedDate")
             Row {
@@ -164,12 +165,18 @@ private fun DesktopScheduler(
 }
 
 @Composable
-private fun AgentPanel(client: DesktopAgentGatewayClient, tasks: dev.agenticscheduler.application.persistence.TaskRepository) {
+private fun AgentPanel(
+    client: DesktopAgentGatewayClient,
+    tasks: dev.agenticscheduler.application.persistence.TaskRepository,
+    taskEditor: TaskEditingService,
+) {
     var prompt by remember { mutableStateOf("") }
     var result by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var running by remember { mutableStateOf(false) }
+    var pendingConfirmation by remember { mutableStateOf<AgentToolCallV1?>(null) }
     val scope = rememberCoroutineScope()
+    val executor = remember(tasks, taskEditor) { DesktopAgentToolExecutor(tasks, taskEditor) }
     Column {
         Text("DGX Agent")
         OutlinedTextField(prompt, { prompt = it }, label = { Text("Ask the scheduler") })
@@ -181,7 +188,7 @@ private fun AgentPanel(client: DesktopAgentGatewayClient, tasks: dev.agenticsche
                     val run = AgentRunLoop(
                         DesktopGatewayModelClient(client),
                         GeneralSchedulerSkillV1.tools,
-                        DesktopAgentToolExecutor(tasks),
+                        executor,
                     ).run(AgentTurnRequestV1(
                             runId = UUID.randomUUID().toString(),
                             messages = listOf(AgentMessageV1("user", prompt)),
@@ -190,6 +197,7 @@ private fun AgentPanel(client: DesktopAgentGatewayClient, tasks: dev.agenticsche
                         append(run.response.assistantText ?: "Tool proposal received.")
                         run.toolResults.forEach { append("\nTool result: ${it.name} ${it.resultJson}") }
                     }
+                    pendingConfirmation = run.pendingConfirmations.firstOrNull()
                 } catch (failure: Throwable) {
                     error = failure.message ?: "Agent gateway failure"
                 } finally {
@@ -199,6 +207,23 @@ private fun AgentPanel(client: DesktopAgentGatewayClient, tasks: dev.agenticsche
         }) { Text(if (running) "Working…" else "Ask Agent") }
         result?.let { Text(it) }
         error?.let { Text(it) }
+    }
+    pendingConfirmation?.let { call ->
+        AlertDialog(
+            onDismissRequest = { pendingConfirmation = null },
+            title = { Text("Confirm Agent change") },
+            text = { Text("Allow ${call.name}?\n${call.argumentsJson}") },
+            confirmButton = {
+                Button(onClick = {
+                    scope.launch {
+                        val confirmed = executor.executeConfirmed(call)
+                        result = "Confirmed ${confirmed.name}: ${confirmed.resultJson}"
+                        pendingConfirmation = null
+                    }
+                }) { Text("Confirm") }
+            },
+            dismissButton = { Button(onClick = { pendingConfirmation = null }) { Text("Deny") } },
+        )
     }
 }
 

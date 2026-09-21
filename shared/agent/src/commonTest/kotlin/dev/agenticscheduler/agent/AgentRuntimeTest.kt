@@ -20,6 +20,7 @@ class AgentRuntimeTest {
         }).run(AgentTurnRequestV1("run-1", listOf(AgentMessageV1("user", "show tasks"))))
         assertEquals("done", result.response.assistantText)
         assertEquals(1, calls)
+        assertTrue(result.pendingConfirmations.isEmpty())
         assertEquals(2, result.steps)
     }
 
@@ -35,6 +36,23 @@ class AgentRuntimeTest {
             AgentToolExecutor { error("must not execute unknown tool") },
         ).run(AgentTurnRequestV1("run-1", listOf(AgentMessageV1("user", "do it"))))
         assertTrue(result.toolResults.single().isError)
+        assertTrue(result.pendingConfirmations.isEmpty())
         assertEquals("blocked", result.response.assistantText)
+    }
+
+    @Test
+    fun `write tool is held for confirmation`() = runBlocking {
+        var executed = false
+        val result = AgentRunLoop(
+            object : AgentModelClient {
+                override suspend fun turn(request: AgentTurnRequestV1, tools: List<AgentToolDefinitionV1>) =
+                    if (request.toolResults.isEmpty()) AgentTurnResponseV1(request.runId, toolCalls = listOf(AgentToolCallV1("call-1", "task.create", "{}")))
+                    else AgentTurnResponseV1(request.runId, assistantText = "waiting")
+            },
+            GeneralSchedulerSkillV1.tools,
+            AgentToolExecutor { executed = true; AgentToolResultV1(it.id, it.name, "{}") },
+        ).run(AgentTurnRequestV1("run-1", listOf(AgentMessageV1("user", "create a task"))))
+        assertTrue(result.pendingConfirmations.single().name == "task.create")
+        assertTrue(!executed)
     }
 }

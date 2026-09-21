@@ -60,6 +60,7 @@ fun interface AgentToolExecutor {
 data class AgentRunResult(
     val response: AgentTurnResponseV1,
     val toolResults: List<AgentToolResultV1>,
+    val pendingConfirmations: List<AgentToolCallV1>,
     val steps: Int,
 )
 
@@ -74,13 +75,17 @@ class AgentRunLoop(
     suspend fun run(initial: AgentTurnRequestV1): AgentRunResult {
         var request = initial
         val results = mutableListOf<AgentToolResultV1>()
+        val pendingConfirmations = mutableListOf<AgentToolCallV1>()
         repeat(maxSteps) { step ->
             val response = model.turn(request, tools)
-            if (response.toolCalls.isEmpty()) return AgentRunResult(response, results.toList(), step + 1)
+            if (response.toolCalls.isEmpty()) return AgentRunResult(response, results.toList(), pendingConfirmations.toList(), step + 1)
             response.toolCalls.forEach { call ->
-                val known = tools.any { it.name == call.name }
-                val result = if (!known) {
+                val definition = tools.firstOrNull { it.name == call.name }
+                val result = if (definition == null) {
                     AgentToolResultV1(call.id, call.name, "{\"code\":\"UNKNOWN_TOOL\"}", isError = true)
+                } else if (!definition.readOnly) {
+                    pendingConfirmations += call
+                    AgentToolResultV1(call.id, call.name, "{\"code\":\"CONFIRMATION_REQUIRED\"}", isError = true)
                 } else {
                     try {
                         executor.execute(call)
@@ -95,6 +100,7 @@ class AgentRunLoop(
         return AgentRunResult(
             AgentTurnResponseV1(initial.runId, finishReason = "MAX_TOOL_STEPS"),
             results.toList(),
+            pendingConfirmations.toList(),
             maxSteps,
         )
     }
