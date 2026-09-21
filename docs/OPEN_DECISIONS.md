@@ -266,8 +266,8 @@ Source: docs/SYNC_SECURITY_DECISIONS.md SYN-018
 ## OD-043 — Secondary DeviceCredential handoff
 
 ```text
-Status: PENDING
-Must resolve by: before production secondary-device pairing/recovery is enabled
+Status: RESOLVED
+Resolved by: D8 credential-hash, rotating-proof, and atomic-rotation implementation
 Impact: SECURITY / DEVICE INTEROPERABILITY
 ```
 
