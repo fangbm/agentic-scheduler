@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, cifleet, linux-x64]
     services:
       postgres:
         image: postgres:16
