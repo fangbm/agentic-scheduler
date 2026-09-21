@@ -107,7 +107,7 @@ fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(reads, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy), DesktopAgentGatewayClient(System.getenv("AGENT_GATEWAY_URL") ?: "http://127.0.0.1:8091", System.getenv("AGENT_GATEWAY_TOKEN") ?: ""))
+                DesktopScheduler(reads, tasks, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy), DesktopAgentGatewayClient(System.getenv("AGENT_GATEWAY_URL") ?: "http://127.0.0.1:8091", System.getenv("AGENT_GATEWAY_TOKEN") ?: ""))
             }
         }
     }
@@ -116,6 +116,7 @@ fun main() = application {
 @Composable
 private fun DesktopScheduler(
     reads: ConflictAwareSourceFactReadService,
+    tasks: dev.agenticscheduler.application.persistence.TaskRepository,
     dogfoodPlanner: DogfoodPlannerService,
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
