@@ -92,6 +92,27 @@ class SyncTransportWorkerTest {
         assertEquals(listOf(SyncWireCodec.encodeEnvelope(remote.envelope)), directSeen)
     }
 
+    @Test
+    fun `received history is never re-encrypted for upload`() = runBlocking {
+        val local = operation()
+        val received = local.copy(mutationId = "00000000-0000-7000-8000-000000000098")
+        val transport = MemoryTransport().apply { shouldFail = false }
+        val keys = CountingKeys { transport.encryptions++ }
+        val worker = SyncTransportWorker(
+            history = MemoryHistory(listOf(CommittedMutation(local, 0, true), CommittedMutation(received, 0, false))),
+            outbound = MemoryOutbound(),
+            receive = MemoryReceive(),
+            codec = AuthenticatedSyncEnvelopeCodec(keys, keys),
+            encryptionKeys = keys,
+            deviceId = DeviceId("device"),
+            transport = transport,
+            receiveGateway = SyncEnvelopeReceiver { _, _ -> error("fetch is empty") },
+        )
+        worker.run(SyncSpaceId("space"))
+        assertEquals(1, transport.uploaded.size)
+        assertEquals(local.mutationId, transport.uploaded.single().mutationId)
+    }
+
     private fun workerFor(transport: SyncTransport, seen: MutableList<String>) = SyncTransportWorker(
         history = MemoryHistory(emptyList()),
         outbound = MemoryOutbound(),
@@ -155,9 +176,9 @@ class SyncTransportWorkerTest {
         override suspend fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int) = emptyList<RemoteSyncEnvelope>()
     }
 
-    private class MemoryHistory(private val values: List<SyncOperation>) : HistoryRepository {
-        constructor(value: SyncOperation) : this(listOf(value))
-        override suspend fun timeline() = values.map { CommittedMutation(it, 0) }
+    private class MemoryHistory(private val values: List<CommittedMutation>) : HistoryRepository {
+        constructor(value: SyncOperation) : this(listOf(CommittedMutation(value, 0)))
+        override suspend fun timeline() = values
         override suspend fun mutation(mutationId: String) = null
         override suspend fun entityChanges(entityKind: dev.agenticscheduler.sync.EntityKind, entityId: String) = emptyList<HistoryChange>()
         override suspend fun diff(mutationId: String) = emptyList<HistoryChange>()

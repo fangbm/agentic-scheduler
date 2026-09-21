@@ -13,6 +13,7 @@ data class MutationRecord(
     @ColumnInfo(name = "hlc_logical") val hlcLogical: Long,
     @ColumnInfo(name = "hlc_replica_id") val hlcReplicaId: String,
     @ColumnInfo(name = "committed_at_epoch_millis") val committedAtEpochMillis: Long,
+    @ColumnInfo(name = "outbound_eligible", defaultValue = "1") val outboundEligible: Boolean = true,
 )
 
 @Entity(tableName = "change_log_entry", primaryKeys = ["mutation_id", "ordinal"], indices = [Index("entity_kind", "entity_id"), Index("entry_id", unique = true)])

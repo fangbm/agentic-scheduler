@@ -1,6 +1,7 @@
 package dev.agenticscheduler.application.sync
 
 import dev.agenticscheduler.application.persistence.HistoryRepository
+import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.application.persistence.StoredOutboundEnvelope
 import dev.agenticscheduler.application.persistence.SyncOutboundEnvelopeRepository
 import dev.agenticscheduler.application.persistence.SyncReceiveRepository
@@ -56,7 +57,7 @@ class SyncTransportWorker(
     suspend fun run(syncSpaceId: SyncSpaceId, fetchLimit: Int = 100): SyncTransportRunResult {
         require(fetchLimit > 0)
         var uploaded = 0
-        history.timeline().forEach { committed ->
+        history.timeline().filter(CommittedMutation::outboundEligible).forEach { committed ->
             val operation = committed.operation
             val existing = outbound.envelope(syncSpaceId, operation.mutationId)
             val stored = existing ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {

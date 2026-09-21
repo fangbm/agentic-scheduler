@@ -39,6 +39,7 @@ data class LocalReplicaCausalState(
 data class CommittedMutation(
     val operation: SyncOperation,
     val committedAtEpochMillis: Long,
+    val outboundEligible: Boolean = true,
 )
 
 interface HistoryRepository {

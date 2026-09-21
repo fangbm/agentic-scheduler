@@ -91,6 +91,7 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
             hlcLogical = operation.hlc.logical,
             hlcReplicaId = operation.hlc.replicaId,
             committedAtEpochMillis = mutation.committedAtEpochMillis,
+            outboundEligible = mutation.outboundEligible,
         ))
         database.mutationJournalDao().insertChangeLogEntries(operation.orderedMutations.mapIndexed { ordinal, entry ->
             ChangeLogEntryRecord(
@@ -125,7 +126,7 @@ class RoomMutationJournalRepository(private val database: AgenticSchedulerDataba
     override suspend fun mutation(mutationId: String): CommittedMutation? {
         val record = database.mutationJournalDao().syncOperation(mutationId) ?: return null
         val metadata = database.mutationJournalDao().mutationRecord(mutationId) ?: return null
-        return CommittedMutation(LocalJournalCodec.decode(record.operationJson), metadata.committedAtEpochMillis)
+        return CommittedMutation(LocalJournalCodec.decode(record.operationJson), metadata.committedAtEpochMillis, metadata.outboundEligible)
     }
 
     override suspend fun entityChanges(entityKind: dev.agenticscheduler.sync.EntityKind, entityId: String): List<HistoryChange> =

@@ -530,6 +530,16 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
+    @Test fun `exported v10 schema migrates to v11 outbound eligibility metadata`() = runBlocking {
+        val legacy = migrationHelper.createDatabase(10)
+        legacy.close()
+        val migrated = migrationHelper.runMigrationsAndValidate(11, emptyList())
+        migrated.prepare("SELECT outbound_eligible FROM mutation_record").use { statement ->
+            assertEquals(false, statement.step())
+        }
+        migrated.close()
+    }
+
     @Test fun `local pending enrollment survives Room reopen with only a private key reference`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val enrollments = RoomLocalEnrollmentRepository(database)

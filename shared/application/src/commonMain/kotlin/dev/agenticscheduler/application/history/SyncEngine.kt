@@ -173,7 +173,7 @@ class SyncEngine(
 
     private suspend fun commitReceived(original: SyncOperation, effective: SyncOperation, receipt: DecryptedPayloadReceipt): SyncReceiveResult {
         apply(effective)
-        journal.appendCommittedMutation(CommittedMutation(original, wallClock.nowEpochMillis()))
+        journal.appendCommittedMutation(CommittedMutation(original, wallClock.nowEpochMillis(), outboundEligible = false))
         journal.advanceFocusBlockTombstones(original, original.orderedMutations.filterIsInstance<FocusBlockDelete>())
         saveReceivedCausality(original)
         markHandled(receipt.syncSpaceId, original)
