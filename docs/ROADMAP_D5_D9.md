@@ -182,9 +182,10 @@ Status:
 
 ```text
 D8-00 protocol/security decisions  FROZEN
-D8-01 client SyncEngine/merge      IMPLEMENTED / TARGETED TESTS PASS
-D8-02 E2EE/key lifecycle           IMPLEMENTED / EPOCH ROTATION BOUNDARY + TARGETED TESTS PASS / APP-LEVEL AMK STAGING PENDING
-D8-03 thin server/Wear transport   OPAQUE RELAY + HTTPS/OFFLINE CLIENT + CREDENTIAL HASH + ROTATING RECOVERY + ATOMIC ROTATION PUBLICATION IMPLEMENTED / APP WIRING + WEAR EQUIVALENCE PENDING
+D8-01 client SyncEngine/merge      IMPLEMENTED / COMPLETION ACCEPTANCE PENDING
+D8-02 E2EE/key lifecycle           IMPLEMENTED / PRODUCTION SECURE-STORE + APP-WIRING ACCEPTANCE PENDING
+D8-03 thin server/Wear transport   IMPLEMENTED / POSTGRESQL + WEAR + OFFLINE ACCEPTANCE PENDING
+D8 completion gate                 IN PROGRESS / FROZEN D8 ACCEPTANCE ONLY
 ```
 
 Frozen baseline includes:
@@ -205,10 +206,11 @@ Current persistence baselines on the D8 review branch are client Room schema v11
 (outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
 (opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
 atomic rotation, recovery, and revocation metadata).
-Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
-and real multi-replica execution remain open acceptance work.
-Android/Wear `DeviceCredential` storage now has a Keystore-backed implementation;
-Windows DPAPI and Linux Secret Service adapters remain platform follow-ups.
+The completion gate migrates and verifies the existing D8 implementation against the
+current `main` API. Its only remaining scope is production platform secret storage,
+AMK/recovery/pairing/content-key staging and application wiring, plus the frozen
+SYN-019 multi-device, offline, recovery, revocation, Wear, PostgreSQL, migration and
+adversarial acceptance suite. It does not alter frozen protocol semantics or start D9.
 
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 
