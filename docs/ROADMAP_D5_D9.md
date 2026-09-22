@@ -18,7 +18,7 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY BASELINE IN PR #5
+D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY IMPLEMENTED; APP-LIFECYCLE + E2E ACCEPTANCE PENDING
  ↓
 D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
 D9-02  Agent history sync amendment            AFTER D9-01
@@ -202,7 +202,7 @@ Ktor 3.5.2 thin server + PostgreSQL pgjdbc 42.7.13 + HikariCP 7.1.0
 server stores opaque encrypted envelopes only
 ```
 
-Current persistence baselines on the D8 review branch are client Room schema v11
+Current D8 persistence baselines are client Room schema v11
 (outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
 (opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
 atomic rotation, recovery, and revocation metadata).
