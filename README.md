@@ -2,7 +2,7 @@
 
 A local-first Kotlin Multiplatform scheduler. D8 client E2EE and the first opaque sync-server relay slice are implemented on the D8 review branch; the full multi-device/server acceptance gate is still open.
 
-The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, and implemented D7 mutation/history/causality foundation. D5-02/D6.5 build and packaging verification passed locally on 2026-09-20; Desktop dogfood passed interactively, and the Android Planner surface plus New Task dialog respond on the API 36 emulator. Full Android Planner input smoke remains pending. D8 client SyncEngine/E2EE, local exact-envelope retry, Ktor HTTPS transport, invitation/bootstrap, credential-hash enrollment, rotating recovery proof, atomic opaque rotation publication, and the `:server:sync` SQL schema v7 baseline are merged into `main`; production catch-up wiring, non-Android secure-store adapters, Wear route-equivalence, and multi-device adversarial gates remain pending. The isolated `hackathon/dgx-spark-agent-skill` branch contains the time-boxed DGX competition demo contract.
+The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, and implemented D7 mutation/history/causality foundation. D5-02/D6.5 build and packaging verification passed locally on 2026-09-20; Desktop dogfood passed interactively, and the Android Planner surface plus New Task dialog respond on the API 36 emulator. Full Android Planner input smoke remains pending. D8 client SyncEngine/E2EE, local exact-envelope retry, Ktor HTTPS transport, invitation/bootstrap, credential-hash enrollment, rotating recovery proof, atomic opaque rotation publication, and the `:server:sync` SQL schema v7 baseline are implemented on the D8 review branch; production catch-up wiring, non-Android secure-store adapters, Wear route-equivalence, and multi-device adversarial gates remain pending.
 
 ## Modules
 
@@ -32,7 +32,6 @@ D1 is the architectural bootstrap baseline, not the current feature ceiling. Do 
 - [`docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md`](docs/tasks/D7_OPERATION_HISTORY_SYNC_FOUNDATION.md) — implemented and verified mutation/history/causality foundation.
 - [`docs/tasks/D8_E2EE_SYNC_TRANSPORT.md`](docs/tasks/D8_E2EE_SYNC_TRANSPORT.md) — frozen encrypted Sync/transport task for D8.
 - [`docs/tasks/D9_AGENT_RUNTIME.md`](docs/tasks/D9_AGENT_RUNTIME.md) — frozen Agent runtime task for D9.
-- [`docs/tasks/DGX_SPARK_AGENT_SKILL_2026.md`](docs/tasks/DGX_SPARK_AGENT_SKILL_2026.md) — isolated DGX Spark competition branch contract and preliminary demo runbook.
 
 ## Development guardrails
 

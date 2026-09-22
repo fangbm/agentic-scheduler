@@ -15,9 +15,7 @@ kotlin {
 dependencies {
     implementation(project(":shared:domain"))
     implementation(project(":shared:application"))
-    implementation(project(":shared:agent"))
     implementation(project(":shared:database"))
-    implementation(libs.ktor.client.cio)
     implementation(compose.desktop.currentOs)
     @Suppress("DEPRECATION")
     implementation(compose.material3)

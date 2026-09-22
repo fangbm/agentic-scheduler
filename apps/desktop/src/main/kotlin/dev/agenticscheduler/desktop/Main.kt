@@ -24,11 +24,6 @@ import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
 import dev.agenticscheduler.application.calendar.CalendarSourceRef
-import dev.agenticscheduler.agent.AgentMessageV1
-import dev.agenticscheduler.agent.AgentRunLoop
-import dev.agenticscheduler.agent.AgentToolCallV1
-import dev.agenticscheduler.agent.GeneralSchedulerSkillV1
-import dev.agenticscheduler.agent.AgentTurnRequestV1
 import dev.agenticscheduler.application.calendar.CalendarViewport
 import dev.agenticscheduler.application.editing.CreateEventInput
 import dev.agenticscheduler.application.editing.CreateTaskInput
@@ -89,7 +84,6 @@ import kotlinx.datetime.LocalTime
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
-import java.util.UUID
 import kotlin.time.Clock
 import kotlin.time.Duration
 
@@ -107,7 +101,7 @@ fun main() = application {
     Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(reads, tasks, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy), DesktopAgentGatewayClient(System.getenv("AGENT_GATEWAY_URL") ?: "http://127.0.0.1:8091", System.getenv("AGENT_GATEWAY_TOKEN") ?: ""))
+                DesktopScheduler(reads, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy))
             }
         }
     }
@@ -116,12 +110,10 @@ fun main() = application {
 @Composable
 private fun DesktopScheduler(
     reads: ConflictAwareSourceFactReadService,
-    tasks: dev.agenticscheduler.application.persistence.TaskRepository,
     dogfoodPlanner: DogfoodPlannerService,
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
     taskEditor: TaskEditingService,
-    agentClient: DesktopAgentGatewayClient,
 ) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     var selectedDate by remember { mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date) }
@@ -139,7 +131,6 @@ private fun DesktopScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
-        item { AgentPanel(agentClient, tasks, taskEditor) }
         item {
             Text("Agenda / Day: $selectedDate")
             Row {
@@ -163,69 +154,6 @@ private fun DesktopScheduler(
     editingEvent?.let { EventEditorDialog(it, selectedDate, displayTimeZone, eventEditor, { editingEvent = null }, { editingEvent = null }) }
     if (creatingTask) TaskEditorDialog(null, taskEditor, { creatingTask = false }, { creatingTask = false })
     editingTask?.let { TaskEditorDialog(it, taskEditor, { editingTask = null }, { editingTask = null }) }
-}
-
-@Composable
-private fun AgentPanel(
-    client: DesktopAgentGatewayClient,
-    tasks: dev.agenticscheduler.application.persistence.TaskRepository,
-    taskEditor: TaskEditingService,
-) {
-    var prompt by remember { mutableStateOf("") }
-    var result by remember { mutableStateOf<String?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var running by remember { mutableStateOf(false) }
-    var pendingConfirmation by remember { mutableStateOf<AgentToolCallV1?>(null) }
-    val scope = rememberCoroutineScope()
-    val executor = remember(tasks, taskEditor) { DesktopAgentToolExecutor(tasks, taskEditor) }
-    Column {
-        Text("DGX Agent")
-        OutlinedTextField(prompt, { prompt = it }, label = { Text("Ask the scheduler") })
-        Button(enabled = prompt.isNotBlank() && !running, onClick = {
-            running = true
-            error = null
-            scope.launch {
-                try {
-                    val run = AgentRunLoop(
-                        DesktopGatewayModelClient(client),
-                        GeneralSchedulerSkillV1.tools,
-                        executor,
-                    ).run(AgentTurnRequestV1(
-                            runId = UUID.randomUUID().toString(),
-                            messages = listOf(AgentMessageV1("user", prompt)),
-                        ))
-                    result = buildString {
-                        append(run.response.assistantText ?: "Tool proposal received.")
-                        run.toolResults.forEach { append("\nTool result: ${it.name} ${it.resultJson}") }
-                    }
-                    pendingConfirmation = run.pendingConfirmations.firstOrNull()
-                } catch (failure: Throwable) {
-                    error = failure.message ?: "Agent gateway failure"
-                } finally {
-                    running = false
-                }
-            }
-        }) { Text(if (running) "Working…" else "Ask Agent") }
-        result?.let { Text(it) }
-        error?.let { Text(it) }
-    }
-    pendingConfirmation?.let { call ->
-        AlertDialog(
-            onDismissRequest = { pendingConfirmation = null },
-            title = { Text("Confirm Agent change") },
-            text = { Text("Allow ${call.name}?\n${call.argumentsJson}") },
-            confirmButton = {
-                Button(onClick = {
-                    scope.launch {
-                        val confirmed = executor.executeConfirmed(call)
-                        result = "Confirmed ${confirmed.name}: ${confirmed.resultJson}"
-                        pendingConfirmation = null
-                    }
-                }) { Text("Confirm") }
-            },
-            dismissButton = { Button(onClick = { pendingConfirmation = null }) { Text("Deny") } },
-        )
-    }
 }
 
 @Composable

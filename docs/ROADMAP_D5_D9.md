@@ -1,8 +1,8 @@
-# Agentic Scheduler — Reviewed Roadmap D5–D10 + DGX Competition Track
+# Agentic Scheduler — Reviewed Roadmap D5–D10 + Post-project Hackathon
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 merged with full acceptance work pending; D9 specs frozen; D10 planned; DGX competition track active on an isolated branch
-> Date: 2026-09-21
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 client/E2EE plus opaque server-relay baseline in review (full gate pending); D9 specs frozen; D10 planned; post-project DGX Spark hackathon fork planned
+> Date: 2026-09-20
 
 ---
 
@@ -18,9 +18,7 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    MERGED — FULL ACCEPTANCE GATE PENDING
- ↘
-DGX-H  DGX Spark Agent Skills competition     IN PROGRESS — ISOLATED PRELIMINARY DEMO BRANCH
+D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY BASELINE IN PR #5
  ↓
 D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
 D9-02  Agent history sync amendment            AFTER D9-01
@@ -28,13 +26,10 @@ D9-03  Wear Agent/provider provisioning        AFTER D9-01
  ↓
 D10    Final Product UI / UX                   PLANNED — AFTER D9
  ↓
+DGX-H   DGX Spark Server-Agent Hackathon Fork   OPTIONAL — ONLY AFTER MAIN PRODUCT COMPLETION
 ```
 
-`DGX-H` is explicitly outside the main product dependency chain. The
-preliminary competition branch starts from merged `main` for the September 29
-submission and does not redefine the contracts of the Local-first/E2EE product.
-Its implementation contract is in
-[`docs/tasks/DGX_SPARK_AGENT_SKILL_2026.md`](tasks/DGX_SPARK_AGENT_SKILL_2026.md).
+`DGX-H` is explicitly outside the main product dependency chain. It starts from the final completed D10 baseline and may change the trust/runtime architecture for hackathon goals without redefining the contracts of the completed Local-first/E2EE product.
 
 Main product dependency chain remains:
 
@@ -351,33 +346,208 @@ D10 may add presentation-only models/state and platform-specific layout code, bu
 
 ---
 
-# Competition track — DGX Spark Agent Skills
+# Post-project — DGX Spark Server-Agent Hackathon Fork
 
-> Status: **IN PROGRESS — isolated competition branch**
-> Task spec: [`docs/tasks/DGX_SPARK_AGENT_SKILL_2026.md`](tasks/DGX_SPARK_AGENT_SKILL_2026.md)
-> Branch: `hackathon/dgx-spark-agent-skill`
+> Status: **PLANNED / OPTIONAL — create only after the main D5–D10 product is complete**
+> Intended branch: `hackathon/dgx-spark-server-agent`
 
-The registered DGX Spark competition is time-boxed to the September 29
-preliminary submission. It starts from merged `main` now; it does not wait for
-D10 and does not alter the main product dependency chain.
+This is an isolated hackathon architecture fork, not D11 and not a replacement for the completed main product. Create it from the final D10 completion commit/tag so the Local-first/E2EE product remains preserved on `main`.
 
-The preliminary architecture keeps schedule truth and mutation execution in
-the Desktop client while DGX hosts the model and a stateless authenticated
-Agent Gateway:
+The hackathon goal is to optimize for a DGX Spark hosted demonstration with a browser UI and centralized Agent execution:
 
 ```text
-Desktop Agent UI → DGX Agent Gateway → vLLM-compatible model
-       ↑                    ↓
-typed Tool execution ← Tool proposal
-       ↓
-local Room state + ChangeLog + Planner/Mutation
+WebUI + existing Android/Desktop clients
+              ↓ HTTPS + authenticated API
+        configured serverBaseUrl
+              ↓
+server-authoritative schedule/application state
+              ↓
+server-side Agent + typed Tool execution
+              ↓
+DGX Spark model runtime / server-side model endpoint
+              ↓
+server commits schedule mutations
+              ↓
+revision/update stream
+              ↓
+WebUI + clients refresh/apply server state
 ```
 
-The gateway may see selected prompt/context plaintext during inference, but it
-does not persist schedule data. Main remains Local-first, E2EE, and
-offline-first. The competition branch deliberately excludes WebUI, Android
-remote mode, server-authoritative schedule persistence, offline writes, and
-multi-writer merge until after the preliminary submission.
+## Deliberate trust-model change
+
+The hackathon branch explicitly **drops D8 E2EE for its server-authoritative path**.
+
+Unlike the main product:
+
+```text
+main product:
+client owns plaintext truth
+server stores opaque encrypted envelopes
+E2EE protects synchronized user content from the server
+
+DGX hackathon fork:
+server receives and stores plaintext schedule/Agent context
+server runs LLM requests
+server executes accepted schedule mutations
+clients receive the resulting authoritative state/changes
+```
+
+This is intentional and must be visible in the branch documentation/UI. Dropping E2EE does **not** mean dropping transport or access security:
+
+```text
+TLS/HTTPS remains mandatory outside explicit local development
+every non-loopback server requires authentication
+account/workspace authorization is enforced server-side
+server/model credentials never ship to clients
+plaintext prompts/schedules are not written to normal request logs
+audit records identify Agent-triggered schedule mutations
+```
+
+No commit from this fork may silently weaken the E2EE guarantees of `main`. Merging this architecture back to the main product would require a separate trust-model/security review.
+
+## DGX-H milestone split
+
+```text
+DGX-00  branch + server-authoritative architecture contract
+DGX-01  authoritative schedule API + server persistence
+DGX-02  DGX Spark model runtime + server-side Agent/tool execution
+DGX-03  WebUI
+DGX-04  Android/Desktop remote-server mode
+DGX-05  end-to-end demo hardening / deployment
+```
+
+### DGX-00 — Architecture fork
+
+Create `hackathon/dgx-spark-server-agent` from the completed D10 baseline.
+
+Freeze these fork-only rules before implementation:
+
+```text
+server is authoritative for synchronized schedule state
+client setting contains serverBaseUrl, not model credentials
+server owns model endpoint/model selection configuration
+LLM never writes SQL/database records directly
+LLM writes still go through typed application Tools/mutation services
+server-generated schedule changes retain MutationId/audit linkage where practical
+first hackathon version may support online writes only
+clients may keep read caches, but must not invent a second authoritative write path
+D8 E2EE transport is disabled/removed only for this fork's centralized path
+```
+
+Keeping the existing typed Tool/mutation boundary is important even though execution moves to the server: it preserves deterministic validation, Planner legality, auditability, and prevents the model from becoming a direct database writer.
+
+### DGX-01 — Server-authoritative scheduler
+
+Add a plaintext authenticated server API and authoritative persistence adapter.
+
+Minimum capabilities:
+
+```text
+bootstrap/fetch current schedule state
+create/edit/delete supported schedule entities through application services
+Planner/PlanBranch operations needed by the Agent
+history/audit fetch
+revision or cursor based incremental updates
+client reconnect/catch-up
+```
+
+Prefer reusing `:shared:domain`, Planner semantics, typed mutation vocabulary, and validation rules on the JVM server. The server persistence adapter may use PostgreSQL, but HTTP handlers and LLM code must not write tables directly.
+
+For the first hackathon implementation, offline client writes may be disabled. This avoids recreating D8's full multi-writer conflict protocol inside a short-lived centralized fork.
+
+### DGX-02 — DGX Spark model deployment and Agent execution
+
+Run or connect the server to the model runtime on DGX Spark. The exact inference engine remains an implementation choice for the fork, but the application-facing model adapter should keep a small OpenAI-compatible/tool-calling style boundary where practical.
+
+Configuration belongs server-side, for example conceptually:
+
+```text
+MODEL_BASE_URL
+MODEL_NAME
+MODEL_API_KEY / local-runtime credential when applicable
+```
+
+Clients configure only the Agentic Scheduler server address and their authentication/session material.
+
+Agent request flow:
+
+```text
+client/WebUI command
+→ scheduler server
+→ assemble authoritative context
+→ server-side LLM request
+→ typed Tool calls
+→ validate/preview/confirm according to fork UX
+→ application mutation transaction
+→ authoritative state commit
+→ mutation/result pushed or fetched by clients
+```
+
+The LLM must not receive a general-purpose SQL/database tool.
+
+### DGX-03 — WebUI
+
+Add a browser client using the same authenticated server API as native clients.
+
+Initial WebUI scope:
+
+```text
+Today / Agenda
+Calendar
+Tasks
+Planner preview
+Agent chat/command entry
+Agent mutation confirmation/result
+basic History/audit
+server/model health indicator
+settings/session/logout
+```
+
+The WebUI should not introduce a separate schedule implementation or business-rule engine. Domain truth remains on the server.
+
+### DGX-04 — Native remote-server mode
+
+Android/Desktop gain a fork-specific server configuration flow:
+
+```text
+serverBaseUrl
+authenticate/enroll
+fetch authoritative state
+submit user commands/ordinary edits to server
+receive revision/update notifications
+refresh local read cache/UI
+```
+
+For v1 of the hackathon fork:
+
+```text
+online writes are allowed
+offline read cache is optional
+offline writes may be explicitly unavailable
+local D8 E2EE sync is not used for this remote-server mode
+```
+
+Wear can remain out of scope unless the hackathon demo specifically benefits from it.
+
+### DGX-05 — Demo/deployment gate
+
+Before the hackathon demo, verify at minimum:
+
+```text
+fresh server deployment on DGX Spark environment
+model process starts and health checks pass
+WebUI can connect from another device
+Android/Desktop can connect using only serverBaseUrl + auth
+LLM request -> typed schedule mutation -> durable server commit -> client update works end-to-end
+unauthenticated callers cannot read or mutate schedule data
+cross-account/workspace access is denied
+server restart preserves authoritative schedule state
+model failure does not partially commit a schedule mutation
+duplicate/retried requests do not accidentally duplicate committed mutations
+normal logs contain no plaintext schedule/prompt bodies
+```
+
+The hackathon branch may trade the main product's offline-first/E2EE properties for centralized simplicity and model throughput, but it should preserve the project's typed semantic, Planner, mutation, and audit boundaries wherever possible.
 
 ---
 # Cross-milestone schema rule
