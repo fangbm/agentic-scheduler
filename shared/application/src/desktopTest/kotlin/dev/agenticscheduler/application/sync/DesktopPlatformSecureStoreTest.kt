@@ -53,6 +53,7 @@ class DesktopPlatformSecureStoreTest {
     fun `secure-store write failure returns no reference to publish`() = runBlocking {
         val store = DesktopPlatformSecureStore(ThrowingBackend, TinkPairingHpke())
         assertFails { store.importContentKey(RawMaterial(0)) }
+        Unit
     }
 
     @Test
