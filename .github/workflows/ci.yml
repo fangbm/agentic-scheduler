@@ -48,6 +48,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libsecret-tools gnome-keyring dbus-x11
           dbus-run-session -- bash -ceu '
+            # Initialize an isolated, unlocked keyring for this headless CI
+            # session. Production code still fails closed when Secret Service
+            # is unavailable; this only gives the integration test a real
+            # service to exercise.
+            export XDG_DATA_HOME="$PWD/.ci-keyring-data"
+            export XDG_CACHE_HOME="$PWD/.ci-keyring-cache"
+            export XDG_RUNTIME_DIR="$PWD/.ci-keyring-runtime"
+            mkdir -p "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
+            chmod 700 "$XDG_RUNTIME_DIR"
+            eval "$(printf "\\n" | gnome-keyring-daemon --login)"
             eval "$(gnome-keyring-daemon --start --components=secrets)"
             export AGENTIC_SCHEDULER_SECRET_SERVICE_INTEGRATION=1
             ./gradlew :shared:application:desktopTest --tests "*LinuxSecretServiceSecureStoreIntegrationTest" --no-daemon
@@ -143,6 +153,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
+          system-image-api-level: 35-ext15
           target: android-wear
           arch: x86_64
           script: ./gradlew :apps:wear:connectedDebugAndroidTest --no-daemon
