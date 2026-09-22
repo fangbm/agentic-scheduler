@@ -2,7 +2,7 @@
 
 > Task ID: **D8-01 / D8-02 / D8-03**  
 > Milestone: **D8 — Sync / E2EE / Server**  
-> Status: **SPEC FROZEN — READY FOR IMPLEMENTATION (D7.1 COMPLETE)**
+> Status: **IMPLEMENTATION IN PROGRESS — D8 COMPLETION GATE (FROZEN SEMANTICS ONLY)**
 > Date: 2026-09-12  
 > Decision source: `docs/SYNC_SECURITY_DECISIONS.md`
 
@@ -25,6 +25,33 @@ HTTPS sync transport
 offline queue/catch-up
 Wear route-equivalent sync
 ```
+
+## D8 completion-gate execution scope
+
+This execution pass is limited to acceptance work already authorized by this task and
+`docs/SYNC_SECURITY_DECISIONS.md`:
+
+```text
+MUST
+- migrate the existing D8 implementation to the current main API without changing
+  frozen wire, merge, E2EE, recovery, revocation, server, or Wear semantics;
+- complete the SYN-009 Android/Wear Keystore, Windows DPAPI, and Linux Secret
+  Service/keyring PlatformSecretStore boundary;
+- complete AMK, recovery, pairing, and SyncSpace content-key staging and application
+  wiring through that boundary;
+- execute and record the remaining SYN-019 and section 15 acceptance paths,
+  including multi-device, offline, recovery, revocation, Wear, PostgreSQL,
+  migration, and adversarial verification.
+
+MUST NOT
+- add a protocol version or new D8 semantic rule;
+- weaken fail-closed secret handling, E2EE, causal merge, or conflict behavior;
+- begin D9 or any excluded milestone scope.
+```
+
+A check remains incomplete until its required test has actually executed. In
+particular, production platform storage is not accepted merely because a memory test
+or a compile task passes.
 
 ---
 

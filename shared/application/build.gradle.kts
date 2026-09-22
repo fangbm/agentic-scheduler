@@ -14,5 +14,5 @@ kotlin {
         commonTest.dependencies { implementation(kotlin("test")); implementation(libs.ktor.client.mock) }
     }
     sourceSets.named("androidMain") { dependencies { implementation(libs.tink.android); implementation(libs.ktor.client.android) } }
-    sourceSets.named("desktopMain") { dependencies { implementation(libs.tink); implementation(libs.ktor.client.cio) } }
+    sourceSets.named("desktopMain") { dependencies { implementation(libs.tink); implementation(libs.ktor.client.cio); implementation(libs.jna.platform) } }
 }

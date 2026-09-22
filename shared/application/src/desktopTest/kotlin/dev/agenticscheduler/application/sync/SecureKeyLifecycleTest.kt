@@ -132,7 +132,9 @@ class SecureKeyLifecycleTest {
     private data class TestKeyMaterial(
         val name: String,
         val identity: String,
-    ) : ImportedContentKeyMaterial
+    ) : ImportedContentKeyMaterial {
+        override fun copyRawSecretBytesForSecureStore(): ByteArray = name.encodeToByteArray()
+    }
 
     private class RecordingKeyMaterial(
         private val failingDeletes: Set<SecretReference> = emptySet(),

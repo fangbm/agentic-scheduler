@@ -18,7 +18,7 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY BASELINE IN PR #5
+D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY IMPLEMENTED; APP-LIFECYCLE + E2E ACCEPTANCE PENDING
  ↓
 D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
 D9-02  Agent history sync amendment            AFTER D9-01
@@ -182,9 +182,10 @@ Status:
 
 ```text
 D8-00 protocol/security decisions  FROZEN
-D8-01 client SyncEngine/merge      IMPLEMENTED / TARGETED TESTS PASS
-D8-02 E2EE/key lifecycle           IMPLEMENTED / EPOCH ROTATION BOUNDARY + TARGETED TESTS PASS / APP-LEVEL AMK STAGING PENDING
-D8-03 thin server/Wear transport   OPAQUE RELAY + HTTPS/OFFLINE CLIENT + CREDENTIAL HASH + ROTATING RECOVERY + ATOMIC ROTATION PUBLICATION IMPLEMENTED / APP WIRING + WEAR EQUIVALENCE PENDING
+D8-01 client SyncEngine/merge      IMPLEMENTED / COMPLETION ACCEPTANCE PENDING
+D8-02 E2EE/key lifecycle           IMPLEMENTED / PRODUCTION SECURE-STORE + APP-WIRING ACCEPTANCE PENDING
+D8-03 thin server/Wear transport   IMPLEMENTED / POSTGRESQL + WEAR + OFFLINE ACCEPTANCE PENDING
+D8 completion gate                 IN PROGRESS / FROZEN D8 ACCEPTANCE ONLY
 ```
 
 Frozen baseline includes:
@@ -201,14 +202,15 @@ Ktor 3.5.2 thin server + PostgreSQL pgjdbc 42.7.13 + HikariCP 7.1.0
 server stores opaque encrypted envelopes only
 ```
 
-Current persistence baselines on the D8 review branch are client Room schema v11
+Current D8 persistence baselines are client Room schema v11
 (outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
 (opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
 atomic rotation, recovery, and revocation metadata).
-Android and Wear debug Kotlin compilation are verified locally; Wear route-equivalence
-and real multi-replica execution remain open acceptance work.
-Android/Wear `DeviceCredential` storage now has a Keystore-backed implementation;
-Windows DPAPI and Linux Secret Service adapters remain platform follow-ups.
+The completion gate migrates and verifies the existing D8 implementation against the
+current `main` API. Its only remaining scope is production platform secret storage,
+AMK/recovery/pairing/content-key staging and application wiring, plus the frozen
+SYN-019 multi-device, offline, recovery, revocation, Wear, PostgreSQL, migration and
+adversarial acceptance suite. It does not alter frozen protocol semantics or start D9.
 
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 
