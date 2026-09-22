@@ -8,7 +8,6 @@ import dev.agenticscheduler.application.sync.ImportedContentKeyMaterial
 import dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
@@ -30,7 +29,7 @@ class WearKeystoreSecureStoreInstrumentedTest {
         val first = AndroidKeystoreSecureStore(context)
         val content = first.importContentKey(RawContentKey())
         val reopened = AndroidKeystoreSecureStore(context)
-        val aead = assertNotNull(reopened.contentAead(content.reference))
+        val aead = checkNotNull(reopened.contentAead(content.reference))
         val ciphertext = aead.encryptToBase64Url("wear payload", "wear aad")
         assertEquals("wear payload", aead.decryptFromBase64Url(ciphertext, "wear aad"))
         reopened.delete(content.reference)

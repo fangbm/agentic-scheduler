@@ -28,8 +28,12 @@ class DesktopPlatformSecureStoreTest {
         val generic = first.importSecret(RawMaterial(64))
         assertEquals(RawMaterial(64).copyRawKeyBytesForPairing().toList(), first.readSecret(generic)?.copyRawSecretBytesForSecureStore()?.toList())
 
-        val device = first.generatePairingDeviceKey()
         val second = DesktopPlatformSecureStore(backend, TinkPairingHpke())
+        val credential = DeviceCredential("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
+        val credentialReference = first.store(credential)
+        assertEquals(credential, second.load(credentialReference))
+
+        val device = first.generatePairingDeviceKey()
         val restored = assertNotNull(second.privateKey(device.privateKeyReference))
         val context = "pairing-restart-context".encodeToByteArray()
         val encrypted = TinkPairingHpke().encrypt(device.publicKey, "secret package".encodeToByteArray(), context)
@@ -40,6 +44,8 @@ class DesktopPlatformSecureStoreTest {
 
         first.delete(content.reference)
         assertNull(second.contentAead(content.reference))
+        first.delete(credentialReference)
+        assertNull(second.load(credentialReference))
         assertNull(second.contentAead(SecretReference(backend.referencePrefix + "00000000-0000-0000-0000-000000000000")))
     }
 

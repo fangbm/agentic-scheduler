@@ -17,6 +17,7 @@ class DesktopPlatformSecureStore private constructor(
     @Suppress("UNUSED_PARAMETER") private val constructorMarker: Unit,
 ) : PlatformSecretStore,
     PlatformKeyMaterialStore,
+    PlatformDeviceCredentialStore,
     PlatformPairingPrivateKeyStore,
     PlatformPairingKeyMaterialExporter,
     PlatformAccountMasterKeyStore {
@@ -29,6 +30,16 @@ class DesktopPlatformSecureStore private constructor(
 
     override suspend fun readSecret(reference: SecretReference): PlatformSecretMaterial? =
         read(reference, SecretKind.GENERIC)?.let(::StoredSecret)
+
+    override suspend fun store(value: DeviceCredential): SecretReference =
+        store(SecretKind.DEVICE_CREDENTIAL, value.value.encodeToByteArray())
+
+    override suspend fun load(reference: SecretReference): DeviceCredential? =
+        try {
+            read(reference, SecretKind.DEVICE_CREDENTIAL)?.decodeToString()?.let(::DeviceCredential)
+        } catch (_: IllegalArgumentException) {
+            null
+        }
 
     override suspend fun importContentKey(material: ImportedContentKeyMaterial): ImportedContentKey {
         val raw = material.copyRawSecretBytesForSecureStore()
@@ -96,7 +107,7 @@ class DesktopPlatformSecureStore private constructor(
     }
 
     private enum class SecretKind(val tag: Byte) {
-        GENERIC(1), CONTENT_KEY(2), ACCOUNT_MASTER_KEY(3), PAIRING_PRIVATE_KEY(4),
+        GENERIC(1), CONTENT_KEY(2), ACCOUNT_MASTER_KEY(3), PAIRING_PRIVATE_KEY(4), DEVICE_CREDENTIAL(5),
     }
 
     private companion object {
