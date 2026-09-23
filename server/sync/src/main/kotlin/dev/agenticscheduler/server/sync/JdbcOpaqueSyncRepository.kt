@@ -356,6 +356,24 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             }
         }
 
+    override fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor? = dataSource.connection.use { connection ->
+        requireValidId(accountId, "accountId")
+        connection.prepareStatement(
+            "SELECT p.counter, e.envelope_bytes " +
+                "FROM recovery_proof p JOIN recovery_envelope e ON e.account_id = p.account_id " +
+                "WHERE p.account_id = ?",
+        ).use { statement ->
+            statement.setString(1, accountId)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) null
+                else RecoveryBootstrapDescriptor(
+                    counter = rs.getLong("counter"),
+                    recoveryEnvelope = rs.getBytes("envelope_bytes"),
+                )
+            }
+        }
+    }
+
     override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
