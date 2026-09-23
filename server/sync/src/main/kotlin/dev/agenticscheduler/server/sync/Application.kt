@@ -195,6 +195,25 @@ fun Application.syncServerModule(
                 RecoveryProofRegistrationResult.IntegrityConflict -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("PROOF_INTEGRITY_CONFLICT"))
             }
         }
+        post("/v1/recovery/bootstrap") {
+            val security = repository as? ServerSecurityLifecycleRepository
+                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
+            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
+            val request = call.receive<RecoveryBootstrapRequest>()
+            if (request.accountId.isBlank() || request.accountId.length > 128) {
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_ACCOUNT"))
+            }
+            val descriptor = security.recoveryBootstrap(request.accountId)
+                ?: return@post call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            call.respond(
+                RecoveryBootstrapResponse(
+                    counter = descriptor.counter,
+                    recoveryEnvelopeBase64Url = Base64.getUrlEncoder().withoutPadding()
+                        .encodeToString(descriptor.recoveryEnvelope),
+                ),
+            )
+        }
         post("/v1/recovery/enroll") {
             val security = repository as? ServerSecurityLifecycleRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
