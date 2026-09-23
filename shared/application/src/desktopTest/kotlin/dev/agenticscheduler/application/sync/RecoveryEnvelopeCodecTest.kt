@@ -70,6 +70,31 @@ class RecoveryEnvelopeCodecTest {
         assertEquals(RecoveryEnvelopeOpenResult.BindingMismatch, RecoveryEnvelopeCodec.open(secret, envelope))
     }
 
+    @Test
+    fun `authenticated recovery plaintext with invalid UTF-8 fails closed`() {
+        val key = deriveRecoveryEnvelopeKey(secret, account, space, 7)
+        val ciphertext = try {
+            recoveryEnvelopeAeadEncrypt(
+                key,
+                byteArrayOf(0xc3.toByte(), 0x28),
+                recoveryEnvelopeAad(account, space, 7),
+            )
+        } finally {
+            key.fill(0)
+        }
+        val envelope = RecoveryEnvelopeV1(
+            accountId = account,
+            syncSpaceId = space,
+            keyEpoch = 7,
+            ciphertextBase64Url = encodeCanonicalBase64Url(ciphertext),
+        )
+
+        val result = assertIs<RecoveryEnvelopeOpenResult.InvalidPlaintext>(
+            RecoveryEnvelopeCodec.open(secret, envelope),
+        )
+        assertEquals("Recovery plaintext is not valid UTF-8.", result.reason)
+    }
+
     private fun plaintext() = RecoveryEnvelopePlaintextV1(
         accountId = account,
         keyEpoch = 7,

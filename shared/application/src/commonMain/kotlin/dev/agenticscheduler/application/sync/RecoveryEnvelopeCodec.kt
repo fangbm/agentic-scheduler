@@ -56,7 +56,12 @@ object RecoveryEnvelopeCodec {
         } finally {
             key.fill(0)
         }
-        return when (val decoded = RecoveryWireCodec.decodePlaintext(plaintextBytes.decodeToString())) {
+        val plaintext = try {
+            plaintextBytes.decodeToString(throwOnInvalidSequence = true)
+        } catch (_: Exception) {
+            return RecoveryEnvelopeOpenResult.InvalidPlaintext("Recovery plaintext is not valid UTF-8.")
+        }
+        return when (val decoded = RecoveryWireCodec.decodePlaintext(plaintext)) {
             is RecoveryWireDecodeResult.UnsupportedVersion ->
                 RecoveryEnvelopeOpenResult.InvalidPlaintext("Unsupported recovery plaintext version.")
             is RecoveryWireDecodeResult.Invalid ->
