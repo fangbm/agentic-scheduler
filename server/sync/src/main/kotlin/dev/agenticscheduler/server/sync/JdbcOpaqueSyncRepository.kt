@@ -479,6 +479,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     override fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult =
         dataSource.connection.use { connection ->
             if (!activeAccountDevice(connection, actor)) return@use ActiveDeviceDirectoryResult.NotFound
+            var incomplete = false
             val devices = connection.prepareStatement(
                 "SELECT device_id, hpke_public_key FROM device " +
                     "WHERE account_id = ? AND revoked_at IS NULL ORDER BY device_id",
@@ -488,8 +489,10 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     buildList {
                         while (rs.next()) {
                             val key = rs.getBytes("hpke_public_key")
-                                ?: return@use ActiveDeviceDirectoryResult.IncompleteIdentity
-                            if (key.size != 32) return@use ActiveDeviceDirectoryResult.IncompleteIdentity
+                            if (key == null || key.size != 32) {
+                                incomplete = true
+                                break
+                            }
                             add(
                                 ActiveDeviceDirectoryEntry(
                                     deviceId = rs.getString("device_id"),
@@ -500,7 +503,8 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     }
                 }
             }
-            ActiveDeviceDirectoryResult.Available(devices)
+            if (incomplete) ActiveDeviceDirectoryResult.IncompleteIdentity
+            else ActiveDeviceDirectoryResult.Available(devices)
         }
 
     override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
