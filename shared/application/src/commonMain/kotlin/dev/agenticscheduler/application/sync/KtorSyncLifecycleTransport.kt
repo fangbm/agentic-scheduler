@@ -51,6 +51,15 @@ data class ClientPendingEnrollment(
 data class ClientRecoveryProofRegistration(val proofHashBase64Url: String, val counter: Long)
 
 @Serializable
+data class ClientRecoveryBootstrapRequest(val accountId: String)
+
+@Serializable
+data class ClientRecoveryBootstrapResponse(
+    val counter: Long,
+    val recoveryEnvelopeBase64Url: String,
+)
+
+@Serializable
 data class ClientRecoveryEnrollmentRequest(
     val accountId: String,
     val requestId: String,
@@ -154,6 +163,20 @@ class KtorSyncLifecycleTransport(
             setBody(json.encodeToString(ClientRecoveryProofRegistration.serializer(), ClientRecoveryProofRegistration(proofHashBase64Url, counter)))
         }
         requireStatus(response, HttpStatusCode.OK)
+    }
+
+    suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse {
+        val response = client.post("$baseUrl/v1/recovery/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                json.encodeToString(
+                    ClientRecoveryBootstrapRequest.serializer(),
+                    ClientRecoveryBootstrapRequest(accountId),
+                ),
+            )
+        }
+        requireStatus(response, HttpStatusCode.OK)
+        return decode(response.bodyAsText(), ClientRecoveryBootstrapResponse.serializer())
     }
 
     suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
