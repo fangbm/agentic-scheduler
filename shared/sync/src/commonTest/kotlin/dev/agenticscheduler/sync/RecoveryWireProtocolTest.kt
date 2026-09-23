@@ -16,10 +16,12 @@ class RecoveryWireProtocolTest {
             keyEpoch = 7,
             ciphertextBase64Url = "AQI",
         )
+        val fixture = """{"recoveryEnvelopeVersion":1,"accountId":"acct-1","syncSpaceId":"personal-space","keyEpoch":7,"ciphertextBase64Url":"AQI"}"""
+        assertEquals(fixture, RecoveryWireCodec.encodeEnvelope(envelope))
         assertEquals(
             envelope,
             assertIs<RecoveryWireDecodeResult.Supported<RecoveryEnvelopeV1>>(
-                RecoveryWireCodec.decodeEnvelope(RecoveryWireCodec.encodeEnvelope(envelope)),
+                RecoveryWireCodec.decodeEnvelope(fixture),
             ).value,
         )
     }
@@ -38,6 +40,10 @@ class RecoveryWireProtocolTest {
             ),
         )
         val encoded = RecoveryWireCodec.encodePlaintext(plaintext)
+        assertEquals(
+            """{"recoveryEnvelopeVersion":1,"accountId":"acct-1","keyEpoch":7,"accountMasterKeyBase64Url":"$key0","syncSpace":{"syncSpaceId":"personal-space","activeEpoch":7,"activeKeyBase64Url":"$key1","historicalKeys":[{"keyEpoch":3,"keyBase64Url":"$key0"}]}}""",
+            encoded,
+        )
         assertIs<RecoveryWireDecodeResult.Supported<RecoveryEnvelopePlaintextV1>>(RecoveryWireCodec.decodePlaintext(encoded))
         assertIs<RecoveryWireDecodeResult.Invalid>(
             RecoveryWireCodec.decodePlaintext(encoded.replaceFirst("{", "{\"unexpected\":1,")),
