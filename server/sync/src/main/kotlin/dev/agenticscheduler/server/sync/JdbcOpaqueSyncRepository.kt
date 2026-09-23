@@ -507,6 +507,33 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             else ActiveDeviceDirectoryResult.Available(devices)
         }
 
+    override fun rotationPackages(actor: AuthenticatedDevice): List<StoredRotationPackage>? =
+        dataSource.connection.use { connection ->
+            if (!activeAccountDevice(connection, actor)) return@use null
+            connection.prepareStatement(
+                "SELECT p.rotation_id, p.package_bytes " +
+                    "FROM sync_key_rotation_package p " +
+                    "JOIN sync_key_rotation r ON r.rotation_id = p.rotation_id " +
+                    "WHERE r.account_id = ? AND p.device_id = ? " +
+                    "ORDER BY r.created_at ASC, p.rotation_id ASC",
+            ).use { statement ->
+                statement.setString(1, actor.accountId)
+                statement.setString(2, actor.deviceId)
+                statement.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            add(
+                                StoredRotationPackage(
+                                    rotationId = rs.getString("rotation_id"),
+                                    packageBytes = rs.getBytes("package_bytes"),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
     override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
