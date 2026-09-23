@@ -35,7 +35,7 @@ class SyncServerRoutesTest {
             setBody(invitationBody)
         }
         assertEquals(HttpStatusCode.Created, invitation.status)
-        val bootstrapBody = """{"invitationToken":"invite","deviceId":"device"}"""
+        val bootstrapBody = """{"invitationToken":"invite","deviceId":"device","hpkePublicKeyBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}"""
         val bootstrap = client.post("/v1/bootstrap") {
             contentType(ContentType.Application.Json)
             setBody(bootstrapBody)
@@ -112,9 +112,31 @@ class SyncServerRoutesTest {
         }.status)
         val response = client.post("/v1/recovery/enroll") {
             contentType(ContentType.Application.Json)
-            setBody("""{"accountId":"account","requestId":"recovery-1","targetDeviceId":"recovered","credentialHashBase64Url":"$hash","proofBase64Url":"$hash","counter":0,"nextProofHashBase64Url":"$hash"}""")
+            setBody("""{"accountId":"account","requestId":"recovery-1","targetDeviceId":"recovered","hpkePublicKeyBase64Url":"$hash","credentialHashBase64Url":"$hash","proofBase64Url":"$hash","counter":0,"nextProofHashBase64Url":"$hash"}""")
         }
         assertEquals(HttpStatusCode.Created, response.status)
+    }
+
+
+    @Test
+    fun `active device directory is authenticated deterministic and fails closed when incomplete`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/devices/active").status)
+
+        val response = client.get("/v1/devices/active") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.indexOf("\"device-a\"") < body.indexOf("\"device-b\""))
+        assertTrue(body.contains("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
+
+        repository.incompleteDirectory = true
+        assertEquals(HttpStatusCode.Conflict, client.get("/v1/devices/active") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }.status)
     }
 
     @Test
@@ -224,6 +246,7 @@ class SyncServerRoutesTest {
         private var recoveryBytes: ByteArray? = null
         private var recoveryProof: RecoveryProofRegistrationRequest? = null
         private var consumed = false
+        var incompleteDirectory = false
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
 
@@ -290,6 +313,15 @@ class SyncServerRoutesTest {
 
         override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
             RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
+
+        override fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult =
+            if (incompleteDirectory) ActiveDeviceDirectoryResult.IncompleteIdentity
+            else ActiveDeviceDirectoryResult.Available(
+                listOf(
+                    ActiveDeviceDirectoryEntry("device-a", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                    ActiveDeviceDirectoryEntry("device-b", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                ),
+            )
 
         override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
             AtomicRevocationResult.Applied
