@@ -25,8 +25,8 @@ Resolved by SYN-015A / OD-034. V1 now carries explicit
 same SyncSpace, complete causal dominance and conflict-scoped typed mutations. Ordinary
 causally-later edits cannot clear an OPEN conflict.
 
-Implementation and cross-replica acceptance are present on this branch; final CI evidence is
-recorded only after the current head is green.
+Implementation and cross-replica acceptance are present on this branch. CI #311 passed on the
+current amendment head.
 
 ### RecoveryEnvelopeV1
 
@@ -39,7 +39,6 @@ and complete revoke/rotate E2E still need application composition around the new
 
 ## Still required before D8 FINAL PASS
 
-- green CI on the current resolution/recovery amendment head;
 - full Recovery Secret restore and revocation/AMK rotation E2E using RecoveryEnvelopeV1;
 - active application bootstrap/enrollment composition using the production secure-store lifecycle;
 - Wear direct-versus-phone-relay integration;
@@ -47,3 +46,17 @@ and complete revoke/rotate E2E still need application composition around the new
 - final repository/server CI green after all of the above.
 
 D8 must not be marked complete and D9 must not start until these paths execute successfully.
+
+## BLOCKED_BY_DECISION — fresh-device Recovery enrollment transport
+
+The remaining Recovery Secret E2E cannot be completed by application wiring alone. A fresh device
+has no DeviceCredential, while the existing `GET /v1/recovery/envelope` route requires an already
+authenticated credential. The rotating recovery-proof verifier also requires the server's current
+counter, but `RecoveryEnvelopeV1` deliberately does not carry that mutable server value and no
+recovery-authenticated discovery route is frozen.
+
+The frozen D8 documents require a fresh device to fetch the opaque recovery envelope and enroll
+using the Recovery Secret, but do not specify the authenticated transport or counter-bootstrap
+contract for that first request. A decision is required before adding a route, exposing a counter,
+or changing the recovery envelope wire schema. No fallback to a DeviceCredential or a guessed
+counter is permitted.
