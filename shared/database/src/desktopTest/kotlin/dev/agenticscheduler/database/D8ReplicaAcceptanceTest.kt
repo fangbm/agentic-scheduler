@@ -2,9 +2,15 @@ package dev.agenticscheduler.database
 
 import dev.agenticscheduler.application.history.ConflictAwareProjection
 import dev.agenticscheduler.application.history.ConflictCollectionProjection
+import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.history.SyncEngine
 import dev.agenticscheduler.application.history.SyncReceiveResult
+import dev.agenticscheduler.application.editing.CreateEventInput
+import dev.agenticscheduler.application.editing.EditingResult
+import dev.agenticscheduler.application.editing.EventEditingService
+import dev.agenticscheduler.application.editing.EventTimeInput
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
@@ -18,6 +24,10 @@ import dev.agenticscheduler.application.sync.SyncEnvelopeBinding
 import dev.agenticscheduler.application.sync.SyncPayloadAead
 import dev.agenticscheduler.application.sync.SyncPayloadKeyLookup
 import dev.agenticscheduler.application.sync.SyncPayloadKeyProvider
+import dev.agenticscheduler.application.sync.SyncTransport
+import dev.agenticscheduler.application.sync.SyncTransportWorker
+import dev.agenticscheduler.application.sync.SyncUploadResult
+import dev.agenticscheduler.application.sync.RemoteSyncEnvelope
 import dev.agenticscheduler.application.sync.TinkSyncPayloadAead
 import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
@@ -25,8 +35,10 @@ import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomSyncReceiveRepository
+import dev.agenticscheduler.database.repository.RoomSyncOutboundEnvelopeRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.id.EventId
+import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.sync.AllDayRangeImage
 import dev.agenticscheduler.sync.DeviceId
@@ -53,6 +65,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlinx.coroutines.runBlocking
+import kotlinx.datetime.LocalDate
 
 /**
  * D8 completion acceptance: three independent durable replicas receive the
@@ -68,9 +81,9 @@ class D8ReplicaAcceptanceTest {
         val space = SyncSpaceId("personal-space")
         val key = TinkSyncPayloadAead.generate()
         val relay = OpaqueRelay()
-        val a = Replica(space, key)
-        val b = Replica(space, key)
-        val c = Replica(space, key)
+        val a = Replica("device-a", space, key)
+        val b = Replica("device-b", space, key)
+        val c = Replica("device-c", space, key)
         try {
             val eventId = id(10)
             val baseReplica = id(1)
@@ -123,7 +136,42 @@ class D8ReplicaAcceptanceTest {
         }
     }
 
+    @Test
+    fun `offline local write retains exact ciphertext then catches up through opaque relay`() = runBlocking {
+        val space = SyncSpaceId("personal-space")
+        val key = TinkSyncPayloadAead.generate()
+        val relay = OpaqueRelay()
+        val a = Replica("device-a", space, key)
+        val b = Replica("device-b", space, key)
+        try {
+            val transport = RelayTransport(relay).apply { online = false }
+            val local = a.createAllDayEvent("Offline local write")
+            val mutationId = a.onlyLocalMutationId()
+
+            val offline = a.worker(transport).run(space)
+            assertEquals(0, offline.uploaded)
+            assertIs<SyncUploadResult.RetryableFailure>(offline.stoppedOnFailure)
+            assertEquals("Offline local write", local.title)
+            val retained = a.outboundEnvelope(mutationId)
+            assertEquals(false, retained.uploaded)
+
+            transport.online = true
+            val upload = a.worker(transport).run(space)
+            assertEquals(1, upload.uploaded)
+            assertEquals(retained.envelope, relay.storedEnvelopes().single(), "Retry uploads the first durable ciphertext verbatim.")
+
+            val catchUp = b.worker(transport).run(space)
+            assertEquals(1, catchUp.fetched)
+            assertEquals("Offline local write", b.eventTitle(local.id.value))
+            assertEquals(1L, b.cursor())
+        } finally {
+            a.close()
+            b.close()
+        }
+    }
+
     private class Replica(
+        private val device: String,
         private val syncSpaceId: SyncSpaceId,
         key: SyncPayloadAead,
     ) {
@@ -132,6 +180,9 @@ class D8ReplicaAcceptanceTest {
         private val receive = RoomSyncReceiveRepository(database)
         private val events = RoomEventRepository(database)
         private val codecKeys = StaticKeys(syncSpaceId, key)
+        private val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        private val mutations = MutationCoordinator(RoomApplicationTransactionRunner(database), journal, ids, MutationWallClock { 1 })
+        private val editor = EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy)
         val codec = AuthenticatedSyncEnvelopeCodec(codecKeys, codecKeys)
         private val engine = SyncEngine(
             RoomApplicationTransactionRunner(database),
@@ -142,7 +193,7 @@ class D8ReplicaAcceptanceTest {
             RoomTaskRepository(database),
             RoomPlanningProfileRepository(database),
             RoomAcademicRepository(database),
-            RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+            ids,
             MutationWallClock { 1 },
         )
         private val gateway = EncryptedSyncReceiveGateway(codec, engine)
@@ -155,6 +206,33 @@ class D8ReplicaAcceptanceTest {
             SyncWireCodec.encodeEnvelope(stored.envelope),
             stored.cursor,
         )
+
+        suspend fun createAllDayEvent(title: String): Event = assertIs<EditingResult.Success<Event>>(
+            editor.create(CreateEventInput(
+                title = title,
+                time = EventTimeInput.AllDay(LocalDate(2026, 1, 1), LocalDate(2026, 1, 2)),
+                flexibility = dev.agenticscheduler.domain.planning.Flexibility.HARD,
+                pinState = dev.agenticscheduler.domain.planning.PinState.UNPINNED,
+            )),
+        ).value
+
+        suspend fun onlyLocalMutationId(): String = journal.timeline().single().operation.mutationId
+
+        suspend fun outboundEnvelope(mutationId: String) = requireNotNull(RoomSyncOutboundEnvelopeRepository(database).envelope(syncSpaceId, mutationId))
+
+        fun worker(transport: SyncTransport) = SyncTransportWorker(
+            history = journal,
+            outbound = RoomSyncOutboundEnvelopeRepository(database),
+            receive = receive,
+            codec = codec,
+            encryptionKeys = codecKeys,
+            deviceId = DeviceId(device),
+            transport = transport,
+            receiveGateway = gateway,
+        )
+
+        suspend fun eventTitle(eventId: String): String? = events.get(EventId(eventId))?.title
+        suspend fun cursor(): Long = receive.serverCursor(syncSpaceId)
 
         suspend fun snapshot(eventId: String): ReplicaSnapshot {
             val event = requireNotNull(events.get(EventId(eventId)))
@@ -203,11 +281,38 @@ class D8ReplicaAcceptanceTest {
                 SyncEnvelopeBinding(SyncSpaceId("personal-space"), operation.mutationId, sender, 7),
                 SyncPayloadV1(operation = operation),
             ))
-            entries += StoredRelayEnvelope(entries.size.toLong() + 1, encrypted.envelope)
+            assertIs<SyncUploadResult.Stored>(store(encrypted.envelope))
         }
 
         fun at(cursor: Int): StoredRelayEnvelope = entries.single { it.cursor == cursor.toLong() }
         fun storedEnvelopes(): List<EncryptedEnvelopeV1> = entries.map(StoredRelayEnvelope::envelope)
+        fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int): List<RemoteSyncEnvelope> = entries
+            .asSequence()
+            .filter { it.envelope.syncSpaceId == syncSpaceId && it.cursor > afterCursor }
+            .take(limit)
+            .map { RemoteSyncEnvelope(it.cursor, it.envelope) }
+            .toList()
+
+        fun store(envelope: EncryptedEnvelopeV1): SyncUploadResult {
+            val existing = entries.firstOrNull { it.envelope.mutationId == envelope.mutationId }
+            return when {
+                existing == null -> SyncUploadResult.Stored(entries.size.toLong() + 1).also {
+                    entries += StoredRelayEnvelope((it as SyncUploadResult.Stored).serverCursor, envelope)
+                }
+                existing.envelope == envelope -> SyncUploadResult.Idempotent(existing.cursor)
+                else -> SyncUploadResult.IntegrityConflict("MutationId already has different opaque ciphertext.")
+            }
+        }
+    }
+
+    private class RelayTransport(private val relay: OpaqueRelay) : SyncTransport {
+        var online = true
+
+        override suspend fun upload(envelope: EncryptedEnvelopeV1): SyncUploadResult =
+            if (online) relay.store(envelope) else SyncUploadResult.RetryableFailure("offline")
+
+        override suspend fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int): List<RemoteSyncEnvelope> =
+            if (online) relay.fetch(syncSpaceId, afterCursor, limit) else emptyList()
     }
 
     private data class StoredRelayEnvelope(val cursor: Long, val envelope: EncryptedEnvelopeV1)
