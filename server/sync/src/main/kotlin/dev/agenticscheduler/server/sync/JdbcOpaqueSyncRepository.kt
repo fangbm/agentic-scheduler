@@ -67,6 +67,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     override fun bootstrap(request: BootstrapRequest): BootstrapResult {
         require(request.invitationToken.isNotBlank())
         requireValidId(request.deviceId, "deviceId")
+        val hpkePublicKey = decodeCanonical(request.hpkePublicKeyBase64Url, 32)
         val credentialBytes = ByteArray(32).also(random::nextBytes)
         val credential = Base64.getUrlEncoder().withoutPadding().encodeToString(credentialBytes)
         return dataSource.connection.use connection@{ connection ->
@@ -94,11 +95,12 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 }
                 lockAccount(connection, invitation.first)
                 connection.prepareStatement(
-                    "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
+                    "INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)",
                 ).use { statement ->
                     statement.setString(1, request.deviceId)
                     statement.setString(2, invitation.first)
                     statement.setBytes(3, sha256(credential))
+                    statement.setBytes(4, hpkePublicKey)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -205,7 +207,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     return@connection EnrollmentApprovalResult.NotFound
                 }
                 val request = connection.prepareStatement(
-                    "SELECT account_id, target_device_id, credential_hash, approved_at FROM device_enrollment_request " +
+                    "SELECT account_id, target_device_id, credential_hash, hpke_public_key, approved_at FROM device_enrollment_request " +
                         "WHERE request_id = ? AND expires_at > CURRENT_TIMESTAMP FOR UPDATE",
                 ).use { statement ->
                     statement.setString(1, requestId)
@@ -214,6 +216,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                             accountId = rs.getString("account_id"),
                             targetDeviceId = rs.getString("target_device_id"),
                             credentialHash = rs.getBytes("credential_hash"),
+                            hpkePublicKey = rs.getBytes("hpke_public_key"),
                             approved = rs.getTimestamp("approved_at") != null,
                         )
                     }
@@ -256,11 +259,12 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
-                    "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
+                    "INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)",
                 ).use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.setString(2, request.accountId)
                     statement.setBytes(3, credentialHash)
+                    statement.setBytes(4, request.hpkePublicKey)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -382,6 +386,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 requireValidId(request.requestId, "requestId")
                 requireValidId(request.targetDeviceId, "targetDeviceId")
                 require(request.counter >= 0)
+                val hpkePublicKey = decodeCanonical(request.hpkePublicKeyBase64Url, 32)
                 val credentialHash = decodeCanonical(request.credentialHashBase64Url, 32)
                 val proof = decodeCanonical(request.proofBase64Url, 32)
                 val nextProofHash = decodeCanonical(request.nextProofHashBase64Url, 32)
@@ -433,10 +438,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection RecoveryEnrollmentResult.TargetDeviceAlreadyExists
                 }
-                connection.prepareStatement("INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)").use { statement ->
+                connection.prepareStatement("INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)").use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.setString(2, request.accountId)
                     statement.setBytes(3, credentialHash)
+                    statement.setBytes(4, hpkePublicKey)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -468,6 +474,33 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             } finally {
                 connection.autoCommit = true
             }
+        }
+
+    override fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult =
+        dataSource.connection.use { connection ->
+            if (!activeAccountDevice(connection, actor)) return@use ActiveDeviceDirectoryResult.NotFound
+            val devices = connection.prepareStatement(
+                "SELECT device_id, hpke_public_key FROM device " +
+                    "WHERE account_id = ? AND revoked_at IS NULL ORDER BY device_id",
+            ).use { statement ->
+                statement.setString(1, actor.accountId)
+                statement.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            val key = rs.getBytes("hpke_public_key")
+                                ?: return@use ActiveDeviceDirectoryResult.IncompleteIdentity
+                            if (key.size != 32) return@use ActiveDeviceDirectoryResult.IncompleteIdentity
+                            add(
+                                ActiveDeviceDirectoryEntry(
+                                    deviceId = rs.getString("device_id"),
+                                    hpkePublicKeyBase64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(key),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            ActiveDeviceDirectoryResult.Available(devices)
         }
 
     override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
@@ -811,6 +844,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         val accountId: String,
         val targetDeviceId: String,
         val credentialHash: ByteArray?,
+        val hpkePublicKey: ByteArray,
         val approved: Boolean,
     )
 
