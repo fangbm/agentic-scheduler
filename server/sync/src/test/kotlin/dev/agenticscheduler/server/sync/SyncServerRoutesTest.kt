@@ -72,6 +72,35 @@ class SyncServerRoutesTest {
     }
 
     @Test
+    fun `fresh recovery bootstrap returns opaque envelope and counter without device credential`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val hash = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        assertEquals(HttpStatusCode.OK, client.put("/v1/recovery/envelope") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"blobBase64Url":"AQI"}""")
+        }.status)
+        assertEquals(HttpStatusCode.OK, client.put("/v1/recovery/proof") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"proofHashBase64Url":"$hash","counter":7}""")
+        }.status)
+        val response = client.post("/v1/recovery/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"accountId":"account"}""")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("\"counter\":7"))
+        assertTrue(response.bodyAsText().contains("\"recoveryEnvelopeBase64Url\":\"AQI\""))
+        val missing = client.post("/v1/recovery/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"accountId":"missing"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+    }
+
+    @Test
     fun `recovery proof registration and enrollment use rotating verifier`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
@@ -250,6 +279,13 @@ class SyncServerRoutesTest {
         override fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult {
             recoveryProof = request
             return RecoveryProofRegistrationResult.Stored
+        }
+
+        override fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor? {
+            val proof = recoveryProof ?: return null
+            val envelope = recoveryBytes ?: return null
+            if (accountId != "account") return null
+            return RecoveryBootstrapDescriptor(proof.counter, envelope)
         }
 
         override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
