@@ -54,6 +54,8 @@ import dev.agenticscheduler.sync.HlcSnapshot
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.PinStateImage
+import dev.agenticscheduler.sync.SyncConflict
+import dev.agenticscheduler.sync.SyncConflictKind
 import dev.agenticscheduler.sync.SyncConflictStatus
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.SyncPayloadV1
