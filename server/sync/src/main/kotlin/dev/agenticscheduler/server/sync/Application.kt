@@ -266,6 +266,25 @@ fun Application.syncServerModule(
                     call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
             }
         }
+        get("/v1/rotations/packages") {
+            val lifecycle = repository as? ServerSecurityLifecycleRepository
+                ?: return@get call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val packages = lifecycle.rotationPackages(actor)
+                ?: return@get call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            call.respond(
+                packages.map { stored ->
+                    RotationPackageResponse(
+                        rotationId = stored.rotationId,
+                        targetDeviceId = actor.deviceId,
+                        packageBase64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(stored.packageBytes),
+                    )
+                },
+            )
+        }
         post("/v1/devices/{deviceId}/revoke") {
             val lifecycle = repository as? ServerSecurityLifecycleRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
