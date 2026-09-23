@@ -70,6 +70,13 @@ class SyncEngine(
                         advanceCursor(receipt)
                         return@inWriteTransaction SyncReceiveResult.Quarantined(receipt.mutationId, ProtocolQuarantineReason.INVALID_PAYLOAD)
                     }
+                    // A conflict/quarantine may not append the operation to the
+                    // local journal, but its handled dot remains the durable
+                    // MutationId dedupe record. Do not reinterpret a replay as
+                    // a merely causally-known operation.
+                    receiveState.removePending(receipt.syncSpaceId, operation.mutationId)
+                    advanceCursor(receipt)
+                    return@inWriteTransaction SyncReceiveResult.Duplicate(MutationId(operation.mutationId))
                 }
                 val missingPrerequisites = missingCausalPrerequisites(receipt.syncSpaceId, operation)
                 if (missingPrerequisites.isNotEmpty()) {
