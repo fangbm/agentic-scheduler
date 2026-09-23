@@ -560,6 +560,132 @@ they are never omitted from recipient calculation.
 
 ---
 
+
+## SYN-007B — Rotation key package wire, delivery, and ACTIVE apply
+
+> Status: **APPROVED AMENDMENT — frozen during D8 completion acceptance**
+
+Rotation packages are a distinct v1 protocol. They MUST NOT reuse SYN-006A pairing
+`KeyPackageEnvelopeV1`, must not treat `rotationId` as a pairing `requestId`, and never
+transition a local enrollment from PENDING to ACTIVE.
+
+The strict outer envelope is exactly:
+
+```text
+RotationKeyPackageEnvelopeV1 {
+  rotationPackageVersion
+  accountId
+  rotationId
+  targetDeviceId
+  keyEpoch
+  encapsulatedKeyBase64Url
+  ciphertextBase64Url
+}
+```
+
+The strict authenticated plaintext is exactly:
+
+```text
+RotationKeyPackagePlaintextV1 {
+  rotationPackageVersion
+  accountId
+  rotationId
+  targetDeviceId
+  keyEpoch
+  accountMasterKeyBase64Url
+  syncSpace {
+    syncSpaceId
+    activeEpoch
+    activeKeyBase64Url
+    historicalKeys [
+      { keyEpoch, keyBase64Url }
+    ]
+  }
+}
+```
+
+AMK, active content key, and every historical content key decode to exactly 32 bytes.
+Historical epochs follow SYN-005A/SYN-006A: unique, ascending, below activeEpoch, and the
+package contains the complete locally retained DECRYPT_ONLY ring. `keyEpoch == activeEpoch`.
+RecoverySecret and DeviceCredential never appear in this package.
+
+Rotation HPKE uses the same fixed SYN-006A suite (X25519/HKDF-SHA256/AES-256-GCM,
+base mode, RAW/NO_PREFIX), but with a distinct domain-separated context:
+
+```text
+RotationKeyPackageContextV1 =
+    ASCII("agentic-scheduler-rotation-key-package")
+    || 0x00
+    || LP(accountId)
+    || LP(rotationId)
+    || LP(targetDeviceId)
+    || U32BE(rotationPackageVersion)
+    || U64BE(keyEpoch)
+```
+
+Frozen context fixture:
+
+```text
+accountId              = "acct-1"
+rotationId             = "rotation-1"
+targetDeviceId         = "device-1"
+rotationPackageVersion = 1
+keyEpoch               = 8
+
+context base64url =
+YWdlbnRpYy1zY2hlZHVsZXItcm90YXRpb24ta2V5LXBhY2thZ2UAAAAABmFjY3QtMQAAAApyb3RhdGlvbi0xAAAACGRldmljZS0xAAAAAQAAAAAAAAAI
+```
+
+The server stores only opaque package bytes in `sync_key_rotation_package`. Remaining ACTIVE
+devices fetch their own packages using:
+
+```text
+GET /v1/rotations/packages
+Authorization: Bearer DeviceCredential
+
+200 [
+  {
+    "rotationId": "...",
+    "targetDeviceId": "<authenticated device>",
+    "packageBase64Url": "..."
+  }
+]
+```
+
+The server returns only rows for the authenticated account/device, ordered by rotation creation
+time then rotationId. It does not decode the package. D8 v1 has no rotation-package ACK table;
+packages are append-only and repeated fetch is expected.
+
+The client MUST strictly decode the opaque package JSON and require transport wrapper
+`rotationId/targetDeviceId` to equal the HPKE envelope identities before apply.
+
+ACTIVE recipient semantics:
+
+```text
+local state must already be ACTIVE
+accountId / targetDeviceId / syncSpaceId must match local ACTIVE state
+device private HPKE identity is the existing ACTIVE identity
+keyEpoch < local active epoch -> Superseded, no secret import
+HPKE auth + strict inner/outer binding must pass before secret import
+Installed / Advanced:
+    import new AMK + complete key ring
+    atomically publish key ring + ACTIVE.accountMasterKeyReference
+    preserve deviceId, enrollmentRequestId, HPKE identity, DeviceCredential
+Idempotent / Repaired:
+    preserve current ACTIVE AMK reference
+    delete newly imported duplicate AMK
+IntegrityError / rollback:
+    reject with no ACTIVE metadata change
+```
+
+After a successful Installed/Advanced transaction, deletion of the old AMK secure-store object
+is best-effort cleanup. Failure may leave an orphan but must not roll back committed metadata.
+
+This separation prevents pairing ciphertext from being replayed as rotation ciphertext and
+prevents a rotation package from creating or activating a device.
+
+---
+
 # SYN-008 — Server/account authentication
 
 D8 v1 is self-host friendly and does not introduce passwords/OAuth as a hidden dependency.
