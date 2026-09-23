@@ -79,3 +79,17 @@ directory versioning.
 
 Directory/server/client/migration contract coverage is present on this branch. Full revoke/rotate
 E2E remains required before D8 FINAL PASS.
+
+## BLOCKED_BY_DECISION — rotation package wire and recipient delivery
+
+SYN-007A resolves which devices receive a rotation package, but not the package's byte-level
+contract or its recipient lifecycle. `ClientRotationPackage` currently carries opaque bytes only;
+the existing `KeyPackageEnvelopeV1` binds a pairing `requestId` and is admitted only by a local
+PENDING enrollment, so it cannot be repurposed for an already ACTIVE device by treating
+`rotationId` as a request ID. The server stores rotation packages but exposes no route for a
+remaining device to fetch and atomically apply its own package.
+
+A frozen decision is required for the rotation package envelope/plaintext/AAD, package retrieval
+binding, and ACTIVE-device install semantics. It must preserve one package per remaining device,
+bind the `rotationId` and recipient identity, and publish the new AMK/key ring atomically on the
+recipient. Do not reuse the pairing envelope or add an unbound blob fetch.
