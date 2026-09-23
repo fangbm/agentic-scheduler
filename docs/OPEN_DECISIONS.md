@@ -321,6 +321,20 @@ Decision: POST /v1/recovery/bootstrap is the only unauthenticated Recovery disco
           never enters RecoveryEnvelopeV1.
 Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005C
 ```
+## OD-046 — Active-device HPKE identity and rotation recipient directory
+
+```text
+Status: RESOLVED
+Decision: every ACTIVE device has one immutable canonical X25519 HPKE public identity persisted
+          by the server at activation. GET /v1/devices/active is bearer-authenticated and returns
+          exactly the caller account's non-revoked devices as sorted {deviceId, hpkePublicKey}
+          entries. Any ACTIVE device missing a valid key makes the directory fail closed.
+          Rotation excludes only the revoke target, while the server independently recomputes
+          the current remaining device IDs in the atomic transaction and rejects a stale/incomplete
+          package set.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-007A
+```
+
 ---
 
 # D9 Agent / context
