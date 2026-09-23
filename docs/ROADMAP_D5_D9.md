@@ -203,9 +203,9 @@ server stores opaque encrypted envelopes only
 ```
 
 Current D8 persistence baselines are client Room schema v11
-(outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
+(outbound eligibility plus ciphertext retry metadata) and server SQL schema v8
 (opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
-atomic rotation, recovery, and revocation metadata).
+atomic rotation, recovery/revocation metadata, and durable ACTIVE-device HPKE identities).
 The completion gate migrates and verifies the existing D8 implementation against the
 current `main` API. Its only remaining scope is production platform secret storage,
 AMK/recovery/pairing/content-key staging and application wiring, plus the frozen
