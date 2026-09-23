@@ -121,6 +121,18 @@ sealed interface ActiveDeviceDirectoryResult {
 data class RotationPackageUpload(val deviceId: String, val packageBase64Url: String)
 
 @Serializable
+data class RotationPackageResponse(
+    val rotationId: String,
+    val targetDeviceId: String,
+    val packageBase64Url: String,
+)
+
+data class StoredRotationPackage(
+    val rotationId: String,
+    val packageBytes: ByteArray,
+)
+
+@Serializable
 data class AtomicRevocationRequest(
     val rotationId: String,
     val recoveryEnvelopeBase64Url: String,
@@ -224,6 +236,7 @@ interface ServerSecurityLifecycleRepository {
     fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor?
     fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult
     fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult
+    fun rotationPackages(actor: AuthenticatedDevice): List<StoredRotationPackage>?
     fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
     fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?
