@@ -60,3 +60,16 @@ an InvalidProof race.
 
 Route, JDBC repository, client transport and contract tests are present on this branch. Full
 fresh-device restore/catch-up E2E remains required before D8 FINAL PASS.
+
+## BLOCKED_BY_DECISION — remaining-device rotation package discovery
+
+SYN-007 requires one HPKE package for every remaining active device, and the server correctly
+rejects an atomic rotation request whose package IDs do not exactly match that set. However, the
+authenticated client has no frozen device-directory route or response contract from which it can
+obtain the remaining active devices' current HPKE public keys. Local enrollment metadata contains
+only the calling device's key pair, while the server currently exposes only pending enrollments.
+
+A decision is required for the authenticated active-device directory used solely to construct a
+rotation package set: its response shape, treatment of revoked devices, and the source of each
+recipient's HPKE public key. Do not attempt a local-only rotation, reuse stale pending-enrollment
+records, or submit an incomplete package set.
