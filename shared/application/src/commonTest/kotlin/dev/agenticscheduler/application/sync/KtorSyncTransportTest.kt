@@ -121,6 +121,11 @@ class KtorSyncTransportTest {
                                 """[{"deviceId":"device","hpkePublicKeyBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}]""",
                                 headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                             )
+                        request.url.encodedPath.endsWith("/rotations/packages") ->
+                            respond(
+                                """[{"rotationId":"rotation-1","targetDeviceId":"device","packageBase64Url":"AQI"}]""",
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                            )
                         request.url.encodedPath.endsWith("/approve") -> respond("{}", status = HttpStatusCode.Created)
                         else -> respond("{}")
                     }
@@ -136,6 +141,9 @@ class KtorSyncTransportTest {
         val active = lifecycle.activeDevices()
         assertEquals("device", active.single().deviceId)
         assertEquals("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", active.single().hpkePublicKeyBase64Url)
+        val rotations = lifecycle.rotationPackages()
+        assertEquals("rotation-1", rotations.single().rotationId)
+        assertEquals("device", rotations.single().targetDeviceId)
         lifecycle.revokeDevice("target")
         assertEquals(null, requests.first().second)
         assertTrue(requests.drop(1).all { it.second == "Bearer ${credential.value}" })
