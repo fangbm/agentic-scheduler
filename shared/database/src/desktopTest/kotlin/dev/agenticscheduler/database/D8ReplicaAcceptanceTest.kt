@@ -140,6 +140,97 @@ class D8ReplicaAcceptanceTest {
     }
 
     @Test
+    fun `explicit resolution marker clears the same conflict on every replica`() = runBlocking {
+        val space = SyncSpaceId("personal-space")
+        val key = TinkSyncPayloadAead.generate()
+        val relay = OpaqueRelay()
+        val a = Replica("device-a", space, key)
+        val b = Replica("device-b", space, key)
+        val c = Replica("device-c", space, key)
+        try {
+            val eventId = id(30)
+            val baseReplica = id(31)
+            val leftReplica = id(32)
+            val rightReplica = id(33)
+            val base = EventImage(
+                eventId,
+                "Base",
+                EventTimeImage.AllDay(AllDayRangeImage("2026-02-01", "2026-02-02")),
+                FlexibilityImage.HARD,
+                PinStateImage.UNPINNED,
+            )
+            val initial = operation(id(34), emptyList(), baseReplica, 1, base.title, null, base)
+            val left = operation(id(35), listOf(VersionComponent(baseReplica, 1)), leftReplica, 1, "Left", base, base.copy(title = "Left"))
+            val right = operation(id(36), listOf(VersionComponent(baseReplica, 1)), rightReplica, 1, "Right", base, base.copy(title = "Right"))
+            listOf(initial, left, right).forEachIndexed { index, operation ->
+                relay.publish(DeviceId("resolution-source-${index + 1}"), operation, a.codec)
+            }
+            a.deliver(relay, listOf(1, 2, 3))
+            b.deliver(relay, listOf(1, 3, 2))
+            c.deliver(relay, listOf(1, 2, 3))
+            val conflictId = a.snapshot(eventId).openConflictId
+            assertEquals(conflictId, b.snapshot(eventId).openConflictId)
+            assertEquals(conflictId, c.snapshot(eventId).openConflictId)
+
+            // A causally-later ordinary USER edit must not clear the title conflict.
+            val ordinaryReplica = id(38)
+            val ordinary = SyncOperation(
+                id(37),
+                DvvSnapshot(
+                    listOf(
+                        VersionComponent(baseReplica, 1),
+                        VersionComponent(leftReplica, 1),
+                        VersionComponent(rightReplica, 1),
+                    ).sortedBy(VersionComponent::replicaId),
+                    DotSnapshot(ordinaryReplica, 1),
+                ),
+                HlcSnapshot(3, 0, ordinaryReplica),
+                MutationOrigin.User,
+                listOf(EventPut(
+                    base.copy(title = "Left"),
+                    base.copy(title = "Left", flexibility = FlexibilityImage.SOFT),
+                )),
+            )
+            relay.publish(DeviceId("ordinary-editor"), ordinary, a.codec)
+            a.receive(relay.at(4)); b.receive(relay.at(4)); c.receive(relay.at(4))
+            assertEquals(1, a.openConflictCount())
+            assertEquals(1, b.openConflictCount())
+            assertEquals(1, c.openConflictCount())
+
+            val resolutionReplica = id(40)
+            val resolution = SyncOperation(
+                id(39),
+                DvvSnapshot(
+                    listOf(
+                        VersionComponent(baseReplica, 1),
+                        VersionComponent(leftReplica, 1),
+                        VersionComponent(rightReplica, 1),
+                        VersionComponent(ordinaryReplica, 1),
+                    ).sortedBy(VersionComponent::replicaId),
+                    DotSnapshot(resolutionReplica, 1),
+                ),
+                HlcSnapshot(4, 0, resolutionReplica),
+                MutationOrigin.ConflictResolution(conflictId),
+                listOf(EventPut(
+                    base.copy(title = "Left", flexibility = FlexibilityImage.SOFT),
+                    base.copy(title = "Resolved", flexibility = FlexibilityImage.SOFT),
+                )),
+            )
+            relay.publish(DeviceId("resolver"), resolution, a.codec)
+            a.receive(relay.at(5)); b.receive(relay.at(5)); c.receive(relay.at(5))
+
+            listOf(a, b, c).forEach { replica ->
+                assertEquals("Resolved", replica.eventTitle(eventId))
+                assertEquals(0, replica.openConflictCount())
+                val conflict = requireNotNull(replica.conflict(conflictId))
+                assertEquals(SyncConflictStatus.RESOLVED, conflict.status)
+                assertEquals(MutationId(resolution.mutationId), conflict.resolutionMutationId)
+            }
+        } finally {
+            a.close(); b.close(); c.close()
+        }
+    }
+    @Test
     fun `offline local write retains exact ciphertext then catches up through opaque relay`() = runBlocking {
         val space = SyncSpaceId("personal-space")
         val key = TinkSyncPayloadAead.generate()
@@ -236,6 +327,8 @@ class D8ReplicaAcceptanceTest {
 
         suspend fun eventTitle(eventId: String): String? = events.get(EventId(eventId))?.title
         suspend fun cursor(): Long = receive.serverCursor(syncSpaceId)
+        suspend fun openConflictCount(): Int = receive.conflicts(syncSpaceId).count { it.status == SyncConflictStatus.OPEN }
+        suspend fun conflict(conflictId: String): SyncConflict? = receive.conflict(conflictId)
 
         suspend fun snapshot(eventId: String): ReplicaSnapshot {
             val event = requireNotNull(events.get(EventId(eventId)))

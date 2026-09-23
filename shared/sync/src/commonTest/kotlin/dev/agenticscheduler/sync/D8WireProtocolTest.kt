@@ -53,4 +53,17 @@ class D8WireProtocolTest {
             ),
         ),
     )
+    @Test
+    fun `conflict resolution origin round trips and unknown origin fails closed`() {
+        val resolution = payload.copy(operation = payload.operation.copy(
+            origin = MutationOrigin.ConflictResolution("conflict-1"),
+        ))
+        val encoded = SyncWireCodec.encodePayload(resolution)
+        val decoded = assertIs<PayloadDecodeResult.Supported>(SyncWireCodec.decodePayload(encoded))
+        assertEquals(MutationOrigin.ConflictResolution("conflict-1"), decoded.payload.operation.origin)
+
+        val future = encoded.replace("\"CONFLICT_RESOLUTION\"", "\"FUTURE_RESOLUTION\"")
+        val unsupported = assertIs<PayloadDecodeResult.UnsupportedMutation>(SyncWireCodec.decodePayload(future))
+        assertEquals("origin:FUTURE_RESOLUTION", unsupported.discriminator)
+    }
 }
