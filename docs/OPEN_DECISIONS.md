@@ -335,6 +335,20 @@ Decision: every ACTIVE device has one immutable canonical X25519 HPKE public ide
 Source: docs/SYNC_SECURITY_DECISIONS.md SYN-007A
 ```
 
+
+## OD-047 — Rotation key package lifecycle
+
+```text
+Status: RESOLVED
+Decision: D8 v1 uses distinct RotationKeyPackageEnvelopeV1/PlaintextV1 with
+          rotationId + targetDeviceId + keyEpoch bound into a domain-separated HPKE context.
+          Remaining ACTIVE devices fetch only their own opaque packages through authenticated
+          GET /v1/rotations/packages. ACTIVE apply atomically advances the complete key ring
+          and AMK reference without changing enrollment/HPKE/credential identity; same-epoch
+          replay cannot replace AMK, and pairing package semantics are never reused.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-007B
+```
+
 ---
 
 # D9 Agent / context
