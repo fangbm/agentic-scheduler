@@ -36,6 +36,10 @@ class RecoveryEnrollmentServiceTest {
         val active = assertIs<RecoveryEnrollmentServiceResult.Activated>(result).state
         assertEquals(active, fixture.enrollments.value)
         assertEquals(space, active.syncSpaceId)
+        assertEquals(
+            "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+            fixture.transport.request?.hpkePublicKeyBase64Url,
+        )
         assertEquals(5L, fixture.transport.request?.counter)
         assertEquals(
             RecoveryRegistrationProof.calculate(secret, account.value, 5),
