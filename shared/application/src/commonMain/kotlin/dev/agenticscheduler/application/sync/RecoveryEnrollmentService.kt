@@ -86,6 +86,7 @@ class RecoveryEnrollmentService(
                     accountId = accountId.value,
                     requestId = enrollmentRequestId.value,
                     targetDeviceId = deviceId.value,
+                    hpkePublicKeyBase64Url = pending.hpkePublicKey.value,
                     credentialHashBase64Url = DeviceCredentialHashing.sha256Base64Url(credential),
                     proofBase64Url = proof,
                     counter = bootstrap.counter,
