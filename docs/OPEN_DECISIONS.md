@@ -310,6 +310,17 @@ Decision: strict RecoveryEnvelopeV1; HMAC-SHA256 domain-separated PRF-KDF from t
           active key + complete retained historical decrypt ring and no credentials.
 Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005B
 ```
+## OD-045 — Fresh-device recovery bootstrap transport
+
+```text
+Status: RESOLVED
+Decision: POST /v1/recovery/bootstrap is the only unauthenticated Recovery discovery route.
+          Request carries accountId only; response carries current proof counter and opaque
+          RecoveryEnvelopeV1 only. Enrollment still requires the exact current rotating
+          RecoverySecret proof and atomically advances the counter/hash. The mutable counter
+          never enters RecoveryEnvelopeV1.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005C
+```
 ---
 
 # D9 Agent / context
