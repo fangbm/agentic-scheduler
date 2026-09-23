@@ -116,6 +116,11 @@ class KtorSyncTransportTest {
                             respond("[]", headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
                         request.url.encodedPath.endsWith("/recovery/envelope") && request.method == HttpMethod.Get ->
                             respond("""{"blobBase64Url":"AQI"}""", headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                        request.url.encodedPath.endsWith("/devices/active") ->
+                            respond(
+                                """[{"deviceId":"device","hpkePublicKeyBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}]""",
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                            )
                         request.url.encodedPath.endsWith("/approve") -> respond("{}", status = HttpStatusCode.Created)
                         else -> respond("{}")
                     }
@@ -128,6 +133,9 @@ class KtorSyncTransportTest {
         lifecycle.approveEnrollment("req", "AQI")
         lifecycle.saveRecoveryEnvelope("AQI")
         assertEquals("AQI", lifecycle.fetchRecoveryEnvelope())
+        val active = lifecycle.activeDevices()
+        assertEquals("device", active.single().deviceId)
+        assertEquals("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", active.single().hpkePublicKeyBase64Url)
         lifecycle.revokeDevice("target")
         assertEquals(null, requests.first().second)
         assertTrue(requests.drop(1).all { it.second == "Bearer ${credential.value}" })
@@ -173,7 +181,14 @@ class KtorSyncTransportTest {
             }
         }
         val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { error("unused") })
-        assertEquals("credential", lifecycle.bootstrap("invite", "device").deviceCredential)
+        assertEquals(
+            "credential",
+            lifecycle.bootstrap(
+                "invite",
+                "device",
+                "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+            ).deviceCredential,
+        )
         assertEquals(null, authorization)
         client.close()
     }
