@@ -135,6 +135,29 @@ class KtorSyncTransportTest {
     }
 
     @Test
+    fun `recovery bootstrap returns counter and opaque envelope without adding authorization`() = runBlocking {
+        var authorization: String? = null
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler { request ->
+                    authorization = request.headers[HttpHeaders.Authorization]
+                    respond(
+                        """{"counter":7,"recoveryEnvelopeBase64Url":"AQI"}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { error("unused") })
+        val bootstrap = lifecycle.recoveryBootstrap("account")
+        assertEquals(7L, bootstrap.counter)
+        assertEquals("AQI", bootstrap.recoveryEnvelopeBase64Url)
+        assertEquals(null, authorization)
+        client.close()
+    }
+
+    @Test
     fun `bootstrap returns first credential without adding authorization`() = runBlocking {
         var authorization: String? = null
         val client = HttpClient(MockEngine) {
