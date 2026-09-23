@@ -11,6 +11,7 @@ import dev.agenticscheduler.sync.RotationWireCodec
 import dev.agenticscheduler.sync.RotationWireDecodeResult
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncSpaceKeyPackageV1
+import dev.agenticscheduler.sync.decodeCanonicalBase64Url
 import dev.agenticscheduler.sync.encodeCanonicalBase64Url
 
 data class RotationKeyPackageBuildRequest(
@@ -353,4 +354,65 @@ private class RotationByteBuilder {
         )
     }
     fun toByteArray(): ByteArray = values.toByteArray()
+}
+
+
+sealed interface RotationPackageCatchUpResult {
+    data class Completed(val outcomes: List<RotationPackageOutcome>) : RotationPackageCatchUpResult
+    data object FetchFailed : RotationPackageCatchUpResult
+    data class InvalidRelayPackage(val rotationId: String) : RotationPackageCatchUpResult
+    data class ApplyFailed(val rotationId: String, val result: RotationKeyPackageApplyResult) : RotationPackageCatchUpResult
+}
+
+data class RotationPackageOutcome(
+    val rotationId: String,
+    val result: RotationKeyPackageApplyResult,
+)
+
+/**
+ * Pulls all opaque rotation packages for the current authenticated ACTIVE device and applies them
+ * in server order. V1 deliberately has no package-ack table; repeated fetches are expected and
+ * converge through Superseded / AlreadyApplied outcomes.
+ */
+class RotationPackageCatchUpService(
+    private val transport: RotationPackageTransport,
+    private val recipient: RotationKeyPackageRecipientService,
+) {
+    suspend fun catchUp(): RotationPackageCatchUpResult {
+        val remote = try {
+            transport.rotationPackages()
+        } catch (_: Throwable) {
+            return RotationPackageCatchUpResult.FetchFailed
+        }
+
+        val outcomes = ArrayList<RotationPackageOutcome>(remote.size)
+        for (item in remote) {
+            val encoded = try {
+                decodeCanonicalBase64Url(item.packageBase64Url, null, "Rotation package relay bytes")
+                    .decodeToString(throwOnInvalidSequence = true)
+            } catch (_: Throwable) {
+                return RotationPackageCatchUpResult.InvalidRelayPackage(item.rotationId)
+            }
+            val envelope = when (val decoded = RotationWireCodec.decodeEnvelope(encoded)) {
+                is RotationWireDecodeResult.Supported -> decoded.value
+                else -> return RotationPackageCatchUpResult.InvalidRelayPackage(item.rotationId)
+            }
+            if (
+                envelope.rotationId != item.rotationId ||
+                envelope.targetDeviceId.value != item.targetDeviceId
+            ) {
+                return RotationPackageCatchUpResult.InvalidRelayPackage(item.rotationId)
+            }
+
+            val applied = recipient.apply(envelope)
+            when (applied) {
+                is RotationKeyPackageApplyResult.Applied,
+                is RotationKeyPackageApplyResult.AlreadyApplied,
+                is RotationKeyPackageApplyResult.Superseded,
+                -> outcomes += RotationPackageOutcome(item.rotationId, applied)
+                else -> return RotationPackageCatchUpResult.ApplyFailed(item.rotationId, applied)
+            }
+        }
+        return RotationPackageCatchUpResult.Completed(outcomes)
+    }
 }
