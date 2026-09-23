@@ -71,6 +71,22 @@ data class OpaqueBlobResponse(val blobBase64Url: String)
 data class RecoveryProofRegistrationRequest(val proofHashBase64Url: String, val counter: Long)
 
 @Serializable
+data class RecoveryBootstrapRequest(val accountId: String)
+
+@Serializable
+data class RecoveryBootstrapResponse(
+    val counter: Long,
+    val recoveryEnvelopeBase64Url: String,
+)
+
+data class RecoveryBootstrapDescriptor(
+    val counter: Long,
+    val recoveryEnvelope: ByteArray,
+) {
+    init { require(counter >= 0) { "Recovery bootstrap counter must not be negative." } }
+}
+
+@Serializable
 data class RecoveryEnrollmentRequestWire(
     val accountId: String,
     val requestId: String,
@@ -188,6 +204,7 @@ interface ServerEnrollmentRepository {
 
 interface ServerSecurityLifecycleRepository {
     fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult
+    fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor?
     fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult
     fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
