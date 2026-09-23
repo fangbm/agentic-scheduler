@@ -390,3 +390,22 @@ SYN-015A  explicit CONFLICT_RESOLUTION(conflictId) cross-replica recognition rul
 `docs/OPEN_DECISIONS.md` records these as OD-044 and OD-034 respectively, both RESOLVED.
 Implementations and acceptance tests must follow those amendments exactly; no alternate
 inference-based resolution rule or recovery-envelope crypto is permitted.
+
+
+---
+
+### Fresh-device Recovery bootstrap amendment
+
+SYN-005C / OD-045 is frozen for D8 v1:
+
+```text
+POST /v1/recovery/bootstrap
+request:  accountId
+response: current recovery proof counter + opaque RecoveryEnvelopeV1
+```
+
+The route is intentionally unauthenticated because a fresh recovery device has no
+DeviceCredential. It grants no enrollment authority; `/v1/recovery/enroll` still requires the
+correct rotating RecoverySecret proof and atomically consumes the current counter. Stale
+bootstrap snapshots fail and must be retried. The mutable counter never enters
+RecoveryEnvelopeV1.
