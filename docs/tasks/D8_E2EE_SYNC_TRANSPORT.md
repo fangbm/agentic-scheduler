@@ -435,3 +435,30 @@ Revocation packages every directory device except the target. The server indepen
 the remaining ACTIVE device IDs inside the atomic revoke/rotate transaction; a membership race or
 stale directory produces InvalidPackageSet and requires refetch/rebuild. D8 v1 has no general API
 for replacing an ACTIVE device's HPKE public key.
+
+
+---
+
+### Rotation package lifecycle amendment
+
+SYN-007B / OD-047 is frozen for D8 v1.
+
+Rotation packages are distinct from pairing packages:
+
+```text
+RotationKeyPackageEnvelopeV1
+RotationKeyPackagePlaintextV1
+HPKE context binds:
+accountId + rotationId + targetDeviceId + rotationPackageVersion + keyEpoch
+```
+
+Remaining ACTIVE devices fetch their own opaque packages through authenticated
+`GET /v1/rotations/packages`. The server never decrypts or interprets package contents.
+
+Recipient apply requires an existing ACTIVE local enrollment. It preserves the existing
+deviceId, enrollmentRequestId, HPKE identity and DeviceCredential. Only the AMK reference and
+complete SyncSpace key ring may advance, and they are published atomically.
+
+Same-epoch Idempotent/Repaired replay MUST preserve the existing AMK reference. A rollback or
+integrity mismatch is rejected. Pairing `requestId` / PENDING admission semantics MUST NOT be
+reused for rotation.
