@@ -64,6 +64,7 @@ data class ClientRecoveryEnrollmentRequest(
     val accountId: String,
     val requestId: String,
     val targetDeviceId: String,
+    val hpkePublicKeyBase64Url: String,
     val credentialHashBase64Url: String,
     val proofBase64Url: String,
     val counter: Long,
@@ -78,6 +79,12 @@ interface RecoveryEnrollmentTransport {
     suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse
     suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated
 }
+
+@Serializable
+data class ClientActiveDeviceDirectoryEntry(
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
 
 @Serializable
 data class ClientRotationPackage(val deviceId: String, val packageBase64Url: String)
@@ -101,7 +108,11 @@ data class ClientBootstrapResponse(
 )
 
 @Serializable
-private data class ClientBootstrapRequest(val invitationToken: String, val deviceId: String)
+private data class ClientBootstrapRequest(
+    val invitationToken: String,
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
 
 @Serializable
 private data class ClientPackageUpload(val packageBase64Url: String)
@@ -123,10 +134,19 @@ class KtorSyncLifecycleTransport(
 
     init { require(this.baseUrl.startsWith("https://")) { "D8 sync transport requires HTTPS." } }
 
-    suspend fun bootstrap(invitationToken: String, deviceId: String): ClientBootstrapResponse {
+    suspend fun bootstrap(
+        invitationToken: String,
+        deviceId: String,
+        hpkePublicKeyBase64Url: String,
+    ): ClientBootstrapResponse {
         val response = client.post("$baseUrl/v1/bootstrap") {
             contentType(ContentType.Application.Json)
-            setBody(json.encodeToString(ClientBootstrapRequest.serializer(), ClientBootstrapRequest(invitationToken, deviceId)))
+            setBody(
+                json.encodeToString(
+                    ClientBootstrapRequest.serializer(),
+                    ClientBootstrapRequest(invitationToken, deviceId, hpkePublicKeyBase64Url),
+                ),
+            )
         }
         requireStatus(response, HttpStatusCode.Created)
         return decode(response.bodyAsText(), ClientBootstrapResponse.serializer())
@@ -207,6 +227,15 @@ class KtorSyncLifecycleTransport(
         val response = client.get("$baseUrl/v1/recovery/envelope") { authorization() }
         requireStatus(response, HttpStatusCode.OK)
         return decode(response.bodyAsText(), ClientBlob.serializer()).blobBase64Url
+    }
+
+    suspend fun activeDevices(): List<ClientActiveDeviceDirectoryEntry> {
+        val response = client.get("$baseUrl/v1/devices/active") { authorization() }
+        requireStatus(response, HttpStatusCode.OK)
+        return decode(
+            response.bodyAsText(),
+            kotlinx.serialization.builtins.ListSerializer(ClientActiveDeviceDirectoryEntry.serializer()),
+        )
     }
 
     suspend fun revokeDevice(deviceId: String) {
