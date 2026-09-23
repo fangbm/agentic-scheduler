@@ -90,6 +90,17 @@ data class ClientActiveDeviceDirectoryEntry(
 data class ClientRotationPackage(val deviceId: String, val packageBase64Url: String)
 
 @Serializable
+data class ClientRotationPackageResponse(
+    val rotationId: String,
+    val targetDeviceId: String,
+    val packageBase64Url: String,
+)
+
+interface RotationPackageTransport {
+    suspend fun rotationPackages(): List<ClientRotationPackageResponse>
+}
+
+@Serializable
 data class ClientAtomicRevocationRequest(
     val rotationId: String,
     val recoveryEnvelopeBase64Url: String,
@@ -129,7 +140,7 @@ class KtorSyncLifecycleTransport(
     baseUrl: String,
     private val deviceCredential: suspend () -> DeviceCredential?,
     private val json: Json = Json { encodeDefaults = true; ignoreUnknownKeys = true },
-) : RecoveryEnrollmentTransport {
+) : RecoveryEnrollmentTransport, RotationPackageTransport {
     private val baseUrl = baseUrl.trimEnd('/')
 
     init { require(this.baseUrl.startsWith("https://")) { "D8 sync transport requires HTTPS." } }
@@ -227,6 +238,15 @@ class KtorSyncLifecycleTransport(
         val response = client.get("$baseUrl/v1/recovery/envelope") { authorization() }
         requireStatus(response, HttpStatusCode.OK)
         return decode(response.bodyAsText(), ClientBlob.serializer()).blobBase64Url
+    }
+
+    override suspend fun rotationPackages(): List<ClientRotationPackageResponse> {
+        val response = client.get("$baseUrl/v1/rotations/packages") { authorization() }
+        requireStatus(response, HttpStatusCode.OK)
+        return decode(
+            response.bodyAsText(),
+            kotlinx.serialization.builtins.ListSerializer(ClientRotationPackageResponse.serializer()),
+        )
     }
 
     suspend fun activeDevices(): List<ClientActiveDeviceDirectoryEntry> {
