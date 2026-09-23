@@ -14,7 +14,7 @@ SYN-003 through SYN-019.
 | --- | --- | --- |
 | Existing-device pairing approval | `PairingApprovalServiceTest`: an ACTIVE local device approves only an account-matching remote pending request after an exact SAS comparison; pending/mismatched/SAS-mutated requests cannot export a package. | PASS |
 | Three-device concurrent convergence | `D8ReplicaAcceptanceTest`: three independent Room databases receive the same real Tink AES-GCM envelopes in three different orders; they converge on one canonical N-way conflict, its provisional projection, all handled dots and cursor. | PASS |
-| Duplicate delivery | The same three-device test redelivers a conflict participant and requires durable `Duplicate`, with no second conflict component. | PASS |
+| Duplicate delivery | The same three-device test redelivers a conflict participant and requires the same durable OPEN conflict outcome, with no second component; ordinary handled operations remain `Duplicate`. | PASS |
 | Offline/reconnect catch-up | `D8ReplicaAcceptanceTest`: a local Event write commits while the relay is unavailable, retains its first ciphertext, uploads exactly that ciphertext after reconnect, and a second Room replica catches up through `SyncTransportWorker`. | PASS |
 
 Local verification for the two replica-harness paths:

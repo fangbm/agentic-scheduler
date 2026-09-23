@@ -72,11 +72,19 @@ class SyncEngine(
                     }
                     // A conflict/quarantine may not append the operation to the
                     // local journal, but its handled dot remains the durable
-                    // MutationId dedupe record. Do not reinterpret a replay as
-                    // a merely causally-known operation.
+                    // MutationId dedupe record. Replays of an operation that is
+                    // still part of the current OPEN conflict reproduce that
+                    // durable outcome; ordinary handled operations are Duplicate.
                     receiveState.removePending(receipt.syncSpaceId, operation.mutationId)
                     advanceCursor(receipt)
-                    return@inWriteTransaction SyncReceiveResult.Duplicate(MutationId(operation.mutationId))
+                    val openConflict = receiveState.conflicts(receipt.syncSpaceId)
+                        .singleOrNull { conflict ->
+                            conflict.status == SyncConflictStatus.OPEN &&
+                                conflict.participants.any { it.mutationId.value == operation.mutationId }
+                        }
+                    return@inWriteTransaction openConflict
+                        ?.let { SyncReceiveResult.Conflicted(it.conflictId, it.kind) }
+                        ?: SyncReceiveResult.Duplicate(MutationId(operation.mutationId))
                 }
                 val missingPrerequisites = missingCausalPrerequisites(receipt.syncSpaceId, operation)
                 if (missingPrerequisites.isNotEmpty()) {

@@ -116,9 +116,12 @@ class D8ReplicaAcceptanceTest {
             b.deliver(relay, listOf(1, 3, 4, 2))
             c.deliver(relay, listOf(1, 4, 2, 3))
 
-            // A repeated stored envelope is a durable no-op, not a second conflict component.
+            // A repeated conflict participant is idempotent and reproduces the
+            // current durable conflict outcome; it never creates a second component.
             assertIs<EncryptedSyncReceiveResult.Handled>(a.receive(relay.at(4))).let { handled ->
-                assertEquals(SyncReceiveResult.Duplicate(MutationId(updateC.mutationId)), handled.result)
+                val repeated = assertIs<SyncReceiveResult.Conflicted>(handled.result)
+                assertEquals(SyncConflictKind.SEMANTIC, repeated.kind)
+                assertEquals(a.snapshot(eventId).openConflictId, repeated.conflictId)
             }
 
             val snapshots = listOf(a, b, c).map { it.snapshot(eventId) }
