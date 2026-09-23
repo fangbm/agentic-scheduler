@@ -55,6 +55,7 @@ class D8WireProtocolTest {
     )
     @Test
     fun `conflict resolution origin round trips and unknown origin fails closed`() {
+        val payload = SyncPayloadV1(operation = operation())
         val resolution = payload.copy(operation = payload.operation.copy(
             origin = MutationOrigin.ConflictResolution("conflict-1"),
         ))
