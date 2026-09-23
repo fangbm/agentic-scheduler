@@ -107,6 +107,7 @@ object SyncWireCodec {
         val version = objectValue.int("payloadVersion")
         if (version != PAYLOAD_VERSION) return PayloadDecodeResult.UnsupportedVersion(version)
         unknownMutationDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation(it) }
+        unknownOriginDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation("origin:$it") }
         return try {
             PayloadDecodeResult.Supported(json.decodeFromJsonElement(SyncPayloadV1.serializer(), objectValue))
         } catch (failure: SerializationException) {
@@ -130,10 +131,21 @@ object SyncWireCodec {
             .firstOrNull { it !in knownMutationDiscriminators }
     }
 
+    private fun unknownOriginDiscriminator(payload: JsonObject): String? {
+        val operation = payload["operation"] as? JsonObject ?: return null
+        val origin = operation["origin"] as? JsonObject ?: return null
+        val discriminator = origin["type"]?.jsonPrimitive?.contentOrNull ?: return null
+        return discriminator.takeUnless(knownOriginDiscriminators::contains)
+    }
+
     private val knownMutationDiscriminators = setOf(
         "EventPut", "TaskPut", "PlanningProfilePut", "FocusBlockPut", "FocusBlockDelete",
         "WorkLogAppend", "TaskDependencyPut", "AcademicYearPut", "SemesterPut", "CoursePut",
         "PeriodTemplatePut", "AcademicHolidayPut", "CourseScheduleRulePut",
         "CourseOccurrenceExceptionPut", "ExamPut",
+    )
+
+    private val knownOriginDiscriminators = setOf(
+        "USER", "PLANNER", "SYSTEM", "CONFLICT_RESOLUTION", "UNDO",
     )
 }

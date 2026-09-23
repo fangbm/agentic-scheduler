@@ -98,6 +98,7 @@ class SyncEngine(
                     ))
                     return@inWriteTransaction SyncReceiveResult.PendingCausalGap(MutationId(operation.mutationId), missingPrerequisites)
                 }
+                val resolutionTarget = validateResolutionIntent(receipt.syncSpaceId, operation)
                 integrityConflict(receipt.syncSpaceId, operation)?.let { outcome ->
                     persistConflictComponent(outcome.conflict, outcome.supersededConflictIds)
                     saveReceivedCausality(operation)
@@ -120,10 +121,10 @@ class SyncEngine(
                             advanceCursor(receipt)
                             SyncReceiveResult.Conflicted(outcome.conflict.conflictId, outcome.conflict.kind)
                         }
-                        is SemanticMergeOutcome.Merged -> commitReceived(operation, outcome.effectiveOperation, receipt)
+                        is SemanticMergeOutcome.Merged -> commitReceived(operation, outcome.effectiveOperation, receipt, resolutionTarget)
                     }
                     CausalRelation.AFTER -> {
-                        commitReceived(operation, operation, receipt)
+                        commitReceived(operation, operation, receipt, resolutionTarget)
                     }
                 }
             }
@@ -186,14 +187,55 @@ class SyncEngine(
         } }
     }
 
-    private suspend fun commitReceived(original: SyncOperation, effective: SyncOperation, receipt: DecryptedPayloadReceipt): SyncReceiveResult {
+    private suspend fun commitReceived(
+        original: SyncOperation,
+        effective: SyncOperation,
+        receipt: DecryptedPayloadReceipt,
+        resolutionTarget: SyncConflict?,
+    ): SyncReceiveResult {
         apply(effective)
         journal.appendCommittedMutation(CommittedMutation(original, wallClock.nowEpochMillis(), outboundEligible = false))
         journal.advanceFocusBlockTombstones(original, original.orderedMutations.filterIsInstance<FocusBlockDelete>())
         saveReceivedCausality(original)
         markHandled(receipt.syncSpaceId, original)
+        if (resolutionTarget != null) {
+            val current = receiveState.conflict(resolutionTarget.conflictId)
+            if (current?.status == SyncConflictStatus.OPEN) {
+                receiveState.saveConflict(current.copy(
+                    status = SyncConflictStatus.RESOLVED,
+                    resolutionMutationId = MutationId(original.mutationId),
+                ))
+            }
+        }
         advanceCursor(receipt)
         return SyncReceiveResult.Applied(MutationId(original.mutationId))
+    }
+
+    /** SYN-015A fail-closed recognition of explicit cross-replica resolution intent. */
+    private suspend fun validateResolutionIntent(syncSpaceId: SyncSpaceId, operation: SyncOperation): SyncConflict? {
+        val marker = operation.origin as? MutationOrigin.ConflictResolution ?: return null
+        val conflict = receiveState.conflict(marker.conflictId)
+            ?: throw IllegalArgumentException("Conflict resolution references an unknown conflict.")
+        require(conflict.syncSpaceId == syncSpaceId) { "Conflict resolution targets another SyncSpace." }
+        if (conflict.status != SyncConflictStatus.OPEN) return null
+
+        val observed = operation.dvv.toDottedVersionVector().observedContext()
+        require(conflict.participants.all { participant ->
+            participant.dvv.toDottedVersionVector().observedContext()
+                .all { (replica, counter) -> (observed[replica] ?: -1L) >= counter }
+        }) { "Conflict resolution must observe every conflict participant." }
+
+        val refs = conflict.entityRefs.associateBy { it.entityKind to it.entityId }
+        require(operation.orderedMutations.map { it.entityKind to it.entityId }.toSet() == refs.keys) {
+            "Conflict resolution must address exactly the conflicted entities."
+        }
+        operation.orderedMutations.forEach { mutation ->
+            val ref = requireNotNull(refs[mutation.entityKind to mutation.entityId])
+            require(mutation.changedSemanticGroups().map(SemanticGroupValue::name).all(ref.groups::contains)) {
+                "Conflict resolution changes a group outside the conflict."
+            }
+        }
+        return conflict
     }
 
     /**

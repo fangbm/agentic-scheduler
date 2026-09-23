@@ -13,8 +13,9 @@ sealed interface SyncConflictResolutionResult {
 }
 
 /**
- * SYN-015's explicit local resolution path. It creates an ordinary USER mutation
- * that causally dominates all candidates, then marks the durable conflict resolved
+ * SYN-015/SYN-015A explicit local resolution path. It emits a
+ * CONFLICT_RESOLUTION mutation that causally dominates all candidates, then marks
+ * the durable conflict resolved
  * in the same MutationCoordinator transaction.
  */
 class SyncConflictResolutionService(
@@ -34,7 +35,7 @@ class SyncConflictResolutionService(
             SyncConflictStatus.OPEN -> Unit
         }
         return try {
-            val execution = mutations.execute(MutationOrigin.User, onCommitted = { committed ->
+            val execution = mutations.execute(MutationOrigin.ConflictResolution(conflictId), onCommitted = { committed ->
                 val operation = requireNotNull(history.mutation(committed.mutationId.value)).operation
                 require(observesAll(operation, committed.value.participants)) { "Resolution MutationId must observe every conflict participant." }
                 receiveState.saveConflict(committed.value.copy(status = SyncConflictStatus.RESOLVED, resolutionMutationId = committed.mutationId))

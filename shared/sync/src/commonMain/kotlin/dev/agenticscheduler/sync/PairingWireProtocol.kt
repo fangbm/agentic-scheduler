@@ -198,7 +198,7 @@ private val unpaddedUrlSafeBase64 = Base64.UrlSafe.withPadding(Base64.PaddingOpt
 private fun Char.isAsciiLetterOrDigit(): Boolean = this in 'a'..'z' || this in 'A'..'Z' || this in '0'..'9'
 
 /** Minimal JSON syntax walk used only to reject duplicate decoded object keys before serialization. */
-private object StrictJsonObjectKeys {
+internal object StrictJsonObjectKeys {
     fun hasNoDuplicateKeys(input: String): Boolean = try {
         val parser = Parser(input)
         parser.value()
