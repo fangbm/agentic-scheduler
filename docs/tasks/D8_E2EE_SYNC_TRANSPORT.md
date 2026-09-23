@@ -409,3 +409,29 @@ DeviceCredential. It grants no enrollment authority; `/v1/recovery/enroll` still
 correct rotating RecoverySecret proof and atomically consumes the current counter. Stale
 bootstrap snapshots fail and must be retried. The mutable counter never enters
 RecoveryEnvelopeV1.
+
+
+---
+
+### Active-device HPKE directory amendment
+
+SYN-007A / OD-046 is frozen for D8 v1:
+
+```text
+every ACTIVE device
+=> one immutable canonical X25519 HPKE public identity persisted by the server
+
+GET /v1/devices/active
+Authorization: Bearer DeviceCredential
+=> exact non-revoked account devices
+=> sorted by deviceId
+=> { deviceId, hpkePublicKeyBase64Url } only
+```
+
+Initial bootstrap, approved pairing, and Recovery enrollment must all persist the device HPKE
+public key at activation. The directory fails closed if any ACTIVE device lacks a valid key.
+
+Revocation packages every directory device except the target. The server independently recomputes
+the remaining ACTIVE device IDs inside the atomic revoke/rotate transaction; a membership race or
+stale directory produces InvalidPackageSet and requires refetch/rebuild. D8 v1 has no general API
+for replacing an ACTIVE device's HPKE public key.
