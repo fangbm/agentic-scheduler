@@ -4,6 +4,7 @@ import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class PostgresMigrationIntegrationTest {
     @Test
@@ -34,6 +35,15 @@ class PostgresMigrationIntegrationTest {
                     ).use { result ->
                         result.next()
                         assertEquals(4, result.getInt(1))
+                    }
+                }
+                connection.createStatement().use { statement ->
+                    statement.executeQuery(
+                        "SELECT COUNT(*) FROM information_schema.columns " +
+                            "WHERE table_name = 'device' AND column_name = 'hpke_public_key'",
+                    ).use { result ->
+                        result.next()
+                        assertTrue(result.getInt(1) == 1)
                     }
                 }
             }
