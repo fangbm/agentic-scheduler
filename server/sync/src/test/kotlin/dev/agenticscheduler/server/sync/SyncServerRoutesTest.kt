@@ -139,6 +139,24 @@ class SyncServerRoutesTest {
         }.status)
     }
 
+
+    @Test
+    fun `rotation package fetch is bearer bound to current device`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/rotations/packages").status)
+
+        val response = client.get("/v1/rotations/packages") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("\"rotationId\":\"rotation-1\""))
+        assertTrue(body.contains("\"targetDeviceId\":\"device\""))
+        assertTrue(body.contains("\"packageBase64Url\":\"AQI\""))
+    }
+
     @Test
     fun `atomic revocation accepts opaque package set`() = testApplication {
         val repository = FakeRepository()
@@ -322,6 +340,9 @@ class SyncServerRoutesTest {
                     ActiveDeviceDirectoryEntry("device-b", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
                 ),
             )
+
+        override fun rotationPackages(actor: AuthenticatedDevice): List<StoredRotationPackage>? =
+            listOf(StoredRotationPackage("rotation-1", byteArrayOf(1, 2)))
 
         override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
             AtomicRevocationResult.Applied
