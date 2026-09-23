@@ -488,6 +488,78 @@ No new payload may be encrypted with a revoked epoch after rotation commits loca
 
 ---
 
+## SYN-007A — Active-device HPKE identity and rotation recipient directory
+
+> Status: **APPROVED AMENDMENT — frozen during D8 completion acceptance**
+
+Every ACTIVE device has exactly one server-persisted canonical HPKE public identity:
+
+```text
+deviceId
+hpkePublicKeyBase64Url
+```
+
+The public key uses the SYN-006A representation exactly: raw X25519 public key bytes,
+exactly 32 bytes, encoded as unpadded canonical base64url (43 characters).
+
+The server persists that key when the device first becomes active:
+
+```text
+initial invitation bootstrap
+    client generates/persists HPKE identity first
+    -> BootstrapRequest.hpkePublicKeyBase64Url
+    -> device.hpke_public_key
+
+approved secondary pairing
+    device_enrollment_request.hpke_public_key
+    -> approval transaction
+    -> device.hpke_public_key
+
+Recovery enrollment
+    local PENDING hpkePublicKey
+    -> RecoveryEnrollmentRequestWire.hpkePublicKeyBase64Url
+    -> recovery enrollment transaction
+    -> device.hpke_public_key
+```
+
+Once ACTIVE, D8 v1 has no general API that replaces a device HPKE public key. A future
+device-key rotation mechanism requires a separate authenticated/recovery-backed decision.
+
+Rotation recipient discovery uses one authenticated route:
+
+```text
+GET /v1/devices/active
+Authorization: Bearer DeviceCredential
+
+200 [
+  {
+    "deviceId": "...",
+    "hpkePublicKeyBase64Url": "..."
+  }
+]
+```
+
+The response contains exactly the caller account's devices whose `revoked_at IS NULL`,
+including the caller, sorted lexicographically by `deviceId`. It exposes no credential hash,
+Recovery state, membership history, private key, or user content.
+
+The directory is all-or-nothing. If any ACTIVE device lacks a valid 32-byte HPKE public key,
+the server returns `DEVICE_DIRECTORY_INCOMPLETE`; it MUST NOT silently omit that device.
+
+For revocation, the client fetches the directory, excludes only the target device, and creates
+one HPKE rotation package for every other returned device. The server then independently
+recomputes the current remaining ACTIVE device IDs inside the atomic revoke/rotate transaction.
+If the package IDs no longer exactly match, the whole rotation is rejected as
+`InvalidPackageSet`; the client refetches the directory and rebuilds the rotation. No directory
+revision/ETag is required in D8 v1.
+
+Server migration V8 adds `device.hpke_public_key` and backfills approved pre-final pairing
+devices from `device_enrollment_request` when possible. Legacy development devices that cannot
+be backfilled remain explicitly incomplete and block directory use until reset/re-enrollment;
+they are never omitted from recipient calculation.
+
+---
+
 # SYN-008 — Server/account authentication
 
 D8 v1 is self-host friendly and does not introduce passwords/OAuth as a hidden dependency.
