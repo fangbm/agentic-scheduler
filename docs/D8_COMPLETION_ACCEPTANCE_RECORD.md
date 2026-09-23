@@ -80,16 +80,19 @@ directory versioning.
 Directory/server/client/migration contract coverage is present on this branch. Full revoke/rotate
 E2E remains required before D8 FINAL PASS.
 
-## BLOCKED_BY_DECISION — rotation package wire and recipient delivery
+## Rotation package wire and recipient delivery — RESOLVED
 
-SYN-007A resolves which devices receive a rotation package, but not the package's byte-level
-contract or its recipient lifecycle. `ClientRotationPackage` currently carries opaque bytes only;
-the existing `KeyPackageEnvelopeV1` binds a pairing `requestId` and is admitted only by a local
-PENDING enrollment, so it cannot be repurposed for an already ACTIVE device by treating
-`rotationId` as a request ID. The server stores rotation packages but exposes no route for a
-remaining device to fetch and atomically apply its own package.
+SYN-007B / OD-047 freezes a rotation-specific HPKE package. It is domain-separated from pairing,
+binds `rotationId + targetDeviceId + keyEpoch`, and has strict outer/plaintext schemas carrying
+the new AMK plus the complete active/historical SyncSpace key ring.
 
-A frozen decision is required for the rotation package envelope/plaintext/AAD, package retrieval
-binding, and ACTIVE-device install semantics. It must preserve one package per remaining device,
-bind the `rotationId` and recipient identity, and publish the new AMK/key ring atomically on the
-recipient. Do not reuse the pairing envelope or add an unbound blob fetch.
+Remaining ACTIVE devices fetch only their own opaque rows through authenticated
+`GET /v1/rotations/packages`. The client verifies the transport wrapper against the strict HPKE
+envelope before applying it.
+
+ACTIVE apply never reuses pairing activation semantics. Installed/Advanced packages atomically
+publish the key ring and new ACTIVE AMK reference while preserving device/enrollment/HPKE/
+credential identity. Idempotent/Repaired replay keeps the existing AMK; rollback/integrity errors
+fail closed. Exact wire/context and ACTIVE replay tests are present on this branch.
+
+Full revoke/rotate multi-device E2E remains required before D8 FINAL PASS.
