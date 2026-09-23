@@ -419,8 +419,8 @@ private fun SyncSpaceContentKeyRecord.toMetadata() = SyncSpaceContentKeyMetadata
 
 private fun LocalPairingEnrollmentRecord.toLocalEnrollmentState(): LocalEnrollmentState = when (status) {
     "PENDING" -> {
-        require(syncSpaceId == null && accountMasterKeySecretRef == null && deviceCredentialSecretRef == null) {
-            "Pending local enrollment must not carry active secret references."
+        require(syncSpaceId == null && accountMasterKeySecretRef == null) {
+            "Pending local enrollment must not carry active SyncSpace or AMK references."
         }
         LocalEnrollmentState.Pending(
             dev.agenticscheduler.sync.AccountId(accountId),
@@ -428,6 +428,7 @@ private fun LocalPairingEnrollmentRecord.toLocalEnrollmentState(): LocalEnrollme
             dev.agenticscheduler.sync.EnrollmentRequestId(enrollmentRequestId),
             dev.agenticscheduler.sync.HpkePublicKeyBase64Url(hpkePublicKeyBase64Url),
             SecretReference(hpkePrivateKeySecretRef),
+            deviceCredentialSecretRef?.let(::SecretReference),
         )
     }
     "ACTIVE" -> LocalEnrollmentState.Active(
@@ -445,7 +446,7 @@ private fun LocalPairingEnrollmentRecord.toLocalEnrollmentState(): LocalEnrollme
 
 private fun LocalEnrollmentState.Pending.toRecord() = LocalPairingEnrollmentRecord(
     accountId.value, deviceId.value, enrollmentRequestId.value, hpkePublicKey.value, hpkePrivateKeyReference.value,
-    "PENDING", null, null, null,
+    "PENDING", null, null, deviceCredentialReference?.value,
 )
 
 private fun LocalEnrollmentState.Active.toRecord() = LocalPairingEnrollmentRecord(

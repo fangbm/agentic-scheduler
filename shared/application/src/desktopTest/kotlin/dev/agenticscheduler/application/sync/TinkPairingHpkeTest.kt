@@ -54,6 +54,7 @@ class TinkPairingHpkeTest {
             plaintext.requestId,
             recipient.publicKey,
             SecretReference("secure://pairing-private/1"),
+            SecretReference("secure://credential/1"),
         )
         assertEquals(
             DecryptKeyPackageResult.Admitted(plaintext),

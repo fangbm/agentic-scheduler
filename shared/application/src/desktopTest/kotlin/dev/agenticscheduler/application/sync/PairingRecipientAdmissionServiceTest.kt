@@ -22,7 +22,11 @@ class PairingRecipientAdmissionServiceTest {
     private val request = EnrollmentRequestId("req-1")
     private val space = SyncSpaceId("personal-space")
     private val publicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
-    private val pending = LocalEnrollmentState.Pending(account, device, request, publicKey, SecretReference("secure://pairing-private/1"))
+    private val pending = LocalEnrollmentState.Pending(
+        account, device, request, publicKey,
+        SecretReference("secure://pairing-private/1"),
+        SecretReference("secure://credential/1"),
+    )
     private val raw = ByteArray(32) { it.toByte() }
     private val plaintext = KeyPackagePlaintextV1(
         accountId = account,
@@ -38,7 +42,7 @@ class PairingRecipientAdmissionServiceTest {
         val enrollments = MemoryEnrollments(pending)
         val service = service(enrollments, AccountStore(SecretReference("secure://amk/1")))
 
-        val result = service.admit(envelope(), SecretReference("secure://credential/1"))
+        val result = service.admit(envelope())
 
         val active = assertIs<PairingRecipientAdmissionResult.Activated>(result).state
         assertEquals(active, enrollments.value)
@@ -51,8 +55,22 @@ class PairingRecipientAdmissionServiceTest {
         val enrollments = MemoryEnrollments(pending)
         val service = service(enrollments, AccountStore(null))
 
-        assertEquals(PairingRecipientAdmissionResult.AccountMasterKeyImportFailed, service.admit(envelope(), SecretReference("secure://credential/1")))
+        assertEquals(PairingRecipientAdmissionResult.AccountMasterKeyImportFailed, service.admit(envelope()))
         assertEquals(pending, enrollments.value)
+    }
+
+    @Test
+    fun `legacy pending enrollment without a staged credential fails closed`() = runBlocking {
+        val legacy = pending.copy(deviceCredentialReference = null)
+        val enrollments = MemoryEnrollments(legacy)
+        val accounts = AccountStore(SecretReference("secure://amk/1"))
+
+        assertEquals(
+            PairingRecipientAdmissionResult.MissingDeviceCredential,
+            service(enrollments, accounts).admit(envelope()),
+        )
+        assertEquals(0, accounts.imports)
+        assertEquals(legacy, enrollments.value)
     }
 
     @Test
@@ -61,7 +79,7 @@ class PairingRecipientAdmissionServiceTest {
         val accounts = AccountStore(SecretReference("secure://amk/1"))
         val service = service(enrollments, accounts)
 
-        assertEquals(PairingRecipientAdmissionResult.IdentityMismatch, service.admit(envelope().copy(keyEpoch = 9), SecretReference("secure://credential/1")))
+        assertEquals(PairingRecipientAdmissionResult.IdentityMismatch, service.admit(envelope().copy(keyEpoch = 9)))
         assertEquals(0, accounts.imports)
         assertEquals(pending, enrollments.value)
     }
@@ -72,8 +90,8 @@ class PairingRecipientAdmissionServiceTest {
         val accounts = AccountStore(SecretReference("secure://amk/1"))
         val service = service(enrollments, accounts)
 
-        assertIs<PairingRecipientAdmissionResult.Activated>(service.admit(envelope(), SecretReference("secure://credential/1")))
-        assertEquals(PairingRecipientAdmissionResult.NotPending, service.admit(envelope(), SecretReference("secure://credential/1")))
+        assertIs<PairingRecipientAdmissionResult.Activated>(service.admit(envelope()))
+        assertEquals(PairingRecipientAdmissionResult.NotPending, service.admit(envelope()))
         assertEquals(1, accounts.imports)
     }
 

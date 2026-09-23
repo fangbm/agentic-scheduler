@@ -67,6 +67,7 @@ class PairingApprovalServiceTest {
             EnrollmentRequestId("pending-request"),
             publicKey(0),
             SecretReference("secure://private/pending"),
+            SecretReference("secure://credential/pending"),
         )
 
         assertEquals(PairingApprovalResult.NotActive, service(pending, hpke).approve(account, remoteRequest, sas(remoteRequest)))

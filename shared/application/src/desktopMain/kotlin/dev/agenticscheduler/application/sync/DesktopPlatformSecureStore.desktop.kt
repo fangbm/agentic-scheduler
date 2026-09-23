@@ -2,6 +2,7 @@ package dev.agenticscheduler.application.sync
 
 import com.sun.jna.platform.win32.Crypt32Util
 import com.sun.jna.platform.win32.WinCrypt.CRYPTPROTECT_UI_FORBIDDEN
+import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
 import java.util.prefs.Preferences
@@ -33,6 +34,20 @@ class DesktopPlatformSecureStore private constructor(
 
     override suspend fun store(value: DeviceCredential): SecretReference =
         store(SecretKind.DEVICE_CREDENTIAL, value.value.encodeToByteArray())
+
+    override suspend fun generate(): GeneratedDeviceCredential {
+        val raw = ByteArray(CONTENT_KEY_BYTES)
+        SecureRandom().nextBytes(raw)
+        val credential = try {
+            DeviceCredential(Base64.getUrlEncoder().withoutPadding().encodeToString(raw))
+        } finally {
+            raw.fill(0)
+        }
+        return GeneratedDeviceCredential(
+            reference = store(credential),
+            hashBase64Url = DeviceCredentialHashing.sha256Base64Url(credential),
+        )
+    }
 
     override suspend fun load(reference: SecretReference): DeviceCredential? =
         try {

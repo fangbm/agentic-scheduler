@@ -5,6 +5,7 @@ import android.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.security.KeyStore
+import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -16,6 +17,20 @@ import android.security.keystore.KeyProperties
 /** Android/Wear secure credential store; preferences contain ciphertext only. */
 class AndroidKeystoreDeviceCredentialStore(context: Context) : PlatformDeviceCredentialStore {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    override suspend fun generate(): GeneratedDeviceCredential {
+        val raw = ByteArray(CREDENTIAL_BYTES)
+        SecureRandom().nextBytes(raw)
+        val credential = try {
+            DeviceCredential(Base64.encodeToString(raw, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+        } finally {
+            raw.fill(0)
+        }
+        return GeneratedDeviceCredential(
+            reference = store(credential),
+            hashBase64Url = DeviceCredentialHashing.sha256Base64Url(credential),
+        )
+    }
 
     override suspend fun store(value: DeviceCredential): SecretReference = withContext(Dispatchers.IO) {
         val id = UUID.randomUUID().toString()
@@ -70,5 +85,6 @@ class AndroidKeystoreDeviceCredentialStore(context: Context) : PlatformDeviceCre
         const val PREFERENCES = "agentic-scheduler-secure-credential-v1"
         const val REFERENCE_PREFIX = "android-keystore://device-credential/"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val CREDENTIAL_BYTES = 32
     }
 }

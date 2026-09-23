@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import java.security.KeyStore
+import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -37,6 +38,20 @@ class AndroidKeystoreSecureStore(
 
     override suspend fun store(value: DeviceCredential): SecretReference =
         store(SecretKind.DEVICE_CREDENTIAL, value.value.encodeToByteArray())
+
+    override suspend fun generate(): GeneratedDeviceCredential {
+        val raw = ByteArray(CONTENT_KEY_BYTES)
+        SecureRandom().nextBytes(raw)
+        val credential = try {
+            DeviceCredential(Base64.encodeToString(raw, Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+        } finally {
+            raw.fill(0)
+        }
+        return GeneratedDeviceCredential(
+            reference = store(credential),
+            hashBase64Url = DeviceCredentialHashing.sha256Base64Url(credential),
+        )
+    }
 
     override suspend fun load(reference: SecretReference): DeviceCredential? =
         try {

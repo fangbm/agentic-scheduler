@@ -63,10 +63,21 @@ value class DeviceCredential(val value: String) {
 
 /** Platform-secure storage boundary; ordinary Room rows retain only SecretReference. */
 interface PlatformDeviceCredentialStore {
+    /**
+     * Generates and stores the target device's 256-bit bearer credential.
+     * The plaintext credential never crosses this platform boundary; callers
+     * receive only its opaque reference and the server-safe SHA-256 hash.
+     */
+    suspend fun generate(): GeneratedDeviceCredential
     suspend fun store(value: DeviceCredential): SecretReference
     suspend fun load(reference: SecretReference): DeviceCredential?
     suspend fun delete(reference: SecretReference)
 }
+
+data class GeneratedDeviceCredential(
+    val reference: SecretReference,
+    val hashBase64Url: String,
+)
 
 sealed interface SyncKeyEpochRotationResult {
     data class Installed(val keyEpoch: Long, val result: InstallSyncSpaceKeyEpochResult) : SyncKeyEpochRotationResult

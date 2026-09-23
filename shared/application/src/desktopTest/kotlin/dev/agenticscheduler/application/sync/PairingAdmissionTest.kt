@@ -16,7 +16,8 @@ class PairingAdmissionTest {
     private val publicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
     private val key = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
     private val pending = LocalEnrollmentState.Pending(
-        AccountId("acct-1"), DeviceId("device-1"), EnrollmentRequestId("req-1"), publicKey, SecretReference("secure://pairing-private/1"),
+        AccountId("acct-1"), DeviceId("device-1"), EnrollmentRequestId("req-1"), publicKey,
+        SecretReference("secure://pairing-private/1"), SecretReference("secure://credential/1"),
     )
     private val plaintext = KeyPackagePlaintextV1(
         accountId = AccountId("acct-1"), requestId = EnrollmentRequestId("req-1"), targetDeviceId = DeviceId("device-1"), keyEpoch = 8,

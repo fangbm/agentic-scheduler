@@ -32,6 +32,9 @@ class DesktopPlatformSecureStoreTest {
         val credential = DeviceCredential("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
         val credentialReference = first.store(credential)
         assertEquals(credential, second.load(credentialReference))
+        val generatedCredential = first.generate()
+        val generatedValue = assertNotNull(second.load(generatedCredential.reference))
+        assertEquals(DeviceCredentialHashing.sha256Base64Url(generatedValue), generatedCredential.hashBase64Url)
 
         val device = first.generatePairingDeviceKey()
         val restored = assertNotNull(second.privateKey(device.privateKeyReference))
@@ -46,6 +49,8 @@ class DesktopPlatformSecureStoreTest {
         assertNull(second.contentAead(content.reference))
         first.delete(credentialReference)
         assertNull(second.load(credentialReference))
+        first.delete(generatedCredential.reference)
+        assertNull(second.load(generatedCredential.reference))
         assertNull(second.contentAead(SecretReference(backend.referencePrefix + "00000000-0000-0000-0000-000000000000")))
     }
 

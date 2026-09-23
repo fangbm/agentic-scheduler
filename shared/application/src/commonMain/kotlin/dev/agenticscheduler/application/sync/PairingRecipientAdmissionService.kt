@@ -15,6 +15,7 @@ sealed interface PairingRecipientAdmissionResult {
     data class Activated(val state: LocalEnrollmentState.Active) : PairingRecipientAdmissionResult
     data object NotPending : PairingRecipientAdmissionResult
     data object MissingPrivateKey : PairingRecipientAdmissionResult
+    data object MissingDeviceCredential : PairingRecipientAdmissionResult
     data object AuthenticationFailed : PairingRecipientAdmissionResult
     data object InvalidPackage : PairingRecipientAdmissionResult
     data object IdentityMismatch : PairingRecipientAdmissionResult
@@ -37,12 +38,11 @@ class PairingRecipientAdmissionService(
     private val keyPackageInstaller: SyncKeyPackageInstaller,
     private val transactions: ApplicationTransactionRunner,
 ) {
-    suspend fun admit(
-        envelope: KeyPackageEnvelopeV1,
-        deviceCredentialReference: SecretReference,
-    ): PairingRecipientAdmissionResult {
+    suspend fun admit(envelope: KeyPackageEnvelopeV1): PairingRecipientAdmissionResult {
         val pending = enrollments.state(envelope.accountId) as? LocalEnrollmentState.Pending
             ?: return PairingRecipientAdmissionResult.NotPending
+        val deviceCredentialReference = pending.deviceCredentialReference
+            ?: return PairingRecipientAdmissionResult.MissingDeviceCredential
         val privateKey = privateKeys.privateKey(pending.hpkePrivateKeyReference)
             ?: return PairingRecipientAdmissionResult.MissingPrivateKey
         val plaintext = when (val result = hpke.decryptKeyPackage(pending, privateKey, envelope)) {

@@ -40,6 +40,7 @@ class BootstrapEnrollmentServiceTest {
 
     private class MemoryCredentialStore : PlatformDeviceCredentialStore {
         var value: DeviceCredential? = null
+        override suspend fun generate(): GeneratedDeviceCredential = error("Not used")
         override suspend fun store(value: DeviceCredential): SecretReference {
             this.value = value
             return SecretReference("secure://credential/1")
