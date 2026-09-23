@@ -25,7 +25,11 @@ data class InvitationCreateRequest(val accountId: String, val syncSpaceId: Strin
 data class InvitationCreateResponse(val invitationToken: String, val expiresAtEpochSeconds: Long)
 
 @Serializable
-data class BootstrapRequest(val invitationToken: String, val deviceId: String)
+data class BootstrapRequest(
+    val invitationToken: String,
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
 
 @Serializable
 data class BootstrapResponse(
@@ -91,6 +95,7 @@ data class RecoveryEnrollmentRequestWire(
     val accountId: String,
     val requestId: String,
     val targetDeviceId: String,
+    val hpkePublicKeyBase64Url: String,
     val credentialHashBase64Url: String,
     val proofBase64Url: String,
     val counter: Long,
@@ -99,6 +104,18 @@ data class RecoveryEnrollmentRequestWire(
 
 @Serializable
 data class RecoveryEnrollmentCreatedResponse(val accountId: String, val deviceId: String)
+
+@Serializable
+data class ActiveDeviceDirectoryEntry(
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
+
+sealed interface ActiveDeviceDirectoryResult {
+    data class Available(val devices: List<ActiveDeviceDirectoryEntry>) : ActiveDeviceDirectoryResult
+    data object IncompleteIdentity : ActiveDeviceDirectoryResult
+    data object NotFound : ActiveDeviceDirectoryResult
+}
 
 @Serializable
 data class RotationPackageUpload(val deviceId: String, val packageBase64Url: String)
@@ -206,6 +223,7 @@ interface ServerSecurityLifecycleRepository {
     fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult
     fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor?
     fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult
+    fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult
     fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
     fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?
