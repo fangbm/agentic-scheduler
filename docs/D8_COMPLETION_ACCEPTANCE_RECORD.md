@@ -1,70 +1,49 @@
 # D8 Completion Acceptance Record
 
-> Status: **IN PROGRESS — FROZEN ACCEPTANCE ONLY**  
+> Status: **IN PROGRESS — DECISION BLOCKERS RESOLVED; FINAL E2E STILL OPEN**  
 > Branch: `feature/d8-final-acceptance`  
 > Updated: 2026-09-23
 
-This record distinguishes acceptance evidence actually executed from work that
-cannot safely be completed without an approved D8 decision. It does not amend
-SYN-003 through SYN-019.
+This record distinguishes acceptance evidence actually executed from work still required.
+It does not start D9.
 
-## Executed on this branch
+## Executed before the decision amendments
 
 | Acceptance path | Evidence | Status |
 | --- | --- | --- |
-| Existing-device pairing approval | `PairingApprovalServiceTest`: an ACTIVE local device approves only an account-matching remote pending request after an exact SAS comparison; pending/mismatched/SAS-mutated requests cannot export a package. | PASS |
-| Three-device concurrent convergence | `D8ReplicaAcceptanceTest`: three independent Room databases receive the same real Tink AES-GCM envelopes in three different orders; they converge on one canonical N-way conflict, its provisional projection, all handled dots and cursor. | PASS |
-| Duplicate delivery | The same three-device test redelivers a conflict participant and requires the same durable OPEN conflict outcome, with no second component; ordinary handled operations remain `Duplicate`. | PASS |
-| Offline/reconnect catch-up | `D8ReplicaAcceptanceTest`: a local Event write commits while the relay is unavailable, retains its first ciphertext, uploads exactly that ciphertext after reconnect, and a second Room replica catches up through `SyncTransportWorker`. | PASS |
+| Existing-device pairing approval | ACTIVE local device + account-matching remote pending request + exact SAS; mismatch cannot export a package. | PASS |
+| Three-device concurrent convergence | Three Room replicas receive the same Tink AES-GCM envelopes in different orders and converge on one N-way conflict/projection/frontier. | PASS |
+| Conflict participant replay | Re-delivery reproduces the current OPEN conflict without creating another component; ordinary handled mutations remain Duplicate. | PASS |
+| Offline/reconnect catch-up | Local write commits offline, retains exact ciphertext, retries verbatim, then another replica catches up through SyncTransportWorker. | PASS |
 
-Local verification for the two replica-harness paths:
+## Previously BLOCKED_BY_DECISION — now resolved
 
-```text
-./gradlew :shared:database:desktopTest \
-  --tests 'dev.agenticscheduler.database.D8ReplicaAcceptanceTest' \
-  --no-daemon --max-workers=1 --rerun-tasks
-```
+### Cross-replica conflict resolution
 
-The command completed successfully on 2026-09-23 with two passing tests.
+Resolved by SYN-015A / OD-034. V1 now carries explicit
+`MutationOrigin.ConflictResolution(conflictId)`. Remote clearing requires the explicit marker,
+same SyncSpace, complete causal dominance and conflict-scoped typed mutations. Ordinary
+causally-later edits cannot clear an OPEN conflict.
 
-## BLOCKED_BY_DECISION
+Implementation and cross-replica acceptance are present on this branch; final CI evidence is
+recorded only after the current head is green.
 
-### Cross-replica conflict-resolution recognition
+### RecoveryEnvelopeV1
 
-SYN-013 requires a resolution to causally dominate its participants and clear
-the conflict. The v1 `SyncOperation` emitted by
-`SyncConflictResolutionService` is intentionally an ordinary typed mutation
-and carries no `conflictId` or resolution marker. A receiving replica therefore
-cannot distinguish it from a permitted ordinary edit of a non-conflicted group
-on the same entity that happens to observe the participants. Clearing every
-matching OPEN conflict would silently turn such an edit into a resolution.
+Resolved by SYN-005B / OD-044. V1 now freezes strict outer/plaintext wire schemas,
+HMAC-SHA256 domain-separated key derivation, Tink AES-256-GCM, exact AAD, complete retained
+historical key ring, strict binding validation and fixed derivation/AAD vectors.
 
-Required decision: freeze the interoperable resolution-recognition rule (and,
-if necessary, its v1 wire representation/compatibility plan) so a remote
-replica can clear exactly the intended component without weakening D8-P04.
+Client codec + strict wire/fail-closed tests are present on this branch; Recovery enrollment
+and complete revoke/rotate E2E still need application composition around the new contract.
 
-### Recovery Secret envelope
+## Still required before D8 FINAL PASS
 
-SYN-005/SYN-007 require a Recovery Secret-protected recovery envelope, but the
-frozen documents do not define a client `RecoveryEnvelopeV1` encryption/KDF
-format, AAD, plaintext key-ring schema, or canonical serialization. The server
-correctly treats the envelope as opaque, but a client restore or revocation
-rotation E2E cannot be implemented safely without inventing those security
-semantics.
+- green CI on the current resolution/recovery amendment head;
+- full Recovery Secret restore and revocation/AMK rotation E2E using RecoveryEnvelopeV1;
+- active application bootstrap/enrollment composition using the production secure-store lifecycle;
+- Wear direct-versus-phone-relay integration;
+- final PostgreSQL migration/security adversarial suite;
+- final repository/server CI green after all of the above.
 
-Required decision: freeze the RecoveryEnvelopeV1 cryptographic and wire
-contract before implementing Recovery Secret restore or complete AMK/recovery
-envelope rotation acceptance.
-
-## Still required after the decisions above
-
-- full conflict-resolution convergence E2E;
-- Recovery Secret restore and revocation/AMK rotation E2E;
-- active application bootstrap/enrollment composition using the production
-  secure-store lifecycle;
-- Wear direct-versus-phone-relay integration (the repository currently has no
-  platform relay adapter to execute);
-- final PostgreSQL migration/security adversarial suite and green repository
-  CI on the final head.
-
-D8 must not be marked complete until these paths have executed successfully.
+D8 must not be marked complete and D9 must not start until these paths execute successfully.

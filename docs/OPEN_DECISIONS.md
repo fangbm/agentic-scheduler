@@ -231,6 +231,16 @@ Impact: DATA_LOSS
 
 D7/D8 retain FocusBlock tombstones indefinitely in v1; this pending item does not block sync while compaction stays disabled.
 
+## OD-034 — Cross-replica conflict-resolution recognition
+
+```text
+Status: RESOLVED
+Decision: D8 v1 uses MutationOrigin.ConflictResolution(conflictId) with wire discriminator
+          CONFLICT_RESOLUTION. Remote clearing requires explicit marker + same SyncSpace +
+          complete DVV dominance + exact conflicted entity scope + no out-of-conflict group
+          changes; ordinary causally-later edits never clear conflicts.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-015A
+```
 ---
 
 # D8 E2EE / device security
@@ -290,6 +300,16 @@ every remaining active device, stores the opaque new recovery envelope and
 packages, and marks the target revoked together. A different payload under the
 same rotation ID is rejected.
 
+## OD-044 — RecoveryEnvelopeV1 cryptographic/wire contract
+
+```text
+Status: RESOLVED
+Decision: strict RecoveryEnvelopeV1; HMAC-SHA256 domain-separated PRF-KDF from the random
+          256-bit RecoverySecret; Tink AES-256-GCM NO_PREFIX with library nonce; exact
+          length-prefixed account/space/version/epoch AAD; strict plaintext carries AMK +
+          active key + complete retained historical decrypt ring and no credentials.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005B
+```
 ---
 
 # D9 Agent / context

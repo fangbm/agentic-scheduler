@@ -817,6 +817,52 @@ No "dismiss and silently keep local" operation exists.
 
 ---
 
+## SYN-015A — Cross-replica resolution recognition
+
+> Status: **APPROVED AMENDMENT — frozen during D8 completion acceptance**
+
+A resolution must be distinguishable from an ordinary causally-later edit. V1 therefore
+uses an explicit operation-origin marker:
+
+```text
+MutationOrigin.ConflictResolution(conflictId)
+wire discriminator: CONFLICT_RESOLUTION
+```
+
+The resolution remains an ordinary typed `SyncOperation`; there is no server-side merge or
+special plaintext server record.
+
+A receiving replica may clear an OPEN conflict only when all of the following hold:
+
+```text
+origin is CONFLICT_RESOLUTION(conflictId)
+referenced conflict exists in the same SyncSpace and is OPEN
+resolution DVV observes every complete participant DVV
+operation targets exactly the conflict's entity identities
+no changed semantic group lies outside the conflict's recorded groups
+the operation itself applies/merges successfully without creating a newer conflict
+```
+
+If those checks pass, applying the typed mutation and marking that exact conflict RESOLVED
+with `resolutionMutationId` occur in the same client transaction. If the operation itself
+conflicts with newer concurrent facts, the referenced conflict is not cleared.
+
+Ordinary USER/PLANNER/SYSTEM/UNDO operations never clear an OPEN conflict merely because
+they causally dominate its participants. A later ordinary edit to a non-conflicted group on
+the same entity therefore cannot be mistaken for resolution.
+
+Re-delivery of a mutation that is still a participant in the current OPEN conflict reproduces
+the same durable `Conflicted(conflictId, kind)` outcome; it does not create a second conflict.
+Re-delivery of an already applied non-conflict mutation remains `Duplicate`.
+
+Compatibility rule: this amendment is frozen before D8 v1 is declared complete. The
+`CONFLICT_RESOLUTION` value is a sealed `MutationOrigin` subtype, not an ignorable additive
+JSON field. A pre-amendment development client therefore fails closed/quarantines the
+operation instead of applying it as an ordinary USER edit. Such pre-final development state
+is not a supported mixed-version deployment and must be upgraded/reset before joining the
+final D8 v1 protocol.
+
+---
 # SYN-016 — Tombstone compaction / OD-032
 
 Physical tombstone/history compaction remains **disabled** in D8 v1.

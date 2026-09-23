@@ -374,3 +374,19 @@ D8 PASS requires SYN-019 plus:
 ```
 
 OD-012 remains mandatory before claiming production-sensitive local-data readiness.
+
+---
+
+## D8 completion decision amendments
+
+Acceptance discovered two protocol/security gaps that could not safely be guessed.
+They are now frozen in `docs/SYNC_SECURITY_DECISIONS.md`:
+
+```text
+SYN-005B  RecoveryEnvelopeV1 exact KDF / Tink AEAD / AAD / strict key-ring wire contract
+SYN-015A  explicit CONFLICT_RESOLUTION(conflictId) cross-replica recognition rule
+```
+
+`docs/OPEN_DECISIONS.md` records these as OD-044 and OD-034 respectively, both RESOLVED.
+Implementations and acceptance tests must follow those amendments exactly; no alternate
+inference-based resolution rule or recovery-envelope crypto is permitted.
