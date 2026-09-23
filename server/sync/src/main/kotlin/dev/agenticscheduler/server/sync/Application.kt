@@ -83,7 +83,13 @@ fun Application.syncServerModule(
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("BOOTSTRAP_UNAVAILABLE"))
             val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
             if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            when (val result = bootstrap.bootstrap(call.receive<BootstrapRequest>())) {
+            val request = call.receive<BootstrapRequest>()
+            try {
+                decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
+            } catch (_: IllegalArgumentException) {
+                return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_DEVICE_HPKE_KEY"))
+            }
+            when (val result = bootstrap.bootstrap(request)) {
                 is BootstrapResult.Created -> call.respond(HttpStatusCode.Created, result.value)
                 BootstrapResult.InvalidInvitation -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_INVITATION"))
                 BootstrapResult.DeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("DEVICE_ALREADY_EXISTS"))
@@ -219,6 +225,7 @@ fun Application.syncServerModule(
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
             val request = call.receive<RecoveryEnrollmentRequestWire>()
             try {
+                decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
                 decodeCanonicalBase64(request.credentialHashBase64Url, 32, 32)
                 decodeCanonicalBase64(request.proofBase64Url, 32, 32)
                 decodeCanonicalBase64(request.nextProofHashBase64Url, 32, 32)
@@ -243,6 +250,21 @@ fun Application.syncServerModule(
             val bytes = lifecycle.fetchRecoveryEnvelope(actor)
                 ?: return@get call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
             call.respond(OpaqueBlobResponse(Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)))
+        }
+        get("/v1/devices/active") {
+            val lifecycle = repository as? ServerSecurityLifecycleRepository
+                ?: return@get call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
+            val credential = call.bearerCredential()
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            val actor = repository.authenticate(credential)
+                ?: return@get call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
+            when (val result = lifecycle.activeDevices(actor)) {
+                is ActiveDeviceDirectoryResult.Available -> call.respond(HttpStatusCode.OK, result.devices)
+                ActiveDeviceDirectoryResult.IncompleteIdentity ->
+                    call.respond(HttpStatusCode.Conflict, ServerErrorResponse("DEVICE_DIRECTORY_INCOMPLETE"))
+                ActiveDeviceDirectoryResult.NotFound ->
+                    call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
+            }
         }
         post("/v1/devices/{deviceId}/revoke") {
             val lifecycle = repository as? ServerSecurityLifecycleRepository
