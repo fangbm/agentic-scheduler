@@ -7,7 +7,8 @@ import dev.agenticscheduler.sync.decodeCanonicalBase64Url
 
 /** Platform boundary for importing the AMK from an authenticated pairing package. */
 interface PlatformAccountMasterKeyStore {
-    suspend fun importAccountMasterKeyForPairing(material: PairingEphemeralKeyMaterial): SecretReference?
+    /** Imports authenticated ephemeral AMK material from pairing or Recovery enrollment. */
+    suspend fun importAccountMasterKey(material: PairingEphemeralKeyMaterial): SecretReference?
     suspend fun delete(reference: SecretReference)
 }
 
@@ -61,7 +62,7 @@ class PairingRecipientAdmissionService(
         deviceCredentialReference: SecretReference,
     ): PairingRecipientAdmissionResult {
         val importedAccountMasterKey = try {
-            accountMasterKeys.importAccountMasterKeyForPairing(RawPairingKeyMaterial.fromBase64Url(plaintext.accountMasterKeyBase64Url))
+            accountMasterKeys.importAccountMasterKey(RawEphemeralKeyMaterial.fromBase64Url(plaintext.accountMasterKeyBase64Url))
         } catch (_: Throwable) {
             null
         } ?: return PairingRecipientAdmissionResult.AccountMasterKeyImportFailed
@@ -69,9 +70,9 @@ class PairingRecipientAdmissionService(
         val packageForInstall = DecryptedSyncKeyPackage(
             syncSpaceId = plaintext.syncSpace.syncSpaceId,
             activeEpoch = plaintext.syncSpace.activeEpoch,
-            activeKey = RawPairingKeyMaterial.fromBase64Url(plaintext.syncSpace.activeKeyBase64Url),
+            activeKey = RawEphemeralKeyMaterial.fromBase64Url(plaintext.syncSpace.activeKeyBase64Url),
             historicalKeys = plaintext.syncSpace.historicalKeys.map { key ->
-                SyncKeyPackageHistoricalKey(key.keyEpoch, RawPairingKeyMaterial.fromBase64Url(key.keyBase64Url))
+                SyncKeyPackageHistoricalKey(key.keyEpoch, RawEphemeralKeyMaterial.fromBase64Url(key.keyBase64Url))
             },
         )
         var installation: InstallSyncKeyPackageResult? = null
@@ -124,13 +125,13 @@ class PairingRecipientAdmissionService(
 }
 
 /** Ephemeral raw material produced from authenticated SYN-006A package JSON. */
-private class RawPairingKeyMaterial private constructor(
+internal class RawEphemeralKeyMaterial private constructor(
     private val raw: ByteArray,
 ) : PairingEphemeralKeyMaterial, ImportedContentKeyMaterial {
     override fun copyRawKeyBytesForPairing(): ByteArray = raw.copyOf()
 
     companion object {
-        fun fromBase64Url(value: String): RawPairingKeyMaterial =
-            RawPairingKeyMaterial(decodeCanonicalBase64Url(value, 32, "Pairing key material"))
+        fun fromBase64Url(value: String): RawEphemeralKeyMaterial =
+            RawEphemeralKeyMaterial(decodeCanonicalBase64Url(value, 32, "Key material"))
     }
 }

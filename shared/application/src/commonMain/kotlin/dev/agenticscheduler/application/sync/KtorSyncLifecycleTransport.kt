@@ -73,6 +73,12 @@ data class ClientRecoveryEnrollmentRequest(
 @Serializable
 data class ClientRecoveryEnrollmentCreated(val accountId: String, val deviceId: String)
 
+/** Frozen SYN-005C recovery endpoints. The bootstrap request is deliberately unauthenticated. */
+interface RecoveryEnrollmentTransport {
+    suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse
+    suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated
+}
+
 @Serializable
 data class ClientRotationPackage(val deviceId: String, val packageBase64Url: String)
 
@@ -112,7 +118,7 @@ class KtorSyncLifecycleTransport(
     baseUrl: String,
     private val deviceCredential: suspend () -> DeviceCredential?,
     private val json: Json = Json { encodeDefaults = true; ignoreUnknownKeys = true },
-) {
+) : RecoveryEnrollmentTransport {
     private val baseUrl = baseUrl.trimEnd('/')
 
     init { require(this.baseUrl.startsWith("https://")) { "D8 sync transport requires HTTPS." } }
@@ -165,7 +171,7 @@ class KtorSyncLifecycleTransport(
         requireStatus(response, HttpStatusCode.OK)
     }
 
-    suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse {
+    override suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse {
         val response = client.post("$baseUrl/v1/recovery/bootstrap") {
             contentType(ContentType.Application.Json)
             setBody(
@@ -179,7 +185,7 @@ class KtorSyncLifecycleTransport(
         return decode(response.bodyAsText(), ClientRecoveryBootstrapResponse.serializer())
     }
 
-    suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
+    override suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
         val response = client.post("$baseUrl/v1/recovery/enroll") {
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(ClientRecoveryEnrollmentRequest.serializer(), request))

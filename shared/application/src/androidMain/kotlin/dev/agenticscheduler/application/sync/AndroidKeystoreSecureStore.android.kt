@@ -92,7 +92,7 @@ class AndroidKeystoreSecureStore(
             ?.takeIf { it.size == CONTENT_KEY_BYTES }
             ?.let { raw -> ExportedPairingContentKey(StoredSecret(raw), ContentKeyIdentity.fromRawAes256Key(raw)) }
 
-    override suspend fun importAccountMasterKeyForPairing(material: PairingEphemeralKeyMaterial): SecretReference {
+    override suspend fun importAccountMasterKey(material: PairingEphemeralKeyMaterial): SecretReference {
         val raw = material.copyRawKeyBytesForPairing()
         require(raw.size == CONTENT_KEY_BYTES) { "Account master key must be exactly 32 bytes." }
         return store(SecretKind.ACCOUNT_MASTER_KEY, raw)

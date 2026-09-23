@@ -125,7 +125,7 @@ class PairingRecipientAdmissionServiceTest {
 
     private class AccountStore(private val result: SecretReference?) : PlatformAccountMasterKeyStore {
         var imports = 0
-        override suspend fun importAccountMasterKeyForPairing(material: PairingEphemeralKeyMaterial): SecretReference? = result.also { imports++ }
+        override suspend fun importAccountMasterKey(material: PairingEphemeralKeyMaterial): SecretReference? = result.also { imports++ }
         override suspend fun delete(reference: SecretReference) = Unit
     }
 

@@ -22,7 +22,7 @@ class DesktopPlatformSecureStoreTest {
         assertEquals("payload", aead.decryptFromBase64Url(ciphertext, "aad"))
         assertEquals(rawContent.copyRawKeyBytesForPairing().toList(), first.exportContentKeyForPairing(content.reference)?.material?.copyRawKeyBytesForPairing()?.toList())
 
-        val account = first.importAccountMasterKeyForPairing(RawMaterial(32))
+        val account = first.importAccountMasterKey(RawMaterial(32))
         assertEquals(32, first.exportAccountMasterKeyForPairing(account)?.copyRawKeyBytesForPairing()?.size)
 
         val generic = first.importSecret(RawMaterial(64))

@@ -602,7 +602,7 @@ class PersistenceIntegrationTest {
                 override fun decrypt(privateKey: dev.agenticscheduler.application.sync.PairingPrivateKeyMaterial, encapsulatedKeyBase64Url: String, ciphertextBase64Url: String, contextInfo: ByteArray) = dev.agenticscheduler.sync.PairingWireCodec.encodePlaintext(plaintext).encodeToByteArray()
             },
             accountMasterKeys = object : dev.agenticscheduler.application.sync.PlatformAccountMasterKeyStore {
-                override suspend fun importAccountMasterKeyForPairing(material: dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial) = dev.agenticscheduler.application.sync.SecretReference("secure://amk/1")
+                override suspend fun importAccountMasterKey(material: dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial) = dev.agenticscheduler.application.sync.SecretReference("secure://amk/1")
                 override suspend fun delete(reference: dev.agenticscheduler.application.sync.SecretReference) = Unit
             },
             keyPackageInstaller = dev.agenticscheduler.application.sync.SyncKeyPackageInstaller(
