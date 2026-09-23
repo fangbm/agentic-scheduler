@@ -47,16 +47,16 @@ and complete revoke/rotate E2E still need application composition around the new
 
 D8 must not be marked complete and D9 must not start until these paths execute successfully.
 
-## BLOCKED_BY_DECISION — fresh-device Recovery enrollment transport
+## Fresh-device Recovery enrollment transport — RESOLVED
 
-The remaining Recovery Secret E2E cannot be completed by application wiring alone. A fresh device
-has no DeviceCredential, while the existing `GET /v1/recovery/envelope` route requires an already
-authenticated credential. The rotating recovery-proof verifier also requires the server's current
-counter, but `RecoveryEnvelopeV1` deliberately does not carry that mutable server value and no
-recovery-authenticated discovery route is frozen.
+SYN-005C / OD-045 freezes an unauthenticated `POST /v1/recovery/bootstrap` route that returns
+only the current rotating-proof counter and the opaque RecoveryEnvelopeV1 for the supplied
+accountId. It grants no enrollment authority.
 
-The frozen D8 documents require a fresh device to fetch the opaque recovery envelope and enroll
-using the Recovery Secret, but do not specify the authenticated transport or counter-bootstrap
-contract for that first request. A decision is required before adding a route, exposing a counter,
-or changing the recovery envelope wire schema. No fallback to a DeviceCredential or a guessed
-counter is permitted.
+The counter remains mutable server state and is intentionally not embedded in RecoveryEnvelopeV1.
+A stale bootstrap snapshot cannot enroll: `/v1/recovery/enroll` still requires the exact current
+RecoverySecret proof and atomically advances the proof counter/hash. Clients retry bootstrap after
+an InvalidProof race.
+
+Route, JDBC repository, client transport and contract tests are present on this branch. Full
+fresh-device restore/catch-up E2E remains required before D8 FINAL PASS.
