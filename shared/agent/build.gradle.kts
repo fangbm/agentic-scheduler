@@ -14,6 +14,9 @@ kotlin {
     }
     jvm("desktop") { compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
     sourceSets {
+        commonMain.dependencies {
+            api(project(":shared:application"))
+        }
         commonTest.dependencies { implementation(kotlin("test")) }
     }
 }
