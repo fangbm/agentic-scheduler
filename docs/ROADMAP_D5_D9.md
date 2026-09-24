@@ -20,7 +20,7 @@ D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
 D8     E2EE Multi-device Sync + Thin Server    COMPLETE — SYN-019 ACCEPTANCE + FOUR-PLATFORM CI PASSED
  ↓
-D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY
+D9-01  Agent Runtime + Typed Tools             IN PROGRESS
 D9-02  Agent history sync amendment            AFTER D9-01
 D9-03  Wear Agent/provider provisioning        AFTER D9-01
  ↓
@@ -230,7 +230,7 @@ Status:
 
 ```text
 D9-00 decisions                        FROZEN
-D9-01 Android/Desktop Agent core       READY AFTER D8
+D9-01 Android/Desktop Agent core       IN PROGRESS
 D9-02 synchronized Agent history       AFTER D9-01
 D9-03 Wear Agent/provider provisioning AFTER D9-01
 ```
