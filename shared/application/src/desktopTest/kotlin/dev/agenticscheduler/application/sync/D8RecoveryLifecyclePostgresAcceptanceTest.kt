@@ -175,16 +175,19 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
                     SyncWireCodec.encodeEnvelope(fetched.envelope),
                     fetched.serverCursor,
                 )
-                assertIs<EncryptedSyncReceiveResult.Handled>(outcome).also { assertIs<SyncReceiveResult.Applied>(it.result) }
+                val handled = assertIs<EncryptedSyncReceiveResult.Handled>(outcome)
+                assertIs<SyncReceiveResult.Applied>(handled.result)
                 assertEquals("Recovered encrypted history", RoomEventRepository(cDatabase).get(EventId("00000000-0000-7000-8000-000000009999"))?.title)
             } finally {
-                cReferences.forEach(cStore::delete)
+                for (reference in cReferences) {
+                    cStore.delete(reference)
+                }
                 cDatabase.close()
             }
         } finally {
-            aCredential?.let(aStore::delete)
-            amk?.let(aStore::delete)
-            activeKey?.let { aStore.delete(it.reference) }
+            if (aCredential != null) aStore.delete(requireNotNull(aCredential))
+            if (amk != null) aStore.delete(requireNotNull(amk))
+            if (activeKey != null) aStore.delete(requireNotNull(activeKey).reference)
             dataSource.close()
             databaseFile.delete()
         }
@@ -239,8 +242,8 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
         val mutationId = "00000000-0000-7000-8000-000000009998"
         val operation = SyncOperation(
             mutationId = mutationId,
-            dvv = DvvSnapshot(emptyList(), DotSnapshot("replica-a", 1)),
-            hlc = HlcSnapshot(1, 0, "replica-a"),
+            dvv = DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1)),
+            hlc = HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"),
             origin = MutationOrigin.User,
             orderedMutations = listOf(
                 EventPut(
