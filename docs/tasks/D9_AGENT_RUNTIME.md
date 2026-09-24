@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **SPEC FROZEN — D9-01 READY AFTER D8**  
+> Status: **D9-01 IN PROGRESS — D8 COMPLETE**
 > Date: 2026-09-12  
 > Decision source: `docs/AGENT_DECISIONS.md`
 
