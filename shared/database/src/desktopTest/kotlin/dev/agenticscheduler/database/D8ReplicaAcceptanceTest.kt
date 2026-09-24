@@ -266,17 +266,76 @@ class D8ReplicaAcceptanceTest {
         }
     }
 
+    @Test
+    fun `wear direct and phone relay routes converge through the same opaque envelopes`() = runBlocking {
+        val space = SyncSpaceId("personal-space")
+        val key = TinkSyncPayloadAead.generate()
+        val directServer = OpaqueRelay()
+        val relayServer = OpaqueRelay()
+        val phoneRelay = WearPhoneRelayTransport(relayServer)
+        val directDesktop = Replica("desktop-device", space, key, idSeed = 2)
+        val directWear = Replica("wear-device", space, key, idSeed = 3)
+        val relayDesktop = Replica("desktop-device", space, key, idSeed = 2)
+        val relayWear = Replica("wear-device", space, key, idSeed = 3)
+        try {
+            val directDesktopEvent = directDesktop.createAllDayEvent("Desktop event")
+            val relayDesktopEvent = relayDesktop.createAllDayEvent("Desktop event")
+            assertEquals(directDesktopEvent, relayDesktopEvent)
+            assertEquals(1, directDesktop.worker(RelayTransport(directServer)).run(space).uploaded)
+            assertEquals(1, relayDesktop.worker(RelayTransport(relayServer)).run(space).uploaded)
+
+            val directInbound = directWear.worker(RelayTransport(directServer)).run(space)
+            val relayInbound = relayWear.worker(phoneRelay).run(space)
+            assertEquals(directInbound, relayInbound)
+            assertEquals(1, phoneRelay.forwardedFetches.size)
+
+            val directWearEvent = directWear.createAllDayEvent("Wear event")
+            val relayWearEvent = relayWear.createAllDayEvent("Wear event")
+            assertEquals(directWearEvent, relayWearEvent)
+            val directOutbound = directWear.worker(RelayTransport(directServer)).run(space)
+            val relayOutbound = relayWear.worker(phoneRelay).run(space)
+            assertEquals(directOutbound, relayOutbound)
+
+            val relayWearMutationId = relayWear.mutationForEvent(relayWearEvent.id.value)
+            assertEquals(
+                relayWear.outboundEnvelope(relayWearMutationId).envelope,
+                phoneRelay.forwardedUploads.single(),
+                "The phone forwards the exact opaque envelope without decrypting or rewriting it.",
+            )
+            assertFalse(phoneRelay.forwardedUploads.single().ciphertextBase64Url.contains("Wear event", ignoreCase = true))
+
+            directDesktop.worker(RelayTransport(directServer)).run(space)
+            relayDesktop.worker(RelayTransport(relayServer)).run(space)
+
+            val eventIds = listOf(directDesktopEvent.id.value, directWearEvent.id.value)
+            val directWearState = directWear.routeState(eventIds)
+            val relayWearState = relayWear.routeState(eventIds)
+            val directDesktopState = directDesktop.routeState(eventIds)
+            val relayDesktopState = relayDesktop.routeState(eventIds)
+            assertEquals(directWearState, relayWearState)
+            assertEquals(directDesktopState, relayDesktopState)
+            assertEquals(directWearState.eventTitles, directDesktopState.eventTitles)
+            assertEquals(directWearState.cursor, directDesktopState.cursor)
+            assertEquals(0, directWearState.openConflictCount)
+            assertEquals(0, directDesktopState.openConflictCount)
+        } finally {
+            directDesktop.close(); directWear.close()
+            relayDesktop.close(); relayWear.close()
+        }
+    }
+
     private class Replica(
         private val device: String,
         private val syncSpaceId: SyncSpaceId,
         key: SyncPayloadAead,
+        idSeed: Byte = 1,
     ) {
         private val database = openInMemoryDesktopDatabase()
         private val journal = RoomMutationJournalRepository(database)
         private val receive = RoomSyncReceiveRepository(database)
         private val events = RoomEventRepository(database)
         private val codecKeys = StaticKeys(syncSpaceId, key)
-        private val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        private val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { idSeed } })
         private val mutations = MutationCoordinator(RoomApplicationTransactionRunner(database), journal, ids, MutationWallClock { 1 })
         private val editor = EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy)
         val codec = AuthenticatedSyncEnvelopeCodec(codecKeys, codecKeys)
@@ -316,6 +375,10 @@ class D8ReplicaAcceptanceTest {
 
         suspend fun outboundEnvelope(mutationId: String) = requireNotNull(RoomSyncOutboundEnvelopeRepository(database).envelope(syncSpaceId, mutationId))
 
+        suspend fun mutationForEvent(eventId: String): String = journal.timeline().single { committed ->
+            committed.operation.orderedMutations.filterIsInstance<EventPut>().any { it.after.id == eventId }
+        }.operation.mutationId
+
         fun worker(transport: SyncTransport) = SyncTransportWorker(
             history = journal,
             outbound = RoomSyncOutboundEnvelopeRepository(database),
@@ -331,6 +394,16 @@ class D8ReplicaAcceptanceTest {
         suspend fun cursor(): Long = receive.serverCursor(syncSpaceId)
         suspend fun openConflictCount(): Int = receive.conflicts(syncSpaceId).count { it.status == SyncConflictStatus.OPEN }
         suspend fun conflict(conflictId: String): SyncConflict? = receive.conflict(conflictId)
+
+        suspend fun routeState(eventIds: List<String>) = RouteState(
+            eventIds.map { eventTitle(it) },
+            receive.serverCursor(syncSpaceId),
+            receive.handledDots(syncSpaceId)
+                .map { "${it.replicaId.value}:${it.counter}" }
+                .sorted(),
+            journal.timeline().map { it.operation.mutationId },
+            openConflictCount(),
+        )
 
         suspend fun snapshot(eventId: String): ReplicaSnapshot {
             val event = requireNotNull(events.get(EventId(eventId)))
@@ -369,6 +442,14 @@ class D8ReplicaAcceptanceTest {
         val handledDots: Int,
         val openConflictId: String,
         val participants: List<String>,
+    )
+
+    private data class RouteState(
+        val eventTitles: List<String?>,
+        val cursor: Long,
+        val handledDots: List<String>,
+        val mutationIds: List<String>,
+        val openConflictCount: Int,
     )
 
     private class OpaqueRelay {
@@ -411,6 +492,23 @@ class D8ReplicaAcceptanceTest {
 
         override suspend fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int): List<RemoteSyncEnvelope> =
             if (online) relay.fetch(syncSpaceId, afterCursor, limit) else emptyList()
+    }
+
+    /**
+     * Test-only nearby-phone route. Its API exposes encrypted envelopes only,
+     * so it cannot obtain sync plaintext or alter an operation while relaying.
+     */
+    private class WearPhoneRelayTransport(private val relay: OpaqueRelay) : SyncTransport {
+        val forwardedUploads = mutableListOf<EncryptedEnvelopeV1>()
+        val forwardedFetches = mutableListOf<RemoteSyncEnvelope>()
+
+        override suspend fun upload(envelope: EncryptedEnvelopeV1): SyncUploadResult {
+            forwardedUploads += envelope
+            return relay.store(envelope)
+        }
+
+        override suspend fun fetch(syncSpaceId: SyncSpaceId, afterCursor: Long, limit: Int): List<RemoteSyncEnvelope> =
+            relay.fetch(syncSpaceId, afterCursor, limit).also { forwardedFetches += it }
     }
 
     private data class StoredRelayEnvelope(val cursor: Long, val envelope: EncryptedEnvelopeV1)
