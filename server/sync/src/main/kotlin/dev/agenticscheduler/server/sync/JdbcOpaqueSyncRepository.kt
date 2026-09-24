@@ -99,7 +99,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 ).use { statement ->
                     statement.setString(1, request.deviceId)
                     statement.setString(2, invitation.first)
-                    statement.setBytes(3, sha256(credential))
+                    statement.setBytes(3, credentialHash(credential))
                     statement.setBytes(4, hpkePublicKey)
                     statement.executeUpdate()
                 }
@@ -710,7 +710,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         }
 
     override fun authenticate(credential: String): AuthenticatedDevice? {
-        val hash = sha256(credential)
+        val hash = credentialHashOrNull(credential) ?: return null
         return dataSource.connection.use { connection ->
             connection.prepareStatement(
                 "SELECT account_id, device_id FROM device WHERE credential_hash = ? AND revoked_at IS NULL",
@@ -883,6 +883,15 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
 
     private fun sha256Bytes(value: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(value)
+
+    /** Device credentials are canonical base64url transport text; their durable hash is over the 256-bit credential. */
+    private fun credentialHash(value: String): ByteArray = sha256Bytes(decodeCanonical(value, 32))
+
+    private fun credentialHashOrNull(value: String): ByteArray? = try {
+        credentialHash(value)
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
     private fun rotationRequestHash(
         rotationId: String,
