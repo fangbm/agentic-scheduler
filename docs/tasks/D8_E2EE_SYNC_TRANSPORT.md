@@ -2,7 +2,7 @@
 
 > Task ID: **D8-01 / D8-02 / D8-03**  
 > Milestone: **D8 — Sync / E2EE / Server**  
-> Status: **COMPLETE — D8 FINAL PASS (OD-012 REMAINS A SEPARATE RELEASE GATE)**
+> Status: **REOPENED — PRODUCTION RUNTIME CLOSURE IN PROGRESS (OD-012 REMAINS A SEPARATE RELEASE GATE)**
 > Date: 2026-09-12  
 > Decision source: `docs/SYNC_SECURITY_DECISIONS.md`
 
@@ -42,11 +42,18 @@ MUST
 - execute and record the remaining SYN-019 and section 15 acceptance paths,
   including multi-device, offline, recovery, revocation, Wear, PostgreSQL,
   migration, and adversarial verification.
+- compose the already-accepted D8 lifecycle components into a production-callable
+  application runtime for Android, Desktop, and Wear. The runtime must use an
+  explicit deployment configuration, process rotation packages before ordinary
+  encrypted-envelope catch-up, and remain fail-closed while no active SyncSpace
+  enrollment is configured;
+- expose device revocation only through the atomic revoke-and-rotate lifecycle.
 
 MUST NOT
 - add a protocol version or new D8 semantic rule;
 - weaken fail-closed secret handling, E2EE, causal merge, or conflict behavior;
 - begin D9 or any excluded milestone scope.
+- retain or add a credential-only device-revocation route.
 ```
 
 A check remains incomplete until its required test has actually executed. In

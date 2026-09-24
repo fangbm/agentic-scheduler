@@ -1,6 +1,6 @@
 # D8 Completion Acceptance Record
 
-> Status: **COMPLETE — D8 FINAL PASS**
+> Status: **REOPENED — PRODUCTION RUNTIME CLOSURE IN PROGRESS**
 > Branch: `feature/d8-final-acceptance`  
 > Updated: 2026-09-24
 
@@ -54,16 +54,51 @@ epoch-7 ciphertext. This is PASS-level Recovery Secret restore/catch-up evidence
 | Wear direct/relay logical-route equivalence | `D8ReplicaAcceptanceTest` runs independent direct and nearby-phone opaque-forwarding routes through real Room/Tink replicas. It compares Active State, cursor, handled dots, mutation history and conflict state per route; the phone forwards the exact encrypted envelope without decrypting or rewriting it. | PASS |
 | Final D8 security/adversarial aggregate | `gradlew build --rerun-tasks` on Windows with a fresh Docker PostgreSQL instance (`SYNC_TEST_DATABASE_URL` set). All 360 build, protocol, crypto, lifecycle, database and server test tasks completed successfully. Platform instrumentation evidence remains recorded above. | PASS (local) |
 
-## Final completion evidence
+## Previously executed component/system acceptance
 
-All frozen D8 acceptance paths now have executed evidence. CI run
+The following evidence remains valid for the D8 protocol, crypto, server, and
+platform components. It does not prove that a production application binary
+constructs and activates the D8 runtime. CI run
 [`#36006499698`](https://github.com/fangbm/agentic-scheduler/actions/runs/36006499698)
 passed on `cf4913a`: Linux Secret Service + PostgreSQL full build/test, Windows
 DPAPI, Android Keystore instrumentation, and Wear Keystore instrumentation all
 completed successfully.
 
+## Production runtime closure — required before restoring FINAL PASS
+
+The platform secure-store and lifecycle tests construct the D8 dependencies
+directly. The Android, Desktop, and Wear compositions must additionally construct
+the production ActiveSyncRuntime when explicit deployment/enrollment configuration
+is supplied, use its conflict-aware source-fact read/write boundary, and run
+catch-up in this order:
+
+```text
+rotation packages
+-> ordinary authenticated encrypted envelopes
+```
+
+The production server must not expose credential-only device revocation. The only
+legal revocation operation is atomic revoke-and-rotate, which publishes the new
+AMK, content-key epoch, complete per-device rotation package set, and recovery
+envelope together with target-credential invalidation.
+
+Completion requires an integration test that starts at the production runtime
+factory/composition rather than hand-assembling a test-only lifecycle graph.
+
+Production runtime configuration has no default endpoint. Android and Wear use
+app-owned manifest metadata `dev.agenticscheduler.sync.BASE_URL` and
+`dev.agenticscheduler.sync.ACCOUNT_ID`; Desktop uses
+`-DagenticScheduler.sync.baseUrl` and `-DagenticScheduler.sync.accountId`.
+Both values must be present and the URL must be HTTPS. Missing configuration
+leaves the app local-only; incomplete configuration fails closed.
+
+Android/Wear packaging supplies the metadata only from explicit Gradle
+properties `-Pd8SyncBaseUrl=...` and `-Pd8SyncAccountId=...`; their defaults
+are intentionally blank. This is a deployment seam, not a hidden product
+endpoint or an invitation/bootstrap UI.
+
 OD-012 local SQLite encryption remains a separate production-sensitive-data
-release gate. It does not reopen or change this D8 sync/E2EE completion result.
+release gate. It does not block this D8 runtime-closure work.
 
 Current application-level revocation evidence is intentionally narrower than that final E2E:
 

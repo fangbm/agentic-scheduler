@@ -285,22 +285,6 @@ fun Application.syncServerModule(
                 },
             )
         }
-        post("/v1/devices/{deviceId}/revoke") {
-            val lifecycle = repository as? ServerSecurityLifecycleRepository
-                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
-            val credential = call.bearerCredential()
-                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val actor = repository.authenticate(credential)
-                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val target = call.parameters["deviceId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_DEVICE"))
-            when (lifecycle.revokeDevice(actor, target)) {
-                DeviceRevocationResult.Revoked -> call.respond(HttpStatusCode.OK, ServerErrorResponse("REVOKED"))
-                DeviceRevocationResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
-                DeviceRevocationResult.AlreadyRevoked -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_REVOKED"))
-                DeviceRevocationResult.SelfRevocationDenied -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("SELF_REVOCATION_DENIED"))
-            }
-        }
         post("/v1/devices/{deviceId}/revoke-and-rotate") {
             val lifecycle = repository as? ServerSecurityLifecycleRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))

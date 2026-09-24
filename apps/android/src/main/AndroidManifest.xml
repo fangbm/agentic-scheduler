@@ -3,6 +3,12 @@
         android:allowBackup="false"
         android:label="Agentic Scheduler"
         android:theme="@style/Theme.AgenticScheduler">
+        <meta-data
+            android:name="dev.agenticscheduler.sync.BASE_URL"
+            android:value="${d8SyncBaseUrl}" />
+        <meta-data
+            android:name="dev.agenticscheduler.sync.ACCOUNT_ID"
+            android:value="${d8SyncAccountId}" />
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -13,4 +19,3 @@
         </activity>
     </application>
 </manifest>
-

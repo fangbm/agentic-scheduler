@@ -40,8 +40,6 @@ import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.ConflictAwareRead
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
-import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
-import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranch
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
@@ -52,6 +50,7 @@ import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
+import dev.agenticscheduler.database.repository.RoomD8RuntimeComposition
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.event.Event
@@ -72,11 +71,19 @@ import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
+import dev.agenticscheduler.application.sync.AndroidKeystoreSecureStore
+import dev.agenticscheduler.application.sync.TinkPairingHpke
+import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlanningHorizon
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -97,14 +104,30 @@ class MainActivity : ComponentActivity() {
     private val academics by lazy { RoomAcademicRepository(database) }
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
     private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
-    private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, NoActiveSyncSpaceSourceFactQuery) }
-    private val eventEditor by lazy { EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy) }
-    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery) }
-    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy) }
+    private val d8Runtime by lazy {
+        RoomD8RuntimeComposition(
+            database,
+            AndroidKeystoreSecureStore(this),
+            TinkPairingHpke(),
+            ids,
+            MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+        )
+    }
+    private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts) }
+    private val eventEditor by lazy { EventEditingService(events, ids, mutations, d8Runtime.writePolicy) }
+    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = d8Runtime.writePolicy, sourceFacts = d8Runtime.sourceFacts) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        d8RuntimeConfigurationOrNull()?.let { configuration ->
+            d8Scope.launch {
+                d8Runtime.activate(configuration)
+                d8Runtime.catchUp()
+            }
+        }
         setContent {
             MaterialTheme {
                 Surface {
@@ -112,6 +135,30 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        d8Scope.cancel()
+        super.onDestroy()
+    }
+
+    /**
+     * Deployment configuration is intentionally explicit. D10 may provide UI
+     * for it; D8 accepts only app-owned manifest metadata and never guesses an
+     * endpoint or account.
+     */
+    private fun d8RuntimeConfigurationOrNull(): ActiveSyncRuntimeConfiguration? {
+        val metadata = packageManager.getApplicationInfo(packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
+        val baseUrl = metadata?.getString(D8_SYNC_BASE_URL)?.trim().orEmpty()
+        val accountId = metadata?.getString(D8_SYNC_ACCOUNT_ID)?.trim().orEmpty()
+        if (baseUrl.isEmpty() && accountId.isEmpty()) return null
+        require(baseUrl.isNotEmpty() && accountId.isNotEmpty()) { "D8 sync manifest configuration requires both base URL and account ID." }
+        return ActiveSyncRuntimeConfiguration(AccountId(accountId), baseUrl)
+    }
+
+    private companion object {
+        const val D8_SYNC_BASE_URL = "dev.agenticscheduler.sync.BASE_URL"
+        const val D8_SYNC_ACCOUNT_ID = "dev.agenticscheduler.sync.ACCOUNT_ID"
     }
 }
 

@@ -144,7 +144,6 @@ class KtorSyncTransportTest {
         val rotations = lifecycle.rotationPackages()
         assertEquals("rotation-1", rotations.single().rotationId)
         assertEquals("device", rotations.single().targetDeviceId)
-        lifecycle.revokeDevice("target")
         assertEquals(null, requests.first().second)
         assertTrue(requests.drop(1).all { it.second == "Bearer ${credential.value}" })
         client.close()

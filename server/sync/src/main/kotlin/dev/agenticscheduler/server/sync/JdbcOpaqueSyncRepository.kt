@@ -672,43 +672,6 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         }
     }
 
-    override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult =
-        dataSource.connection.use connection@{ connection ->
-            connection.autoCommit = false
-            try {
-                val result = when {
-                    targetDeviceId == actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
-                    !activeAccountDevice(connection, actor) -> DeviceRevocationResult.NotFound
-                    else -> {
-                        val state = connection.prepareStatement("SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE").use { statement ->
-                            statement.setString(1, targetDeviceId)
-                            statement.setString(2, actor.accountId)
-                            statement.executeQuery().use { rs -> if (!rs.next()) null else rs.getTimestamp("revoked_at") != null }
-                        }
-                        when {
-                            state == null -> DeviceRevocationResult.NotFound
-                            state -> DeviceRevocationResult.AlreadyRevoked
-                            else -> {
-                                connection.prepareStatement("UPDATE device SET revoked_at = CURRENT_TIMESTAMP WHERE device_id = ? AND account_id = ?").use { statement ->
-                                    statement.setString(1, targetDeviceId)
-                                    statement.setString(2, actor.accountId)
-                                    statement.executeUpdate()
-                                }
-                                DeviceRevocationResult.Revoked
-                            }
-                        }
-                    }
-                }
-                connection.commit()
-                result
-            } catch (failure: Throwable) {
-                connection.rollback()
-                throw failure
-            } finally {
-                connection.autoCommit = true
-            }
-        }
-
     override fun authenticate(credential: String): AuthenticatedDevice? {
         val hash = credentialHashOrNull(credential) ?: return null
         return dataSource.connection.use { connection ->

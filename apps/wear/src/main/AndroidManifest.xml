@@ -6,6 +6,12 @@
         android:label="Agentic Scheduler"
         android:theme="@style/Theme.AgenticSchedulerWear">
         <meta-data
+            android:name="dev.agenticscheduler.sync.BASE_URL"
+            android:value="${d8SyncBaseUrl}" />
+        <meta-data
+            android:name="dev.agenticscheduler.sync.ACCOUNT_ID"
+            android:value="${d8SyncAccountId}" />
+        <meta-data
             android:name="com.google.android.wearable.standalone"
             android:value="true" />
 

@@ -39,8 +39,6 @@ import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.ConflictAwareRead
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
-import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
-import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
 import dev.agenticscheduler.application.planner.PlannerPreview
@@ -50,6 +48,7 @@ import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
+import dev.agenticscheduler.database.repository.RoomD8RuntimeComposition
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.event.Event
@@ -70,12 +69,20 @@ import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
+import dev.agenticscheduler.application.sync.DesktopPlatformSecureStore
+import dev.agenticscheduler.application.sync.TinkPairingHpke
+import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlanningHorizon
 import java.io.File
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -97,14 +104,36 @@ fun main() = application {
     val transactions = RoomApplicationTransactionRunner(database)
     val ids = productionUuidV7Generator()
     val mutations = MutationCoordinator(transactions, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() })
-    val reads = ConflictAwareSourceFactReadService(events, tasks, profiles, academics, NoActiveSyncSpaceSourceFactQuery)
-    Window(onCloseRequest = ::exitApplication, title = "Agentic Scheduler") {
+    val d8Runtime = RoomD8RuntimeComposition(
+        database,
+        DesktopPlatformSecureStore(),
+        TinkPairingHpke(),
+        ids,
+        MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+    )
+    val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    desktopD8RuntimeConfigurationOrNull()?.let { configuration ->
+        d8Scope.launch {
+            d8Runtime.activate(configuration)
+            d8Runtime.catchUp()
+        }
+    }
+    val reads = ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts)
+    Window(onCloseRequest = { d8Scope.cancel(); exitApplication() }, title = "Agentic Scheduler") {
         MaterialTheme {
             Surface {
-                DesktopScheduler(reads, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery), PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy), EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy), TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy))
+                DesktopScheduler(reads, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = d8Runtime.writePolicy, sourceFacts = d8Runtime.sourceFacts), PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy), EventEditingService(events, ids, mutations, d8Runtime.writePolicy), TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy))
             }
         }
     }
+}
+
+private fun desktopD8RuntimeConfigurationOrNull(): ActiveSyncRuntimeConfiguration? {
+    val baseUrl = System.getProperty("agenticScheduler.sync.baseUrl")?.trim().orEmpty()
+    val accountId = System.getProperty("agenticScheduler.sync.accountId")?.trim().orEmpty()
+    if (baseUrl.isEmpty() && accountId.isEmpty()) return null
+    require(baseUrl.isNotEmpty() && accountId.isNotEmpty()) { "D8 sync desktop configuration requires both -DagenticScheduler.sync.baseUrl and -DagenticScheduler.sync.accountId." }
+    return ActiveSyncRuntimeConfiguration(AccountId(accountId), baseUrl)
 }
 
 @Composable

@@ -153,13 +153,6 @@ sealed interface EnrollmentApprovalResult {
     data object MissingCredentialHash : EnrollmentApprovalResult
 }
 
-sealed interface DeviceRevocationResult {
-    data object Revoked : DeviceRevocationResult
-    data object NotFound : DeviceRevocationResult
-    data object AlreadyRevoked : DeviceRevocationResult
-    data object SelfRevocationDenied : DeviceRevocationResult
-}
-
 sealed interface AtomicRevocationResult {
     data object Applied : AtomicRevocationResult
     data object AlreadyApplied : AtomicRevocationResult
@@ -240,5 +233,4 @@ interface ServerSecurityLifecycleRepository {
     fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
     fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?
-    fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult
 }

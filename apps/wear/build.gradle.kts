@@ -14,6 +14,8 @@ android {
         versionCode = 1
         versionName = "0.1.0-dev"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        manifestPlaceholders["d8SyncBaseUrl"] = providers.gradleProperty("d8SyncBaseUrl").orElse("").get()
+        manifestPlaceholders["d8SyncAccountId"] = providers.gradleProperty("d8SyncAccountId").orElse("").get()
     }
 }
 

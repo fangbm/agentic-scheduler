@@ -171,7 +171,7 @@ class SyncServerRoutesTest {
     }
 
     @Test
-    fun `recovery envelope is opaque and device revocation is account-bound`() = testApplication {
+    fun `recovery envelope is opaque and credential-only revocation is unavailable`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
         val stored = client.put("/v1/recovery/envelope") {
@@ -183,10 +183,7 @@ class SyncServerRoutesTest {
         val fetched = client.get("/v1/recovery/envelope") { header(HttpHeaders.Authorization, "Bearer credential") }
         assertEquals(HttpStatusCode.OK, fetched.status)
         assertTrue(fetched.bodyAsText().contains("AQI"))
-        assertEquals(HttpStatusCode.OK, client.post("/v1/devices/other/revoke") {
-            header(HttpHeaders.Authorization, "Bearer credential")
-        }.status)
-        assertEquals(HttpStatusCode.BadRequest, client.post("/v1/devices/device/revoke") {
+        assertEquals(HttpStatusCode.NotFound, client.post("/v1/devices/other/revoke") {
             header(HttpHeaders.Authorization, "Bearer credential")
         }.status)
     }
@@ -349,10 +346,5 @@ class SyncServerRoutesTest {
 
         override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = recoveryBytes
 
-        override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult = when (targetDeviceId) {
-            actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
-            "other" -> DeviceRevocationResult.Revoked
-            else -> DeviceRevocationResult.NotFound
-        }
     }
 }
