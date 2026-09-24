@@ -223,9 +223,12 @@ class D8RevocationRotationPostgresAcceptanceTest {
                 setBody("{}")
             })
         } finally {
-            for (reference in aSecrets) aStore.delete(reference)
-            for (reference in bSecrets) bStore.delete(reference)
-            for (reference in cSecrets) cStore.delete(reference)
+            // Rotation may already have reclaimed an unadopted staged reference.
+            // Acceptance cleanup is intentionally idempotent; delete semantics are
+            // covered by the dedicated platform secure-store integration tests.
+            for (reference in aSecrets) runCatching { aStore.delete(reference) }
+            for (reference in bSecrets) runCatching { bStore.delete(reference) }
+            for (reference in cSecrets) runCatching { cStore.delete(reference) }
             aDatabase.close()
             cDatabase.close()
             aFile.delete()

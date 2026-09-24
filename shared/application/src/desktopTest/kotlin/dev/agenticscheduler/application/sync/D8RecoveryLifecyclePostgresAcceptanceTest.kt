@@ -190,14 +190,14 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
                 assertEquals("Recovered encrypted history", RoomEventRepository(cDatabase).get(EventId("00000000-0000-7000-8000-000000009999"))?.title)
             } finally {
                 for (reference in cReferences) {
-                    cStore.delete(reference)
+                    runCatching { cStore.delete(reference) }
                 }
                 cDatabase.close()
             }
         } finally {
-            if (aCredential != null) aStore.delete(requireNotNull(aCredential))
-            if (amk != null) aStore.delete(requireNotNull(amk))
-            if (activeKey != null) aStore.delete(requireNotNull(activeKey).reference)
+            if (aCredential != null) runCatching { aStore.delete(requireNotNull(aCredential)) }
+            if (amk != null) runCatching { aStore.delete(requireNotNull(amk)) }
+            if (activeKey != null) runCatching { aStore.delete(requireNotNull(activeKey).reference) }
             dataSource.close()
             databaseFile.delete()
         }
