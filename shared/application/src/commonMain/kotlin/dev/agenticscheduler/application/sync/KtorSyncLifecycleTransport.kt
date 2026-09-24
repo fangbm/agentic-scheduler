@@ -140,7 +140,7 @@ class KtorSyncLifecycleTransport(
     baseUrl: String,
     private val deviceCredential: suspend () -> DeviceCredential?,
     private val json: Json = Json { encodeDefaults = true; ignoreUnknownKeys = true },
-) : RecoveryEnrollmentTransport, RotationPackageTransport {
+) : RecoveryEnrollmentTransport, RotationPackageTransport, RevocationRotationTransport {
     private val baseUrl = baseUrl.trimEnd('/')
 
     init { require(this.baseUrl.startsWith("https://")) { "D8 sync transport requires HTTPS." } }
@@ -249,7 +249,7 @@ class KtorSyncLifecycleTransport(
         )
     }
 
-    suspend fun activeDevices(): List<ClientActiveDeviceDirectoryEntry> {
+    override suspend fun activeDevices(): List<ClientActiveDeviceDirectoryEntry> {
         val response = client.get("$baseUrl/v1/devices/active") { authorization() }
         requireStatus(response, HttpStatusCode.OK)
         return decode(
@@ -263,7 +263,7 @@ class KtorSyncLifecycleTransport(
         requireStatus(response, HttpStatusCode.OK)
     }
 
-    suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
+    override suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
         val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke-and-rotate") {
             authorization()
             contentType(ContentType.Application.Json)
