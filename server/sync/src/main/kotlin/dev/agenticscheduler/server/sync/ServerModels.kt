@@ -25,7 +25,11 @@ data class InvitationCreateRequest(val accountId: String, val syncSpaceId: Strin
 data class InvitationCreateResponse(val invitationToken: String, val expiresAtEpochSeconds: Long)
 
 @Serializable
-data class BootstrapRequest(val invitationToken: String, val deviceId: String)
+data class BootstrapRequest(
+    val invitationToken: String,
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
 
 @Serializable
 data class BootstrapResponse(
@@ -71,10 +75,27 @@ data class OpaqueBlobResponse(val blobBase64Url: String)
 data class RecoveryProofRegistrationRequest(val proofHashBase64Url: String, val counter: Long)
 
 @Serializable
+data class RecoveryBootstrapRequest(val accountId: String)
+
+@Serializable
+data class RecoveryBootstrapResponse(
+    val counter: Long,
+    val recoveryEnvelopeBase64Url: String,
+)
+
+data class RecoveryBootstrapDescriptor(
+    val counter: Long,
+    val recoveryEnvelope: ByteArray,
+) {
+    init { require(counter >= 0) { "Recovery bootstrap counter must not be negative." } }
+}
+
+@Serializable
 data class RecoveryEnrollmentRequestWire(
     val accountId: String,
     val requestId: String,
     val targetDeviceId: String,
+    val hpkePublicKeyBase64Url: String,
     val credentialHashBase64Url: String,
     val proofBase64Url: String,
     val counter: Long,
@@ -85,7 +106,31 @@ data class RecoveryEnrollmentRequestWire(
 data class RecoveryEnrollmentCreatedResponse(val accountId: String, val deviceId: String)
 
 @Serializable
+data class ActiveDeviceDirectoryEntry(
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
+
+sealed interface ActiveDeviceDirectoryResult {
+    data class Available(val devices: List<ActiveDeviceDirectoryEntry>) : ActiveDeviceDirectoryResult
+    data object IncompleteIdentity : ActiveDeviceDirectoryResult
+    data object NotFound : ActiveDeviceDirectoryResult
+}
+
+@Serializable
 data class RotationPackageUpload(val deviceId: String, val packageBase64Url: String)
+
+@Serializable
+data class RotationPackageResponse(
+    val rotationId: String,
+    val targetDeviceId: String,
+    val packageBase64Url: String,
+)
+
+data class StoredRotationPackage(
+    val rotationId: String,
+    val packageBytes: ByteArray,
+)
 
 @Serializable
 data class AtomicRevocationRequest(
@@ -188,7 +233,10 @@ interface ServerEnrollmentRepository {
 
 interface ServerSecurityLifecycleRepository {
     fun registerRecoveryProof(actor: AuthenticatedDevice, request: RecoveryProofRegistrationRequest): RecoveryProofRegistrationResult
+    fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor?
     fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult
+    fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult
+    fun rotationPackages(actor: AuthenticatedDevice): List<StoredRotationPackage>?
     fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
     fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?

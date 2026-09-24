@@ -24,6 +24,8 @@ sealed interface LocalEnrollmentState {
         override val enrollmentRequestId: EnrollmentRequestId,
         override val hpkePublicKey: HpkePublicKeyBase64Url,
         override val hpkePrivateKeyReference: SecretReference,
+        /** Null only for a pre-final legacy pending row; it cannot be activated. */
+        val deviceCredentialReference: SecretReference?,
     ) : LocalEnrollmentState {
         fun asRemoteEnrollmentRequest(): PendingEnrollmentRequestV1 =
             PendingEnrollmentRequestV1(accountId, enrollmentRequestId, deviceId, hpkePublicKey)
@@ -61,7 +63,10 @@ data class PersistedPairingDeviceKey(
 )
 
 sealed interface StartLocalEnrollmentResult {
-    data class Created(val pending: LocalEnrollmentState.Pending) : StartLocalEnrollmentResult
+    data class Created(
+        val pending: LocalEnrollmentState.Pending,
+        val credentialHashBase64Url: String,
+    ) : StartLocalEnrollmentResult
     data class Existing(val state: LocalEnrollmentState) : StartLocalEnrollmentResult
 }
 
@@ -69,6 +74,7 @@ sealed interface StartLocalEnrollmentResult {
 class LocalEnrollmentRequestService(
     private val enrollments: LocalEnrollmentRepository,
     private val privateKeys: PlatformPairingPrivateKeyStore,
+    private val credentials: PlatformDeviceCredentialStore,
 ) {
     suspend fun startPending(
         accountId: AccountId,
@@ -79,12 +85,23 @@ class LocalEnrollmentRequestService(
         if (existing != null) return StartLocalEnrollmentResult.Existing(existing)
 
         val generated = privateKeys.generatePairingDeviceKey()
+        val credential = try {
+            credentials.generate()
+        } catch (failure: Throwable) {
+            try {
+                privateKeys.delete(generated.privateKeyReference)
+            } catch (_: Throwable) {
+                // A secure-store orphan is safe; no Room row was published.
+            }
+            throw failure
+        }
         val pending = LocalEnrollmentState.Pending(
             accountId = accountId,
             deviceId = deviceId,
             enrollmentRequestId = enrollmentRequestId,
             hpkePublicKey = generated.publicKey,
             hpkePrivateKeyReference = generated.privateKeyReference,
+            deviceCredentialReference = credential.reference,
         )
         try {
             enrollments.savePending(pending)
@@ -95,8 +112,13 @@ class LocalEnrollmentRequestService(
                 // A secure-store orphan is safe; publishing a nonexistent
                 // private-key reference is not.
             }
+            try {
+                credentials.delete(credential.reference)
+            } catch (_: Throwable) {
+                // A secure-store orphan is safe; no Room row was published.
+            }
             throw failure
         }
-        return StartLocalEnrollmentResult.Created(pending)
+        return StartLocalEnrollmentResult.Created(pending, credential.hashBase64Url)
     }
 }

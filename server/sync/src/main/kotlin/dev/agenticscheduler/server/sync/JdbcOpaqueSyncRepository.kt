@@ -67,6 +67,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     override fun bootstrap(request: BootstrapRequest): BootstrapResult {
         require(request.invitationToken.isNotBlank())
         requireValidId(request.deviceId, "deviceId")
+        val hpkePublicKey = decodeCanonical(request.hpkePublicKeyBase64Url, 32)
         val credentialBytes = ByteArray(32).also(random::nextBytes)
         val credential = Base64.getUrlEncoder().withoutPadding().encodeToString(credentialBytes)
         return dataSource.connection.use connection@{ connection ->
@@ -94,11 +95,12 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 }
                 lockAccount(connection, invitation.first)
                 connection.prepareStatement(
-                    "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
+                    "INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)",
                 ).use { statement ->
                     statement.setString(1, request.deviceId)
                     statement.setString(2, invitation.first)
-                    statement.setBytes(3, sha256(credential))
+                    statement.setBytes(3, credentialHash(credential))
+                    statement.setBytes(4, hpkePublicKey)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -205,7 +207,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     return@connection EnrollmentApprovalResult.NotFound
                 }
                 val request = connection.prepareStatement(
-                    "SELECT account_id, target_device_id, credential_hash, approved_at FROM device_enrollment_request " +
+                    "SELECT account_id, target_device_id, credential_hash, hpke_public_key, approved_at FROM device_enrollment_request " +
                         "WHERE request_id = ? AND expires_at > CURRENT_TIMESTAMP FOR UPDATE",
                 ).use { statement ->
                     statement.setString(1, requestId)
@@ -214,6 +216,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                             accountId = rs.getString("account_id"),
                             targetDeviceId = rs.getString("target_device_id"),
                             credentialHash = rs.getBytes("credential_hash"),
+                            hpkePublicKey = rs.getBytes("hpke_public_key"),
                             approved = rs.getTimestamp("approved_at") != null,
                         )
                     }
@@ -256,11 +259,12 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
-                    "INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)",
+                    "INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)",
                 ).use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.setString(2, request.accountId)
                     statement.setBytes(3, credentialHash)
+                    statement.setBytes(4, request.hpkePublicKey)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -356,6 +360,24 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             }
         }
 
+    override fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor? = dataSource.connection.use { connection ->
+        requireValidId(accountId, "accountId")
+        connection.prepareStatement(
+            "SELECT p.counter, e.envelope_bytes " +
+                "FROM recovery_proof p JOIN recovery_envelope e ON e.account_id = p.account_id " +
+                "WHERE p.account_id = ?",
+        ).use { statement ->
+            statement.setString(1, accountId)
+            statement.executeQuery().use { rs ->
+                if (!rs.next()) null
+                else RecoveryBootstrapDescriptor(
+                    counter = rs.getLong("counter"),
+                    recoveryEnvelope = rs.getBytes("envelope_bytes"),
+                )
+            }
+        }
+    }
+
     override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
@@ -364,6 +386,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 requireValidId(request.requestId, "requestId")
                 requireValidId(request.targetDeviceId, "targetDeviceId")
                 require(request.counter >= 0)
+                val hpkePublicKey = decodeCanonical(request.hpkePublicKeyBase64Url, 32)
                 val credentialHash = decodeCanonical(request.credentialHashBase64Url, 32)
                 val proof = decodeCanonical(request.proofBase64Url, 32)
                 val nextProofHash = decodeCanonical(request.nextProofHashBase64Url, 32)
@@ -415,10 +438,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection RecoveryEnrollmentResult.TargetDeviceAlreadyExists
                 }
-                connection.prepareStatement("INSERT INTO device(device_id, account_id, credential_hash) VALUES (?, ?, ?)").use { statement ->
+                connection.prepareStatement("INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)").use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.setString(2, request.accountId)
                     statement.setBytes(3, credentialHash)
+                    statement.setBytes(4, hpkePublicKey)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement(
@@ -449,6 +473,64 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 throw failure
             } finally {
                 connection.autoCommit = true
+            }
+        }
+
+    override fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult =
+        dataSource.connection.use { connection ->
+            if (!activeAccountDevice(connection, actor)) return@use ActiveDeviceDirectoryResult.NotFound
+            var incomplete = false
+            val devices = connection.prepareStatement(
+                "SELECT device_id, hpke_public_key FROM device " +
+                    "WHERE account_id = ? AND revoked_at IS NULL ORDER BY device_id",
+            ).use { statement ->
+                statement.setString(1, actor.accountId)
+                statement.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            val key = rs.getBytes("hpke_public_key")
+                            if (key == null || key.size != 32) {
+                                incomplete = true
+                                break
+                            }
+                            add(
+                                ActiveDeviceDirectoryEntry(
+                                    deviceId = rs.getString("device_id"),
+                                    hpkePublicKeyBase64Url = Base64.getUrlEncoder().withoutPadding().encodeToString(key),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            if (incomplete) ActiveDeviceDirectoryResult.IncompleteIdentity
+            else ActiveDeviceDirectoryResult.Available(devices)
+        }
+
+    override fun rotationPackages(actor: AuthenticatedDevice): List<StoredRotationPackage>? =
+        dataSource.connection.use { connection ->
+            if (!activeAccountDevice(connection, actor)) return@use null
+            connection.prepareStatement(
+                "SELECT p.rotation_id, p.package_bytes " +
+                    "FROM sync_key_rotation_package p " +
+                    "JOIN sync_key_rotation r ON r.rotation_id = p.rotation_id " +
+                    "WHERE r.account_id = ? AND p.device_id = ? " +
+                    "ORDER BY r.created_at ASC, p.rotation_id ASC",
+            ).use { statement ->
+                statement.setString(1, actor.accountId)
+                statement.setString(2, actor.deviceId)
+                statement.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            add(
+                                StoredRotationPackage(
+                                    rotationId = rs.getString("rotation_id"),
+                                    packageBytes = rs.getBytes("package_bytes"),
+                                ),
+                            )
+                        }
+                    }
+                }
             }
         }
 
@@ -628,7 +710,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         }
 
     override fun authenticate(credential: String): AuthenticatedDevice? {
-        val hash = sha256(credential)
+        val hash = credentialHashOrNull(credential) ?: return null
         return dataSource.connection.use { connection ->
             connection.prepareStatement(
                 "SELECT account_id, device_id FROM device WHERE credential_hash = ? AND revoked_at IS NULL",
@@ -793,6 +875,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         val accountId: String,
         val targetDeviceId: String,
         val credentialHash: ByteArray?,
+        val hpkePublicKey: ByteArray,
         val approved: Boolean,
     )
 
@@ -800,6 +883,15 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
 
     private fun sha256Bytes(value: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(value)
+
+    /** Device credentials are canonical base64url transport text; their durable hash is over the 256-bit credential. */
+    private fun credentialHash(value: String): ByteArray = sha256Bytes(decodeCanonical(value, 32))
+
+    private fun credentialHashOrNull(value: String): ByteArray? = try {
+        credentialHash(value)
+    } catch (_: IllegalArgumentException) {
+        null
+    }
 
     private fun rotationRequestHash(
         rotationId: String,

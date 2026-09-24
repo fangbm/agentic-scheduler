@@ -2,7 +2,7 @@
 
 > Task ID: **D8-01 / D8-02 / D8-03**  
 > Milestone: **D8 — Sync / E2EE / Server**  
-> Status: **IMPLEMENTATION IN PROGRESS — D8 COMPLETION GATE (FROZEN SEMANTICS ONLY)**
+> Status: **COMPLETE — D8 FINAL PASS (OD-012 REMAINS A SEPARATE RELEASE GATE)**
 > Date: 2026-09-12  
 > Decision source: `docs/SYNC_SECURITY_DECISIONS.md`
 
@@ -374,3 +374,91 @@ D8 PASS requires SYN-019 plus:
 ```
 
 OD-012 remains mandatory before claiming production-sensitive local-data readiness.
+
+---
+
+## D8 completion decision amendments
+
+Acceptance discovered two protocol/security gaps that could not safely be guessed.
+They are now frozen in `docs/SYNC_SECURITY_DECISIONS.md`:
+
+```text
+SYN-005B  RecoveryEnvelopeV1 exact KDF / Tink AEAD / AAD / strict key-ring wire contract
+SYN-015A  explicit CONFLICT_RESOLUTION(conflictId) cross-replica recognition rule
+```
+
+`docs/OPEN_DECISIONS.md` records these as OD-044 and OD-034 respectively, both RESOLVED.
+Implementations and acceptance tests must follow those amendments exactly; no alternate
+inference-based resolution rule or recovery-envelope crypto is permitted.
+
+
+---
+
+### Fresh-device Recovery bootstrap amendment
+
+SYN-005C / OD-045 is frozen for D8 v1:
+
+```text
+POST /v1/recovery/bootstrap
+request:  accountId
+response: current recovery proof counter + opaque RecoveryEnvelopeV1
+```
+
+The route is intentionally unauthenticated because a fresh recovery device has no
+DeviceCredential. It grants no enrollment authority; `/v1/recovery/enroll` still requires the
+correct rotating RecoverySecret proof and atomically consumes the current counter. Stale
+bootstrap snapshots fail and must be retried. The mutable counter never enters
+RecoveryEnvelopeV1.
+
+
+---
+
+### Active-device HPKE directory amendment
+
+SYN-007A / OD-046 is frozen for D8 v1:
+
+```text
+every ACTIVE device
+=> one immutable canonical X25519 HPKE public identity persisted by the server
+
+GET /v1/devices/active
+Authorization: Bearer DeviceCredential
+=> exact non-revoked account devices
+=> sorted by deviceId
+=> { deviceId, hpkePublicKeyBase64Url } only
+```
+
+Initial bootstrap, approved pairing, and Recovery enrollment must all persist the device HPKE
+public key at activation. The directory fails closed if any ACTIVE device lacks a valid key.
+
+Revocation packages every directory device except the target. The server independently recomputes
+the remaining ACTIVE device IDs inside the atomic revoke/rotate transaction; a membership race or
+stale directory produces InvalidPackageSet and requires refetch/rebuild. D8 v1 has no general API
+for replacing an ACTIVE device's HPKE public key.
+
+
+---
+
+### Rotation package lifecycle amendment
+
+SYN-007B / OD-047 is frozen for D8 v1.
+
+Rotation packages are distinct from pairing packages:
+
+```text
+RotationKeyPackageEnvelopeV1
+RotationKeyPackagePlaintextV1
+HPKE context binds:
+accountId + rotationId + targetDeviceId + rotationPackageVersion + keyEpoch
+```
+
+Remaining ACTIVE devices fetch their own opaque packages through authenticated
+`GET /v1/rotations/packages`. The server never decrypts or interprets package contents.
+
+Recipient apply requires an existing ACTIVE local enrollment. It preserves the existing
+deviceId, enrollmentRequestId, HPKE identity and DeviceCredential. Only the AMK reference and
+complete SyncSpace key ring may advance, and they are published atomically.
+
+Same-epoch Idempotent/Repaired replay MUST preserve the existing AMK reference. A rollback or
+integrity mismatch is rejected. Pairing `requestId` / PENDING admission semantics MUST NOT be
+reused for rotation.

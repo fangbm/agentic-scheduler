@@ -34,5 +34,8 @@ class ServerSchemaTest {
         assertTrue(recoveryProofSql.contains("recovery_proof"))
         val rotationSql = javaClass.classLoader.getResourceAsStream(migrations[6].resource)!!.bufferedReader().use { it.readText() }
         assertTrue(rotationSql.contains("sync_key_rotation"))
+        val deviceHpkeSql = javaClass.classLoader.getResourceAsStream(migrations[7].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(deviceHpkeSql.contains("hpke_public_key"))
+        assertTrue(deviceHpkeSql.contains("octet_length"))
     }
 }

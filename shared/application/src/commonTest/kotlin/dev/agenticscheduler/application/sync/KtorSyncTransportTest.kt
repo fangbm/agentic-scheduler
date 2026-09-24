@@ -116,6 +116,16 @@ class KtorSyncTransportTest {
                             respond("[]", headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
                         request.url.encodedPath.endsWith("/recovery/envelope") && request.method == HttpMethod.Get ->
                             respond("""{"blobBase64Url":"AQI"}""", headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                        request.url.encodedPath.endsWith("/devices/active") ->
+                            respond(
+                                """[{"deviceId":"device","hpkePublicKeyBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}]""",
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                            )
+                        request.url.encodedPath.endsWith("/rotations/packages") ->
+                            respond(
+                                """[{"rotationId":"rotation-1","targetDeviceId":"device","packageBase64Url":"AQI"}]""",
+                                headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                            )
                         request.url.encodedPath.endsWith("/approve") -> respond("{}", status = HttpStatusCode.Created)
                         else -> respond("{}")
                     }
@@ -128,9 +138,38 @@ class KtorSyncTransportTest {
         lifecycle.approveEnrollment("req", "AQI")
         lifecycle.saveRecoveryEnvelope("AQI")
         assertEquals("AQI", lifecycle.fetchRecoveryEnvelope())
+        val active = lifecycle.activeDevices()
+        assertEquals("device", active.single().deviceId)
+        assertEquals("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8", active.single().hpkePublicKeyBase64Url)
+        val rotations = lifecycle.rotationPackages()
+        assertEquals("rotation-1", rotations.single().rotationId)
+        assertEquals("device", rotations.single().targetDeviceId)
         lifecycle.revokeDevice("target")
         assertEquals(null, requests.first().second)
         assertTrue(requests.drop(1).all { it.second == "Bearer ${credential.value}" })
+        client.close()
+    }
+
+    @Test
+    fun `recovery bootstrap returns counter and opaque envelope without adding authorization`() = runBlocking {
+        var authorization: String? = null
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler { request ->
+                    authorization = request.headers[HttpHeaders.Authorization]
+                    respond(
+                        """{"counter":7,"recoveryEnvelopeBase64Url":"AQI"}""",
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { error("unused") })
+        val bootstrap = lifecycle.recoveryBootstrap("account")
+        assertEquals(7L, bootstrap.counter)
+        assertEquals("AQI", bootstrap.recoveryEnvelopeBase64Url)
+        assertEquals(null, authorization)
         client.close()
     }
 
@@ -150,7 +189,14 @@ class KtorSyncTransportTest {
             }
         }
         val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { error("unused") })
-        assertEquals("credential", lifecycle.bootstrap("invite", "device").deviceCredential)
+        assertEquals(
+            "credential",
+            lifecycle.bootstrap(
+                "invite",
+                "device",
+                "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+            ).deviceCredential,
+        )
         assertEquals(null, authorization)
         client.close()
     }

@@ -231,6 +231,16 @@ Impact: DATA_LOSS
 
 D7/D8 retain FocusBlock tombstones indefinitely in v1; this pending item does not block sync while compaction stays disabled.
 
+## OD-034 — Cross-replica conflict-resolution recognition
+
+```text
+Status: RESOLVED
+Decision: D8 v1 uses MutationOrigin.ConflictResolution(conflictId) with wire discriminator
+          CONFLICT_RESOLUTION. Remote clearing requires explicit marker + same SyncSpace +
+          complete DVV dominance + exact conflicted entity scope + no out-of-conflict group
+          changes; ordinary causally-later edits never clear conflicts.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-015A
+```
 ---
 
 # D8 E2EE / device security
@@ -289,6 +299,55 @@ transaction keyed by `rotationId`: it validates the complete package set for
 every remaining active device, stores the opaque new recovery envelope and
 packages, and marks the target revoked together. A different payload under the
 same rotation ID is rejected.
+
+## OD-044 — RecoveryEnvelopeV1 cryptographic/wire contract
+
+```text
+Status: RESOLVED
+Decision: strict RecoveryEnvelopeV1; HMAC-SHA256 domain-separated PRF-KDF from the random
+          256-bit RecoverySecret; Tink AES-256-GCM NO_PREFIX with library nonce; exact
+          length-prefixed account/space/version/epoch AAD; strict plaintext carries AMK +
+          active key + complete retained historical decrypt ring and no credentials.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005B
+```
+## OD-045 — Fresh-device recovery bootstrap transport
+
+```text
+Status: RESOLVED
+Decision: POST /v1/recovery/bootstrap is the only unauthenticated Recovery discovery route.
+          Request carries accountId only; response carries current proof counter and opaque
+          RecoveryEnvelopeV1 only. Enrollment still requires the exact current rotating
+          RecoverySecret proof and atomically advances the counter/hash. The mutable counter
+          never enters RecoveryEnvelopeV1.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005C
+```
+## OD-046 — Active-device HPKE identity and rotation recipient directory
+
+```text
+Status: RESOLVED
+Decision: every ACTIVE device has one immutable canonical X25519 HPKE public identity persisted
+          by the server at activation. GET /v1/devices/active is bearer-authenticated and returns
+          exactly the caller account's non-revoked devices as sorted {deviceId, hpkePublicKey}
+          entries. Any ACTIVE device missing a valid key makes the directory fail closed.
+          Rotation excludes only the revoke target, while the server independently recomputes
+          the current remaining device IDs in the atomic transaction and rejects a stale/incomplete
+          package set.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-007A
+```
+
+
+## OD-047 — Rotation key package lifecycle
+
+```text
+Status: RESOLVED
+Decision: D8 v1 uses distinct RotationKeyPackageEnvelopeV1/PlaintextV1 with
+          rotationId + targetDeviceId + keyEpoch bound into a domain-separated HPKE context.
+          Remaining ACTIVE devices fetch only their own opaque packages through authenticated
+          GET /v1/rotations/packages. ACTIVE apply atomically advances the complete key ring
+          and AMK reference without changing enrollment/HPKE/credential identity; same-epoch
+          replay cannot replace AMK, and pairing package semantics are never reused.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-007B
+```
 
 ---
 

@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10 + Post-project Hackathon
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 client/E2EE plus opaque server-relay baseline in review (full gate pending); D9 specs frozen; D10 planned; post-project DGX Spark hackathon fork planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 complete; D9 specs frozen and ready; D10 planned; post-project DGX Spark hackathon fork planned
 > Date: 2026-09-20
 
 ---
@@ -18,9 +18,9 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    IN PROGRESS — CLIENT/E2EE + OPAQUE RELAY IMPLEMENTED; APP-LIFECYCLE + E2E ACCEPTANCE PENDING
+D8     E2EE Multi-device Sync + Thin Server    COMPLETE — SYN-019 ACCEPTANCE + FOUR-PLATFORM CI PASSED
  ↓
-D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY AFTER D8
+D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY
 D9-02  Agent history sync amendment            AFTER D9-01
 D9-03  Wear Agent/provider provisioning        AFTER D9-01
  ↓
@@ -182,10 +182,10 @@ Status:
 
 ```text
 D8-00 protocol/security decisions  FROZEN
-D8-01 client SyncEngine/merge      IMPLEMENTED / COMPLETION ACCEPTANCE PENDING
-D8-02 E2EE/key lifecycle           IMPLEMENTED / PRODUCTION SECURE-STORE + APP-WIRING ACCEPTANCE PENDING
-D8-03 thin server/Wear transport   IMPLEMENTED / POSTGRESQL + WEAR + OFFLINE ACCEPTANCE PENDING
-D8 completion gate                 IN PROGRESS / FROZEN D8 ACCEPTANCE ONLY
+D8-01 client SyncEngine/merge      COMPLETE
+D8-02 E2EE/key lifecycle           COMPLETE
+D8-03 thin server/Wear transport   COMPLETE
+D8 completion gate                 COMPLETE / SYN-019 + FOUR-PLATFORM CI PASSED
 ```
 
 Frozen baseline includes:
@@ -203,14 +203,14 @@ server stores opaque encrypted envelopes only
 ```
 
 Current D8 persistence baselines are client Room schema v11
-(outbound eligibility plus ciphertext retry metadata) and server SQL schema v7
+(outbound eligibility plus ciphertext retry metadata) and server SQL schema v8
 (opaque relay, bootstrap, enrollment credential hashes, rotating recovery proof,
-atomic rotation, recovery, and revocation metadata).
-The completion gate migrates and verifies the existing D8 implementation against the
-current `main` API. Its only remaining scope is production platform secret storage,
-AMK/recovery/pairing/content-key staging and application wiring, plus the frozen
-SYN-019 multi-device, offline, recovery, revocation, Wear, PostgreSQL, migration and
-adversarial acceptance suite. It does not alter frozen protocol semantics or start D9.
+atomic rotation, recovery/revocation metadata, and durable ACTIVE-device HPKE identities).
+The completion gate migrated and verified the D8 implementation against the current
+`main` API, including production platform secret storage, AMK/recovery/pairing/content-key
+staging, and the frozen SYN-019 multi-device, offline, recovery, revocation, Wear,
+PostgreSQL, migration and adversarial acceptance suite. It did not alter frozen protocol
+semantics. D9 may now begin; OD-012 local SQLite encryption remains a separate release gate.
 
 OD-032 tombstone physical compaction remains pending because compaction is disabled.
 

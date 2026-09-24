@@ -34,6 +34,11 @@ sealed interface MutationOrigin {
     @Serializable @SerialName("USER") data object User : MutationOrigin
     @Serializable @SerialName("PLANNER") data object Planner : MutationOrigin
     @Serializable @SerialName("SYSTEM") data object System : MutationOrigin
+    /** SYN-015A explicit cross-replica conflict-resolution intent. */
+    @Serializable @SerialName("CONFLICT_RESOLUTION")
+    data class ConflictResolution(val conflictId: String) : MutationOrigin {
+        init { require(conflictId.isNotBlank()) { "Resolved conflict id must not be blank." } }
+    }
     @Serializable @SerialName("UNDO") data class Undo(val originalMutationId: String) : MutationOrigin
 }
 

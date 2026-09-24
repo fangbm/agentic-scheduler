@@ -540,7 +540,7 @@ class PersistenceIntegrationTest {
         migrated.close()
     }
 
-    @Test fun `local pending enrollment survives Room reopen with only a private key reference`() = runBlocking {
+    @Test fun `local pending enrollment survives Room reopen with secure private-key and credential references`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val enrollments = RoomLocalEnrollmentRepository(database)
         val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
@@ -549,6 +549,7 @@ class PersistenceIntegrationTest {
             enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("req-1"),
             hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
             hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private-key/1"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://credential/1"),
         )
         enrollments.savePending(pending)
         assertEquals(pending, enrollments.state(pending.accountId))
@@ -562,7 +563,11 @@ class PersistenceIntegrationTest {
         val device = dev.agenticscheduler.sync.DeviceId("device-1")
         val request = dev.agenticscheduler.sync.EnrollmentRequestId("req-1")
         val publicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
-        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(account, device, request, publicKey, dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private/1"))
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            account, device, request, publicKey,
+            dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private/1"),
+            dev.agenticscheduler.application.sync.SecretReference("secure://credential/1"),
+        )
         local.savePending(pending)
         val raw = ByteArray(32) { it.toByte() }
         val plaintext = dev.agenticscheduler.sync.KeyPackagePlaintextV1(
@@ -597,7 +602,7 @@ class PersistenceIntegrationTest {
                 override fun decrypt(privateKey: dev.agenticscheduler.application.sync.PairingPrivateKeyMaterial, encapsulatedKeyBase64Url: String, ciphertextBase64Url: String, contextInfo: ByteArray) = dev.agenticscheduler.sync.PairingWireCodec.encodePlaintext(plaintext).encodeToByteArray()
             },
             accountMasterKeys = object : dev.agenticscheduler.application.sync.PlatformAccountMasterKeyStore {
-                override suspend fun importAccountMasterKeyForPairing(material: dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial) = dev.agenticscheduler.application.sync.SecretReference("secure://amk/1")
+                override suspend fun importAccountMasterKey(material: dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial) = dev.agenticscheduler.application.sync.SecretReference("secure://amk/1")
                 override suspend fun delete(reference: dev.agenticscheduler.application.sync.SecretReference) = Unit
             },
             keyPackageInstaller = dev.agenticscheduler.application.sync.SyncKeyPackageInstaller(
@@ -618,7 +623,7 @@ class PersistenceIntegrationTest {
             encapsulatedKeyBase64Url = publicKey.value,
             ciphertextBase64Url = "AQI",
         )
-        assertEquals(dev.agenticscheduler.application.sync.PairingRecipientAdmissionResult.ActivationFailed, service.admit(envelope, dev.agenticscheduler.application.sync.SecretReference("secure://credential/1")))
+        assertEquals(dev.agenticscheduler.application.sync.PairingRecipientAdmissionResult.ActivationFailed, service.admit(envelope))
         assertEquals(pending, local.state(account))
         assertEquals(null, RoomSyncKeyMetadataRepository(database).state(SyncSpaceId("personal-space")))
         database.close()

@@ -53,4 +53,22 @@ class D8WireProtocolTest {
             ),
         ),
     )
+    @Test
+    fun `conflict resolution origin round trips and unknown origin fails closed`() {
+        val payload = SyncPayloadV1(operation = operation())
+        val resolution = payload.copy(operation = payload.operation.copy(
+            origin = MutationOrigin.ConflictResolution("conflict-1"),
+        ))
+        val encoded = SyncWireCodec.encodePayload(resolution)
+        assertEquals(
+            """{"payloadVersion":1,"operation":{"mutationId":"00000000-0000-7000-8000-000000000001","dvv":{"context":[],"dot":{"replicaId":"00000000-0000-7000-8000-000000000002","counter":1}},"hlc":{"physicalMillis":100,"logical":0,"replicaId":"00000000-0000-7000-8000-000000000002"},"origin":{"type":"CONFLICT_RESOLUTION","conflictId":"conflict-1"},"orderedMutations":[{"type":"EventPut","before":null,"after":{"id":"00000000-0000-7000-8000-000000000003","title":"Read","time":{"type":"ALL_DAY","dates":{"startDate":"2026-01-01","endDateExclusive":"2026-01-02"}},"flexibility":"HARD","pinState":"UNPINNED"},"entityKind":"EVENT"}]}}""",
+            encoded,
+        )
+        val decoded = assertIs<PayloadDecodeResult.Supported>(SyncWireCodec.decodePayload(encoded))
+        assertEquals(MutationOrigin.ConflictResolution("conflict-1"), decoded.payload.operation.origin)
+
+        val future = encoded.replace("\"CONFLICT_RESOLUTION\"", "\"FUTURE_RESOLUTION\"")
+        val unsupported = assertIs<PayloadDecodeResult.UnsupportedMutation>(SyncWireCodec.decodePayload(future))
+        assertEquals("origin:FUTURE_RESOLUTION", unsupported.discriminator)
+    }
 }

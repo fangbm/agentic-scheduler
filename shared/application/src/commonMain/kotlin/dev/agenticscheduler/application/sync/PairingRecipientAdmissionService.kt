@@ -7,14 +7,21 @@ import dev.agenticscheduler.sync.decodeCanonicalBase64Url
 
 /** Platform boundary for importing the AMK from an authenticated pairing package. */
 interface PlatformAccountMasterKeyStore {
-    suspend fun importAccountMasterKeyForPairing(material: PairingEphemeralKeyMaterial): SecretReference?
+    /** Imports authenticated ephemeral AMK material from pairing or Recovery enrollment. */
+    suspend fun importAccountMasterKey(material: PairingEphemeralKeyMaterial): SecretReference?
     suspend fun delete(reference: SecretReference)
+}
+
+/** Creates a fresh 256-bit AMK inside platform secure storage. */
+fun interface PlatformAccountMasterKeyGenerator {
+    suspend fun generateAccountMasterKey(): SecretReference
 }
 
 sealed interface PairingRecipientAdmissionResult {
     data class Activated(val state: LocalEnrollmentState.Active) : PairingRecipientAdmissionResult
     data object NotPending : PairingRecipientAdmissionResult
     data object MissingPrivateKey : PairingRecipientAdmissionResult
+    data object MissingDeviceCredential : PairingRecipientAdmissionResult
     data object AuthenticationFailed : PairingRecipientAdmissionResult
     data object InvalidPackage : PairingRecipientAdmissionResult
     data object IdentityMismatch : PairingRecipientAdmissionResult
@@ -37,12 +44,11 @@ class PairingRecipientAdmissionService(
     private val keyPackageInstaller: SyncKeyPackageInstaller,
     private val transactions: ApplicationTransactionRunner,
 ) {
-    suspend fun admit(
-        envelope: KeyPackageEnvelopeV1,
-        deviceCredentialReference: SecretReference,
-    ): PairingRecipientAdmissionResult {
+    suspend fun admit(envelope: KeyPackageEnvelopeV1): PairingRecipientAdmissionResult {
         val pending = enrollments.state(envelope.accountId) as? LocalEnrollmentState.Pending
             ?: return PairingRecipientAdmissionResult.NotPending
+        val deviceCredentialReference = pending.deviceCredentialReference
+            ?: return PairingRecipientAdmissionResult.MissingDeviceCredential
         val privateKey = privateKeys.privateKey(pending.hpkePrivateKeyReference)
             ?: return PairingRecipientAdmissionResult.MissingPrivateKey
         val plaintext = when (val result = hpke.decryptKeyPackage(pending, privateKey, envelope)) {
@@ -61,7 +67,7 @@ class PairingRecipientAdmissionService(
         deviceCredentialReference: SecretReference,
     ): PairingRecipientAdmissionResult {
         val importedAccountMasterKey = try {
-            accountMasterKeys.importAccountMasterKeyForPairing(RawPairingKeyMaterial.fromBase64Url(plaintext.accountMasterKeyBase64Url))
+            accountMasterKeys.importAccountMasterKey(RawEphemeralKeyMaterial.fromBase64Url(plaintext.accountMasterKeyBase64Url))
         } catch (_: Throwable) {
             null
         } ?: return PairingRecipientAdmissionResult.AccountMasterKeyImportFailed
@@ -69,9 +75,9 @@ class PairingRecipientAdmissionService(
         val packageForInstall = DecryptedSyncKeyPackage(
             syncSpaceId = plaintext.syncSpace.syncSpaceId,
             activeEpoch = plaintext.syncSpace.activeEpoch,
-            activeKey = RawPairingKeyMaterial.fromBase64Url(plaintext.syncSpace.activeKeyBase64Url),
+            activeKey = RawEphemeralKeyMaterial.fromBase64Url(plaintext.syncSpace.activeKeyBase64Url),
             historicalKeys = plaintext.syncSpace.historicalKeys.map { key ->
-                SyncKeyPackageHistoricalKey(key.keyEpoch, RawPairingKeyMaterial.fromBase64Url(key.keyBase64Url))
+                SyncKeyPackageHistoricalKey(key.keyEpoch, RawEphemeralKeyMaterial.fromBase64Url(key.keyBase64Url))
             },
         )
         var installation: InstallSyncKeyPackageResult? = null
@@ -124,13 +130,13 @@ class PairingRecipientAdmissionService(
 }
 
 /** Ephemeral raw material produced from authenticated SYN-006A package JSON. */
-private class RawPairingKeyMaterial private constructor(
+internal class RawEphemeralKeyMaterial private constructor(
     private val raw: ByteArray,
 ) : PairingEphemeralKeyMaterial, ImportedContentKeyMaterial {
     override fun copyRawKeyBytesForPairing(): ByteArray = raw.copyOf()
 
     companion object {
-        fun fromBase64Url(value: String): RawPairingKeyMaterial =
-            RawPairingKeyMaterial(decodeCanonicalBase64Url(value, 32, "Pairing key material"))
+        fun fromBase64Url(value: String): RawEphemeralKeyMaterial =
+            RawEphemeralKeyMaterial(decodeCanonicalBase64Url(value, 32, "Key material"))
     }
 }

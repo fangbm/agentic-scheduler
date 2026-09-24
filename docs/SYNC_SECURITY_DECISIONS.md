@@ -488,6 +488,204 @@ No new payload may be encrypted with a revoked epoch after rotation commits loca
 
 ---
 
+## SYN-007A — Active-device HPKE identity and rotation recipient directory
+
+> Status: **APPROVED AMENDMENT — frozen during D8 completion acceptance**
+
+Every ACTIVE device has exactly one server-persisted canonical HPKE public identity:
+
+```text
+deviceId
+hpkePublicKeyBase64Url
+```
+
+The public key uses the SYN-006A representation exactly: raw X25519 public key bytes,
+exactly 32 bytes, encoded as unpadded canonical base64url (43 characters).
+
+The server persists that key when the device first becomes active:
+
+```text
+initial invitation bootstrap
+    client generates/persists HPKE identity first
+    -> BootstrapRequest.hpkePublicKeyBase64Url
+    -> device.hpke_public_key
+
+approved secondary pairing
+    device_enrollment_request.hpke_public_key
+    -> approval transaction
+    -> device.hpke_public_key
+
+Recovery enrollment
+    local PENDING hpkePublicKey
+    -> RecoveryEnrollmentRequestWire.hpkePublicKeyBase64Url
+    -> recovery enrollment transaction
+    -> device.hpke_public_key
+```
+
+Once ACTIVE, D8 v1 has no general API that replaces a device HPKE public key. A future
+device-key rotation mechanism requires a separate authenticated/recovery-backed decision.
+
+Rotation recipient discovery uses one authenticated route:
+
+```text
+GET /v1/devices/active
+Authorization: Bearer DeviceCredential
+
+200 [
+  {
+    "deviceId": "...",
+    "hpkePublicKeyBase64Url": "..."
+  }
+]
+```
+
+The response contains exactly the caller account's devices whose `revoked_at IS NULL`,
+including the caller, sorted lexicographically by `deviceId`. It exposes no credential hash,
+Recovery state, membership history, private key, or user content.
+
+The directory is all-or-nothing. If any ACTIVE device lacks a valid 32-byte HPKE public key,
+the server returns `DEVICE_DIRECTORY_INCOMPLETE`; it MUST NOT silently omit that device.
+
+For revocation, the client fetches the directory, excludes only the target device, and creates
+one HPKE rotation package for every other returned device. The server then independently
+recomputes the current remaining ACTIVE device IDs inside the atomic revoke/rotate transaction.
+If the package IDs no longer exactly match, the whole rotation is rejected as
+`InvalidPackageSet`; the client refetches the directory and rebuilds the rotation. No directory
+revision/ETag is required in D8 v1.
+
+Server migration V8 adds `device.hpke_public_key` and backfills approved pre-final pairing
+devices from `device_enrollment_request` when possible. Legacy development devices that cannot
+be backfilled remain explicitly incomplete and block directory use until reset/re-enrollment;
+they are never omitted from recipient calculation.
+
+---
+
+
+## SYN-007B — Rotation key package wire, delivery, and ACTIVE apply
+
+> Status: **APPROVED AMENDMENT — frozen during D8 completion acceptance**
+
+Rotation packages are a distinct v1 protocol. They MUST NOT reuse SYN-006A pairing
+`KeyPackageEnvelopeV1`, must not treat `rotationId` as a pairing `requestId`, and never
+transition a local enrollment from PENDING to ACTIVE.
+
+The strict outer envelope is exactly:
+
+```text
+RotationKeyPackageEnvelopeV1 {
+  rotationPackageVersion
+  accountId
+  rotationId
+  targetDeviceId
+  keyEpoch
+  encapsulatedKeyBase64Url
+  ciphertextBase64Url
+}
+```
+
+The strict authenticated plaintext is exactly:
+
+```text
+RotationKeyPackagePlaintextV1 {
+  rotationPackageVersion
+  accountId
+  rotationId
+  targetDeviceId
+  keyEpoch
+  accountMasterKeyBase64Url
+  syncSpace {
+    syncSpaceId
+    activeEpoch
+    activeKeyBase64Url
+    historicalKeys [
+      { keyEpoch, keyBase64Url }
+    ]
+  }
+}
+```
+
+AMK, active content key, and every historical content key decode to exactly 32 bytes.
+Historical epochs follow SYN-005A/SYN-006A: unique, ascending, below activeEpoch, and the
+package contains the complete locally retained DECRYPT_ONLY ring. `keyEpoch == activeEpoch`.
+RecoverySecret and DeviceCredential never appear in this package.
+
+Rotation HPKE uses the same fixed SYN-006A suite (X25519/HKDF-SHA256/AES-256-GCM,
+base mode, RAW/NO_PREFIX), but with a distinct domain-separated context:
+
+```text
+RotationKeyPackageContextV1 =
+    ASCII("agentic-scheduler-rotation-key-package")
+    || 0x00
+    || LP(accountId)
+    || LP(rotationId)
+    || LP(targetDeviceId)
+    || U32BE(rotationPackageVersion)
+    || U64BE(keyEpoch)
+```
+
+Frozen context fixture:
+
+```text
+accountId              = "acct-1"
+rotationId             = "rotation-1"
+targetDeviceId         = "device-1"
+rotationPackageVersion = 1
+keyEpoch               = 8
+
+context base64url =
+YWdlbnRpYy1zY2hlZHVsZXItcm90YXRpb24ta2V5LXBhY2thZ2UAAAAABmFjY3QtMQAAAApyb3RhdGlvbi0xAAAACGRldmljZS0xAAAAAQAAAAAAAAAI
+```
+
+The server stores only opaque package bytes in `sync_key_rotation_package`. Remaining ACTIVE
+devices fetch their own packages using:
+
+```text
+GET /v1/rotations/packages
+Authorization: Bearer DeviceCredential
+
+200 [
+  {
+    "rotationId": "...",
+    "targetDeviceId": "<authenticated device>",
+    "packageBase64Url": "..."
+  }
+]
+```
+
+The server returns only rows for the authenticated account/device, ordered by rotation creation
+time then rotationId. It does not decode the package. D8 v1 has no rotation-package ACK table;
+packages are append-only and repeated fetch is expected.
+
+The client MUST strictly decode the opaque package JSON and require transport wrapper
+`rotationId/targetDeviceId` to equal the HPKE envelope identities before apply.
+
+ACTIVE recipient semantics:
+
+```text
+local state must already be ACTIVE
+accountId / targetDeviceId / syncSpaceId must match local ACTIVE state
+device private HPKE identity is the existing ACTIVE identity
+keyEpoch < local active epoch -> Superseded, no secret import
+HPKE auth + strict inner/outer binding must pass before secret import
+Installed / Advanced:
+    import new AMK + complete key ring
+    atomically publish key ring + ACTIVE.accountMasterKeyReference
+    preserve deviceId, enrollmentRequestId, HPKE identity, DeviceCredential
+Idempotent / Repaired:
+    preserve current ACTIVE AMK reference
+    delete newly imported duplicate AMK
+IntegrityError / rollback:
+    reject with no ACTIVE metadata change
+```
+
+After a successful Installed/Advanced transaction, deletion of the old AMK secure-store object
+is best-effort cleanup. Failure may leave an orphan but must not roll back committed metadata.
+
+This separation prevents pairing ciphertext from being replayed as rotation ciphertext and
+prevents a rotation package from creating or activating a device.
+
+---
+
 # SYN-008 — Server/account authentication
 
 D8 v1 is self-host friendly and does not introduce passwords/OAuth as a hidden dependency.
@@ -817,6 +1015,52 @@ No "dismiss and silently keep local" operation exists.
 
 ---
 
+## SYN-015A — Cross-replica resolution recognition
+
+> Status: **APPROVED AMENDMENT — frozen during D8 completion acceptance**
+
+A resolution must be distinguishable from an ordinary causally-later edit. V1 therefore
+uses an explicit operation-origin marker:
+
+```text
+MutationOrigin.ConflictResolution(conflictId)
+wire discriminator: CONFLICT_RESOLUTION
+```
+
+The resolution remains an ordinary typed `SyncOperation`; there is no server-side merge or
+special plaintext server record.
+
+A receiving replica may clear an OPEN conflict only when all of the following hold:
+
+```text
+origin is CONFLICT_RESOLUTION(conflictId)
+referenced conflict exists in the same SyncSpace and is OPEN
+resolution DVV observes every complete participant DVV
+operation targets exactly the conflict's entity identities
+no changed semantic group lies outside the conflict's recorded groups
+the operation itself applies/merges successfully without creating a newer conflict
+```
+
+If those checks pass, applying the typed mutation and marking that exact conflict RESOLVED
+with `resolutionMutationId` occur in the same client transaction. If the operation itself
+conflicts with newer concurrent facts, the referenced conflict is not cleared.
+
+Ordinary USER/PLANNER/SYSTEM/UNDO operations never clear an OPEN conflict merely because
+they causally dominate its participants. A later ordinary edit to a non-conflicted group on
+the same entity therefore cannot be mistaken for resolution.
+
+Re-delivery of a mutation that is still a participant in the current OPEN conflict reproduces
+the same durable `Conflicted(conflictId, kind)` outcome; it does not create a second conflict.
+Re-delivery of an already applied non-conflict mutation remains `Duplicate`.
+
+Compatibility rule: this amendment is frozen before D8 v1 is declared complete. The
+`CONFLICT_RESOLUTION` value is a sealed `MutationOrigin` subtype, not an ignorable additive
+JSON field. A pre-amendment development client therefore fails closed/quarantines the
+operation instead of applying it as an ordinary USER edit. Such pre-final development state
+is not a supported mixed-version deployment and must be upgraded/reset before joining the
+final D8 v1 protocol.
+
+---
 # SYN-016 — Tombstone compaction / OD-032
 
 Physical tombstone/history compaction remains **disabled** in D8 v1.

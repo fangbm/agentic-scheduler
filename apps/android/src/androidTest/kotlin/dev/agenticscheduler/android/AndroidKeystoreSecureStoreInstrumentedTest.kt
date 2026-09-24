@@ -5,6 +5,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.agenticscheduler.application.sync.AndroidKeystoreSecureStore
 import dev.agenticscheduler.application.sync.DeviceCredential
+import dev.agenticscheduler.application.sync.DeviceCredentialHashing
 import dev.agenticscheduler.application.sync.ImportedContentKeyMaterial
 import dev.agenticscheduler.application.sync.PairingEphemeralKeyMaterial
 import dev.agenticscheduler.application.sync.SecretReference
@@ -44,6 +45,11 @@ class AndroidKeystoreSecureStoreInstrumentedTest {
         val credential = DeviceCredential("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
         val credentialReference = first.store(credential)
         assertEquals(credential, reopened.load(credentialReference))
+        val generatedCredential = first.generate()
+        assertEquals(
+            generatedCredential.hashBase64Url,
+            DeviceCredentialHashing.sha256Base64Url(checkNotNull(reopened.load(generatedCredential.reference))),
+        )
 
         val aead = checkNotNull(reopened.contentAead(content.reference))
         val encryptedPayload = aead.encryptToBase64Url("keystore payload", "keystore aad")
@@ -70,6 +76,8 @@ class AndroidKeystoreSecureStoreInstrumentedTest {
         assertNull(AndroidKeystoreSecureStore(context).contentAead(content.reference))
         reopened.delete(credentialReference)
         assertNull(AndroidKeystoreSecureStore(context).load(credentialReference))
+        reopened.delete(generatedCredential.reference)
+        assertNull(AndroidKeystoreSecureStore(context).load(generatedCredential.reference))
         assertNull(AndroidKeystoreSecureStore(context).readSecret(SecretReference("android-keystore://00000000-0000-0000-0000-000000000000")))
     }
 

@@ -15,4 +15,15 @@ kotlin {
     }
     sourceSets.named("androidMain") { dependencies { implementation(libs.tink.android); implementation(libs.ktor.client.android) } }
     sourceSets.named("desktopMain") { dependencies { implementation(libs.tink); implementation(libs.ktor.client.cio); implementation(libs.jna.platform) } }
+    sourceSets.named("desktopTest") {
+        dependencies {
+            implementation(kotlin("test"))
+            implementation(project(":shared:database"))
+            implementation(project(":server:sync"))
+            implementation(libs.ktor.server.test.host)
+            implementation(libs.hikari)
+            implementation(libs.androidx.room3.runtime)
+            implementation(libs.androidx.sqlite.bundled)
+        }
+    }
 }

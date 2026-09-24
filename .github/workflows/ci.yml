@@ -40,27 +40,26 @@ jobs:
       - uses: android-actions/setup-android@v4
       - name: Install Android build SDK
         run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
-      - name: Build and test
-        run: ./gradlew build --no-daemon
-
-      - name: Verify Linux Secret Service secure store
+      - name: Install Linux Secret Service runtime
         run: |
           sudo apt-get update
           sudo apt-get install --yes libsecret-tools gnome-keyring dbus-x11
+
+      - name: Build and test
+        run: |
           dbus-run-session -- bash -ceu '
-            # Initialize an isolated, unlocked keyring for this headless CI
-            # session. Production code still fails closed when Secret Service
-            # is unavailable; this only gives the integration test a real
-            # service to exercise.
+            # The D8 desktop acceptance tests use the real production secure-store
+            # backend. Give the complete Linux suite one isolated unlocked
+            # Secret Service session before Gradle starts.
             export XDG_DATA_HOME="$PWD/.ci-keyring-data"
             export XDG_CACHE_HOME="$PWD/.ci-keyring-cache"
             export XDG_RUNTIME_DIR="$PWD/.ci-keyring-runtime"
             mkdir -p "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
             chmod 700 "$XDG_RUNTIME_DIR"
-            eval "$(printf "\\n" | gnome-keyring-daemon --login)"
+            eval "$(printf "\n" | gnome-keyring-daemon --login)"
             eval "$(gnome-keyring-daemon --start --components=secrets)"
             export AGENTIC_SCHEDULER_SECRET_SERVICE_INTEGRATION=1
-            ./gradlew :shared:application:desktopTest --tests "*LinuxSecretServiceSecureStoreIntegrationTest" --no-daemon
+            ./gradlew build --no-daemon
           '
 
       - name: Build dogfood app artifacts

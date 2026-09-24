@@ -22,7 +22,7 @@ class DesktopPlatformSecureStoreTest {
         assertEquals("payload", aead.decryptFromBase64Url(ciphertext, "aad"))
         assertEquals(rawContent.copyRawKeyBytesForPairing().toList(), first.exportContentKeyForPairing(content.reference)?.material?.copyRawKeyBytesForPairing()?.toList())
 
-        val account = first.importAccountMasterKeyForPairing(RawMaterial(32))
+        val account = first.importAccountMasterKey(RawMaterial(32))
         assertEquals(32, first.exportAccountMasterKeyForPairing(account)?.copyRawKeyBytesForPairing()?.size)
 
         val generic = first.importSecret(RawMaterial(64))
@@ -32,6 +32,9 @@ class DesktopPlatformSecureStoreTest {
         val credential = DeviceCredential("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
         val credentialReference = first.store(credential)
         assertEquals(credential, second.load(credentialReference))
+        val generatedCredential = first.generate()
+        val generatedValue = assertNotNull(second.load(generatedCredential.reference))
+        assertEquals(DeviceCredentialHashing.sha256Base64Url(generatedValue), generatedCredential.hashBase64Url)
 
         val device = first.generatePairingDeviceKey()
         val restored = assertNotNull(second.privateKey(device.privateKeyReference))
@@ -46,6 +49,8 @@ class DesktopPlatformSecureStoreTest {
         assertNull(second.contentAead(content.reference))
         first.delete(credentialReference)
         assertNull(second.load(credentialReference))
+        first.delete(generatedCredential.reference)
+        assertNull(second.load(generatedCredential.reference))
         assertNull(second.contentAead(SecretReference(backend.referencePrefix + "00000000-0000-0000-0000-000000000000")))
     }
 

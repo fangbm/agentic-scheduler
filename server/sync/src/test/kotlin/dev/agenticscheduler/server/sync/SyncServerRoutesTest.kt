@@ -35,7 +35,7 @@ class SyncServerRoutesTest {
             setBody(invitationBody)
         }
         assertEquals(HttpStatusCode.Created, invitation.status)
-        val bootstrapBody = """{"invitationToken":"invite","deviceId":"device"}"""
+        val bootstrapBody = """{"invitationToken":"invite","deviceId":"device","hpkePublicKeyBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}"""
         val bootstrap = client.post("/v1/bootstrap") {
             contentType(ContentType.Application.Json)
             setBody(bootstrapBody)
@@ -72,6 +72,35 @@ class SyncServerRoutesTest {
     }
 
     @Test
+    fun `fresh recovery bootstrap returns opaque envelope and counter without device credential`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val hash = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        assertEquals(HttpStatusCode.OK, client.put("/v1/recovery/envelope") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"blobBase64Url":"AQI"}""")
+        }.status)
+        assertEquals(HttpStatusCode.OK, client.put("/v1/recovery/proof") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"proofHashBase64Url":"$hash","counter":7}""")
+        }.status)
+        val response = client.post("/v1/recovery/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"accountId":"account"}""")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(response.bodyAsText().contains("\"counter\":7"))
+        assertTrue(response.bodyAsText().contains("\"recoveryEnvelopeBase64Url\":\"AQI\""))
+        val missing = client.post("/v1/recovery/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody("""{"accountId":"missing"}""")
+        }
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+    }
+
+    @Test
     fun `recovery proof registration and enrollment use rotating verifier`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
@@ -83,9 +112,49 @@ class SyncServerRoutesTest {
         }.status)
         val response = client.post("/v1/recovery/enroll") {
             contentType(ContentType.Application.Json)
-            setBody("""{"accountId":"account","requestId":"recovery-1","targetDeviceId":"recovered","credentialHashBase64Url":"$hash","proofBase64Url":"$hash","counter":0,"nextProofHashBase64Url":"$hash"}""")
+            setBody("""{"accountId":"account","requestId":"recovery-1","targetDeviceId":"recovered","hpkePublicKeyBase64Url":"$hash","credentialHashBase64Url":"$hash","proofBase64Url":"$hash","counter":0,"nextProofHashBase64Url":"$hash"}""")
         }
         assertEquals(HttpStatusCode.Created, response.status)
+    }
+
+
+    @Test
+    fun `active device directory is authenticated deterministic and fails closed when incomplete`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/devices/active").status)
+
+        val response = client.get("/v1/devices/active") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.indexOf("\"device-a\"") < body.indexOf("\"device-b\""))
+        assertTrue(body.contains("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"))
+
+        repository.incompleteDirectory = true
+        assertEquals(HttpStatusCode.Conflict, client.get("/v1/devices/active") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }.status)
+    }
+
+
+    @Test
+    fun `rotation package fetch is bearer bound to current device`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+
+        assertEquals(HttpStatusCode.Unauthorized, client.get("/v1/rotations/packages").status)
+
+        val response = client.get("/v1/rotations/packages") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+        }
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = response.bodyAsText()
+        assertTrue(body.contains("\"rotationId\":\"rotation-1\""))
+        assertTrue(body.contains("\"targetDeviceId\":\"device\""))
+        assertTrue(body.contains("\"packageBase64Url\":\"AQI\""))
     }
 
     @Test
@@ -195,6 +264,7 @@ class SyncServerRoutesTest {
         private var recoveryBytes: ByteArray? = null
         private var recoveryProof: RecoveryProofRegistrationRequest? = null
         private var consumed = false
+        var incompleteDirectory = false
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
 
@@ -252,8 +322,27 @@ class SyncServerRoutesTest {
             return RecoveryProofRegistrationResult.Stored
         }
 
+        override fun recoveryBootstrap(accountId: String): RecoveryBootstrapDescriptor? {
+            val proof = recoveryProof ?: return null
+            val envelope = recoveryBytes ?: return null
+            if (accountId != "account") return null
+            return RecoveryBootstrapDescriptor(proof.counter, envelope)
+        }
+
         override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
             RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
+
+        override fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult =
+            if (incompleteDirectory) ActiveDeviceDirectoryResult.IncompleteIdentity
+            else ActiveDeviceDirectoryResult.Available(
+                listOf(
+                    ActiveDeviceDirectoryEntry("device-a", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                    ActiveDeviceDirectoryEntry("device-b", "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                ),
+            )
+
+        override fun rotationPackages(actor: AuthenticatedDevice): List<StoredRotationPackage>? =
+            listOf(StoredRotationPackage("rotation-1", byteArrayOf(1, 2)))
 
         override fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult =
             AtomicRevocationResult.Applied

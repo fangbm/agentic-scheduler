@@ -51,10 +51,20 @@ data class ClientPendingEnrollment(
 data class ClientRecoveryProofRegistration(val proofHashBase64Url: String, val counter: Long)
 
 @Serializable
+data class ClientRecoveryBootstrapRequest(val accountId: String)
+
+@Serializable
+data class ClientRecoveryBootstrapResponse(
+    val counter: Long,
+    val recoveryEnvelopeBase64Url: String,
+)
+
+@Serializable
 data class ClientRecoveryEnrollmentRequest(
     val accountId: String,
     val requestId: String,
     val targetDeviceId: String,
+    val hpkePublicKeyBase64Url: String,
     val credentialHashBase64Url: String,
     val proofBase64Url: String,
     val counter: Long,
@@ -64,8 +74,31 @@ data class ClientRecoveryEnrollmentRequest(
 @Serializable
 data class ClientRecoveryEnrollmentCreated(val accountId: String, val deviceId: String)
 
+/** Frozen SYN-005C recovery endpoints. The bootstrap request is deliberately unauthenticated. */
+interface RecoveryEnrollmentTransport {
+    suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse
+    suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated
+}
+
+@Serializable
+data class ClientActiveDeviceDirectoryEntry(
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
+
 @Serializable
 data class ClientRotationPackage(val deviceId: String, val packageBase64Url: String)
+
+@Serializable
+data class ClientRotationPackageResponse(
+    val rotationId: String,
+    val targetDeviceId: String,
+    val packageBase64Url: String,
+)
+
+interface RotationPackageTransport {
+    suspend fun rotationPackages(): List<ClientRotationPackageResponse>
+}
 
 @Serializable
 data class ClientAtomicRevocationRequest(
@@ -86,7 +119,11 @@ data class ClientBootstrapResponse(
 )
 
 @Serializable
-private data class ClientBootstrapRequest(val invitationToken: String, val deviceId: String)
+private data class ClientBootstrapRequest(
+    val invitationToken: String,
+    val deviceId: String,
+    val hpkePublicKeyBase64Url: String,
+)
 
 @Serializable
 private data class ClientPackageUpload(val packageBase64Url: String)
@@ -103,15 +140,24 @@ class KtorSyncLifecycleTransport(
     baseUrl: String,
     private val deviceCredential: suspend () -> DeviceCredential?,
     private val json: Json = Json { encodeDefaults = true; ignoreUnknownKeys = true },
-) {
+) : RecoveryEnrollmentTransport, RotationPackageTransport, RevocationRotationTransport {
     private val baseUrl = baseUrl.trimEnd('/')
 
     init { require(this.baseUrl.startsWith("https://")) { "D8 sync transport requires HTTPS." } }
 
-    suspend fun bootstrap(invitationToken: String, deviceId: String): ClientBootstrapResponse {
+    suspend fun bootstrap(
+        invitationToken: String,
+        deviceId: String,
+        hpkePublicKeyBase64Url: String,
+    ): ClientBootstrapResponse {
         val response = client.post("$baseUrl/v1/bootstrap") {
             contentType(ContentType.Application.Json)
-            setBody(json.encodeToString(ClientBootstrapRequest.serializer(), ClientBootstrapRequest(invitationToken, deviceId)))
+            setBody(
+                json.encodeToString(
+                    ClientBootstrapRequest.serializer(),
+                    ClientBootstrapRequest(invitationToken, deviceId, hpkePublicKeyBase64Url),
+                ),
+            )
         }
         requireStatus(response, HttpStatusCode.Created)
         return decode(response.bodyAsText(), ClientBootstrapResponse.serializer())
@@ -156,7 +202,21 @@ class KtorSyncLifecycleTransport(
         requireStatus(response, HttpStatusCode.OK)
     }
 
-    suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
+    override suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse {
+        val response = client.post("$baseUrl/v1/recovery/bootstrap") {
+            contentType(ContentType.Application.Json)
+            setBody(
+                json.encodeToString(
+                    ClientRecoveryBootstrapRequest.serializer(),
+                    ClientRecoveryBootstrapRequest(accountId),
+                ),
+            )
+        }
+        requireStatus(response, HttpStatusCode.OK)
+        return decode(response.bodyAsText(), ClientRecoveryBootstrapResponse.serializer())
+    }
+
+    override suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
         val response = client.post("$baseUrl/v1/recovery/enroll") {
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(ClientRecoveryEnrollmentRequest.serializer(), request))
@@ -180,12 +240,30 @@ class KtorSyncLifecycleTransport(
         return decode(response.bodyAsText(), ClientBlob.serializer()).blobBase64Url
     }
 
+    override suspend fun rotationPackages(): List<ClientRotationPackageResponse> {
+        val response = client.get("$baseUrl/v1/rotations/packages") { authorization() }
+        requireStatus(response, HttpStatusCode.OK)
+        return decode(
+            response.bodyAsText(),
+            kotlinx.serialization.builtins.ListSerializer(ClientRotationPackageResponse.serializer()),
+        )
+    }
+
+    override suspend fun activeDevices(): List<ClientActiveDeviceDirectoryEntry> {
+        val response = client.get("$baseUrl/v1/devices/active") { authorization() }
+        requireStatus(response, HttpStatusCode.OK)
+        return decode(
+            response.bodyAsText(),
+            kotlinx.serialization.builtins.ListSerializer(ClientActiveDeviceDirectoryEntry.serializer()),
+        )
+    }
+
     suspend fun revokeDevice(deviceId: String) {
         val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke") { authorization() }
         requireStatus(response, HttpStatusCode.OK)
     }
 
-    suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
+    override suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
         val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke-and-rotate") {
             authorization()
             contentType(ContentType.Application.Json)

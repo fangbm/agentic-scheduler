@@ -15,28 +15,35 @@ class LocalEnrollmentRequestServiceTest {
     private val device = DeviceId("device-1")
     private val request = EnrollmentRequestId("req-1")
     private val privateRef = SecretReference("secure://pairing-private-key/1")
+    private val credentialRef = SecretReference("secure://credential/1")
 
     @Test
     fun `pending enrollment persists a private key reference and resolves after restart`() = runBlocking {
         val enrollments = MemoryEnrollments()
         val privateKeys = MemoryPrivateKeys(privateRef)
-        val service = LocalEnrollmentRequestService(enrollments, privateKeys)
+        val credentials = MemoryCredentials(credentialRef)
+        val service = LocalEnrollmentRequestService(enrollments, privateKeys, credentials)
 
-        val created = assertIs<StartLocalEnrollmentResult.Created>(service.startPending(account, device, request)).pending
+        val createdResult = assertIs<StartLocalEnrollmentResult.Created>(service.startPending(account, device, request))
+        val created = createdResult.pending
         assertEquals(created, enrollments.state(account))
         assertEquals(privateKeys.private, privateKeys.privateKey(created.hpkePrivateKeyReference))
         assertEquals(created.asRemoteEnrollmentRequest().hpkePublicKeyBase64Url, created.hpkePublicKey)
+        assertEquals(credentialRef, created.deviceCredentialReference)
+        assertEquals(credentials.hash, createdResult.credentialHashBase64Url)
     }
 
     @Test
     fun `failed pending metadata save deletes the unreferenced private key`() = runBlocking {
         val privateKeys = MemoryPrivateKeys(privateRef)
-        val service = LocalEnrollmentRequestService(FailingEnrollments, privateKeys)
+        val credentials = MemoryCredentials(credentialRef)
+        val service = LocalEnrollmentRequestService(FailingEnrollments, privateKeys, credentials)
 
         kotlin.test.assertFails { service.startPending(account, device, request) }
 
         assertEquals(listOf(privateRef), privateKeys.deleted)
         assertNull(privateKeys.privateKey(privateRef))
+        assertEquals(listOf(credentialRef), credentials.deleted)
     }
 
     private class MemoryEnrollments : LocalEnrollmentRepository {
@@ -68,5 +75,14 @@ class LocalEnrollmentRequestServiceTest {
             deleted += reference
             if (reference == this.reference) present = false
         }
+    }
+
+    private class MemoryCredentials(private val reference: SecretReference) : PlatformDeviceCredentialStore {
+        val hash = "credential-hash"
+        val deleted = mutableListOf<SecretReference>()
+        override suspend fun generate() = GeneratedDeviceCredential(reference, hash)
+        override suspend fun store(value: DeviceCredential) = reference
+        override suspend fun load(reference: SecretReference): DeviceCredential? = null
+        override suspend fun delete(reference: SecretReference) { deleted += reference }
     }
 }
