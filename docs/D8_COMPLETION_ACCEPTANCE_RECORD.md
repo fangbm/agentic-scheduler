@@ -1,6 +1,6 @@
 # D8 Completion Acceptance Record
 
-> Status: **IN PROGRESS — RECOVERY/REVOCATION LIFECYCLE E2E PASSED; FINAL ACCEPTANCE STILL OPEN**
+> Status: **IN PROGRESS — CORE D8 LIFECYCLES PASSED; WEAR ROUTE + FINAL AGGREGATE GATE OPEN**
 > Branch: `feature/d8-final-acceptance`  
 > Updated: 2026-09-24
 
@@ -40,12 +40,23 @@ the actual Ktor route pipeline, JDBC/PostgreSQL, a fresh Room replica, Windows D
 envelope receive: the recovered device imports the complete retained ring and applies historical
 epoch-7 ciphertext. This is PASS-level Recovery Secret restore/catch-up evidence.
 
+## Executed production/platform acceptance
+
+| Acceptance path | Environment / evidence | Status |
+| --- | --- | --- |
+| Recovery E2E | Real Ktor + PostgreSQL + JDBC repository + fresh Room + Windows DPAPI/Tink; a fresh device uses Recovery Secret to restore the complete key ring and decrypt historical ciphertext. | PASS |
+| Revocation/rotation E2E | A/B/C real server lifecycle; A revokes B, C fetches/applies its rotation package, A/C advance to the new epoch, and B is rejected on directory/fetch/upload credential paths. | PASS |
+| Historical ciphertext compatibility | After rotation, retained DECRYPT_ONLY epoch material still decrypts pre-rotation ciphertext. | PASS |
+| PostgreSQL plaintext leak scan | Public-table JSON scan contains no known Event title, Recovery Secret, DeviceCredential, or raw content-key encoding. | PASS |
+| Three-replica/offline sync | `D8ReplicaAcceptanceTest` covers convergence, offline reconnect/catch-up, duplicate delivery and ordering behavior. | PASS |
+| Server test suite | `:server:sync:test --rerun-tasks`. | PASS |
+| Android production secure store | Android 16 physical device (PGFM10), `:apps:android:connectedDebugAndroidTest`; cross-instance read, content-key AEAD, pairing HPKE private-key restore, corrupt/wrong-reference fail-closed, and delete semantics. | PASS |
+
 ## Still required before D8 FINAL PASS
 
-- active application bootstrap/enrollment composition using the production secure-store lifecycle;
-- Wear direct-versus-phone-relay integration;
-- final PostgreSQL migration/security adversarial suite;
-- final repository/server CI green after all of the above.
+- Wear direct-versus-phone-relay transport equivalence using the same logical operations/state;
+- one final aggregate D8 security/adversarial gate over the frozen v1 contracts and completed lifecycle paths;
+- final repository/server CI green on the completed acceptance head.
 
 D8 must not be marked complete and D9 must not start until these paths execute successfully.
 
