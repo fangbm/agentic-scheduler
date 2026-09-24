@@ -71,7 +71,7 @@ import dev.agenticscheduler.sync.AllDayRangeImage
 
 /**
  * SYN-005B/005C acceptance: actual Ktor routes and JDBC/PostgreSQL are used
- * with a fresh Room replica and production secure-store implementation. The
+ * with a fresh Room replica and the production desktop secure store. The
  * test is intentionally opt-in: CI supplies SYNC_TEST_DATABASE_URL.
  */
 class D8RecoveryLifecyclePostgresAcceptanceTest {
@@ -87,6 +87,10 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
         val databaseFile = File.createTempFile("agentic-d8-recovery-", ".db")
         val repository = JdbcOpaqueSyncRepository(dataSource)
         val serverConfig = SyncServerConfig(jdbcUrl, "agentic", "agentic-test", adminToken = "d8-acceptance-admin")
+        val aStore = DesktopPlatformSecureStore()
+        var aCredential: SecretReference? = null
+        var amk: SecretReference? = null
+        var activeKey: ImportedContentKey? = null
         try {
             ServerSchemaMigrator(dataSource).migrate()
             application { syncServerModule(repository, serverConfig) }
@@ -98,23 +102,22 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
             val invitation = createInvitation(client, account, space)
             val bootstrapped = bootstrap(client, invitation.invitationToken, "device-a", aPairing.publicKey.value)
 
-            val aStore = DesktopPlatformSecureStore(MemoryBackend("a"), TinkPairingHpke())
-            val aCredential = aStore.store(DeviceCredential(bootstrapped.deviceCredential))
-            val amk = aStore.generateAccountMasterKey()
-            val activeKey = aStore.generateContentKey()
+            aCredential = aStore.store(DeviceCredential(bootstrapped.deviceCredential))
+            amk = aStore.generateAccountMasterKey()
+            activeKey = aStore.generateContentKey()
             val envelope = RecoveryEnvelopeCodec.seal(
                 secret,
                 RecoveryEnvelopePlaintextV1(
                     accountId = account,
                     keyEpoch = 7,
                     accountMasterKeyBase64Url = encodeCanonicalBase64Url(
-                        requireNotNull(aStore.exportAccountMasterKeyForPairing(amk)).copyRawKeyBytesForPairing(),
+                        requireNotNull(aStore.exportAccountMasterKeyForPairing(requireNotNull(amk))).copyRawKeyBytesForPairing(),
                     ),
                     syncSpace = RecoverySyncSpaceKeyRingV1(
                         syncSpaceId = space,
                         activeEpoch = 7,
                         activeKeyBase64Url = encodeCanonicalBase64Url(
-                            requireNotNull(aStore.exportContentKeyForPairing(activeKey.reference)).material.copyRawKeyBytesForPairing(),
+                            requireNotNull(aStore.exportContentKeyForPairing(requireNotNull(activeKey).reference)).material.copyRawKeyBytesForPairing(),
                         ),
                         historicalKeys = listOf(
                             RecoveryHistoricalKeyV1(6, encodeCanonicalBase64Url(ByteArray(32) { (it + 77).toByte() })),
@@ -124,11 +127,12 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
             )
             registerRecoveryProof(client, bootstrapped.deviceCredential, account, secret)
             saveRecoveryEnvelope(client, bootstrapped.deviceCredential, envelope)
-            val remoteEnvelope = uploadHistoricalEvent(client, bootstrapped.deviceCredential, space, aStore, activeKey.reference)
+            val remoteEnvelope = uploadHistoricalEvent(client, bootstrapped.deviceCredential, space, aStore, requireNotNull(activeKey).reference)
 
             val cDatabase = openDesktopDatabase(databaseFile.absolutePath)
+            val cStore = DesktopPlatformSecureStore()
+            val cReferences = linkedSetOf<SecretReference>()
             try {
-                val cStore = DesktopPlatformSecureStore(MemoryBackend("c"), TinkPairingHpke())
                 val enrollment = RoomLocalEnrollmentRepository(cDatabase)
                 val ring = RoomSyncKeyMetadataRepository(cDatabase)
                 val recovered = RecoveryEnrollmentService(
@@ -147,6 +151,10 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
                 assertNotNull(ring.decryptionKey(space, 7))
                 assertNotNull(ring.decryptionKey(space, 6), "Recovered historical key must remain decrypt-capable.")
                 assertNotNull(cStore.load(active.deviceCredentialReference), "Recovery enrollment must stage a usable device credential.")
+                cReferences += active.deviceCredentialReference
+                cReferences += active.accountMasterKeyReference
+                cReferences += requireNotNull(ring.currentEncryptionKey(space)).contentKeyReference
+                cReferences += ring.historicalDecryptKeys(space).map { it.contentKeyReference }
                 val received = RoomSyncReceiveRepository(cDatabase)
                 val journal = RoomMutationJournalRepository(cDatabase)
                 val engine = SyncEngine(
@@ -170,9 +178,13 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
                 assertIs<EncryptedSyncReceiveResult.Handled>(outcome).also { assertIs<SyncReceiveResult.Applied>(it.result) }
                 assertEquals("Recovered encrypted history", RoomEventRepository(cDatabase).get(EventId("00000000-0000-7000-8000-000000009999"))?.title)
             } finally {
+                cReferences.forEach(cStore::delete)
                 cDatabase.close()
             }
         } finally {
+            aCredential?.let(aStore::delete)
+            amk?.let(aStore::delete)
+            activeKey?.let { aStore.delete(it.reference) }
             dataSource.close()
             databaseFile.delete()
         }
@@ -295,14 +307,6 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
             check(response.status == HttpStatusCode.Created)
             return json.decodeFromString(ClientRecoveryEnrollmentCreated.serializer(), response.bodyAsText())
         }
-    }
-
-    private class MemoryBackend(private val owner: String) : DesktopSecureBackend {
-        private val entries = mutableMapOf<String, ByteArray>()
-        override val referencePrefix = "acceptance-$owner://"
-        override fun store(id: String, value: ByteArray) { entries[id] = value.copyOf() }
-        override fun read(id: String): ByteArray? = entries[id]?.copyOf()
-        override fun delete(id: String) { entries.remove(id) }
     }
 
     private companion object {
