@@ -65,6 +65,11 @@ decrypts epoch-7 history, and B's directory/fetch/upload credential paths all re
 PASS-level revoke/rotate multi-device lifecycle evidence. A fresh recovery device is covered by
 the companion Recovery acceptance test above.
 
+The Recovery acceptance test also scans every PostgreSQL public-table JSON projection after real
+recovery/upload traffic. A known Event title, Recovery Secret, DeviceCredential and raw content
+key encoding must be absent from every server row. That opaque-server plaintext-leak fixture gate
+is PASS for the exercised lifecycle data.
+
 ## Fresh-device Recovery enrollment transport — RESOLVED
 
 SYN-005C / OD-045 freezes an unauthenticated `POST /v1/recovery/bootstrap` route that returns
@@ -76,8 +81,8 @@ A stale bootstrap snapshot cannot enroll: `/v1/recovery/enroll` still requires t
 RecoverySecret proof and atomically advances the proof counter/hash. Clients retry bootstrap after
 an InvalidProof race.
 
-Route, JDBC repository, client transport and contract tests are present on this branch. Full
-fresh-device restore/catch-up E2E remains required before D8 FINAL PASS.
+Route, JDBC repository, client transport and contract tests are present on this branch; the
+fresh-device restore/catch-up E2E is recorded above.
 
 ## Remaining-device rotation package discovery — RESOLVED
 
@@ -95,8 +100,8 @@ The atomic revoke/rotate transaction independently recomputes the remaining ACTI
 rejects a stale/incomplete package set, so membership races require refetch/rebuild rather than
 directory versioning.
 
-Directory/server/client/migration contract coverage is present on this branch. Full revoke/rotate
-E2E remains required before D8 FINAL PASS.
+Directory/server/client/migration contract coverage is present on this branch; the full
+revoke/rotate E2E is recorded above.
 
 ## Rotation package wire and recipient delivery — RESOLVED
 
@@ -113,4 +118,4 @@ publish the key ring and new ACTIVE AMK reference while preserving device/enroll
 credential identity. Idempotent/Repaired replay keeps the existing AMK; rollback/integrity errors
 fail closed. Exact wire/context and ACTIVE replay tests are present on this branch.
 
-Full revoke/rotate multi-device E2E remains required before D8 FINAL PASS.
+The full revoke/rotate multi-device E2E is recorded above.

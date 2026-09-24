@@ -128,6 +128,16 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
             registerRecoveryProof(client, bootstrapped.deviceCredential, account, secret)
             saveRecoveryEnvelope(client, bootstrapped.deviceCredential, envelope)
             val remoteEnvelope = uploadHistoricalEvent(client, bootstrapped.deviceCredential, space, aStore, requireNotNull(activeKey).reference)
+            assertServerTablesExclude(
+                dataSource,
+                "Recovered encrypted history",
+                secret.value,
+                bootstrapped.deviceCredential,
+                encodeCanonicalBase64Url(
+                    requireNotNull(aStore.exportContentKeyForPairing(requireNotNull(activeKey).reference))
+                        .material.copyRawKeyBytesForPairing(),
+                ),
+            )
 
             val cDatabase = openDesktopDatabase(databaseFile.absolutePath)
             val cStore = DesktopPlatformSecureStore()
@@ -309,6 +319,39 @@ class D8RecoveryLifecyclePostgresAcceptanceTest {
             }
             check(response.status == HttpStatusCode.Created)
             return json.decodeFromString(ClientRecoveryEnrollmentCreated.serializer(), response.bodyAsText())
+        }
+    }
+
+    /**
+     * D8's server is an opaque relay. This scans every public server table's
+     * JSON projection after a real recovery/upload flow, so accidentally
+     * persisting a known title or any client secret fails the acceptance test.
+     */
+    private fun assertServerTablesExclude(dataSource: HikariDataSource, vararg forbidden: String) {
+        dataSource.connection.use { connection ->
+            val tables = connection.prepareStatement(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
+            ).use { statement ->
+                statement.executeQuery().use { rows ->
+                    buildList { while (rows.next()) add(rows.getString(1)) }
+                }
+            }
+            tables.forEach { table ->
+                val quoted = "\"" + table.replace("\"", "\"\"") + "\""
+                connection.createStatement().use { statement ->
+                    statement.executeQuery("SELECT to_jsonb(row)::text FROM $quoted AS row").use { rows ->
+                        while (rows.next()) {
+                            val persisted = rows.getString(1)
+                            forbidden.forEach { value ->
+                                kotlin.test.assertFalse(
+                                    persisted.contains(value),
+                                    "Server table $table must not retain client plaintext or secret material.",
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
