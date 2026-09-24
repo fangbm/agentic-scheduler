@@ -2,7 +2,7 @@
 
 > Task ID: **D8-01 / D8-02 / D8-03**  
 > Milestone: **D8 — Sync / E2EE / Server**  
-> Status: **IMPLEMENTATION IN PROGRESS — D8 COMPLETION GATE (FROZEN SEMANTICS ONLY)**
+> Status: **COMPLETE — D8 FINAL PASS (OD-012 REMAINS A SEPARATE RELEASE GATE)**
 > Date: 2026-09-12  
 > Decision source: `docs/SYNC_SECURITY_DECISIONS.md`
 

@@ -1,6 +1,6 @@
 # D8 Completion Acceptance Record
 
-> Status: **IN PROGRESS — FINAL CI GATE OPEN**
+> Status: **COMPLETE — D8 FINAL PASS**
 > Branch: `feature/d8-final-acceptance`  
 > Updated: 2026-09-24
 
@@ -54,11 +54,16 @@ epoch-7 ciphertext. This is PASS-level Recovery Secret restore/catch-up evidence
 | Wear direct/relay logical-route equivalence | `D8ReplicaAcceptanceTest` runs independent direct and nearby-phone opaque-forwarding routes through real Room/Tink replicas. It compares Active State, cursor, handled dots, mutation history and conflict state per route; the phone forwards the exact encrypted envelope without decrypting or rewriting it. | PASS |
 | Final D8 security/adversarial aggregate | `gradlew build --rerun-tasks` on Windows with a fresh Docker PostgreSQL instance (`SYNC_TEST_DATABASE_URL` set). All 360 build, protocol, crypto, lifecycle, database and server test tasks completed successfully. Platform instrumentation evidence remains recorded above. | PASS (local) |
 
-## Still required before D8 FINAL PASS
+## Final completion evidence
 
-- final repository/server CI green on the completed acceptance head.
+All frozen D8 acceptance paths now have executed evidence. CI run
+[`#36006499698`](https://github.com/fangbm/agentic-scheduler/actions/runs/36006499698)
+passed on `cf4913a`: Linux Secret Service + PostgreSQL full build/test, Windows
+DPAPI, Android Keystore instrumentation, and Wear Keystore instrumentation all
+completed successfully.
 
-D8 must not be marked complete and D9 must not start until these paths execute successfully.
+OD-012 local SQLite encryption remains a separate production-sensitive-data
+release gate. It does not reopen or change this D8 sync/E2EE completion result.
 
 Current application-level revocation evidence is intentionally narrower than that final E2E:
 
