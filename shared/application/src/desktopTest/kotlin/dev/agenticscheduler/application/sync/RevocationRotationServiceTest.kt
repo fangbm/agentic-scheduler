@@ -38,6 +38,13 @@ class RevocationRotationServiceTest {
         assertEquals(0, fixture.transport.submissions)
     }
 
+    @Test fun `malformed directory HPKE identity never generates rotation secrets`() = runBlocking {
+        val fixture = Fixture(devices = listOf(ClientActiveDeviceDirectoryEntry(self.value, public.value), ClientActiveDeviceDirectoryEntry(revoked.value, "AQI")))
+        assertEquals(RevocationRotationResult.DirectoryInvalid, fixture.service.prepare(account, revoked, "rotation-1", fixture.secret))
+        assertEquals(0, fixture.amk.generated)
+        assertEquals(0, fixture.content.generated)
+    }
+
     @Test fun `transient server failure retries the exact prepared rotation`() = runBlocking {
         val fixture = Fixture()
         val prepared = assertIs<RevocationRotationResult.Prepared>(fixture.service.prepare(account, revoked, "rotation-1", fixture.secret)).value

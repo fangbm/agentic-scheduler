@@ -78,6 +78,10 @@ class RevocationRotationService(
         if (recipients.map(ClientActiveDeviceDirectoryEntry::deviceId).distinct().size != recipients.size ||
             recipients.none { it.deviceId == active.deviceId.value } || recipients.none { it.deviceId == targetDeviceId.value }
         ) return RevocationRotationResult.DirectoryInvalid
+        if (recipients.any { entry ->
+                try { HpkePublicKeyBase64Url(entry.hpkePublicKeyBase64Url); false } catch (_: Throwable) { true }
+            }
+        ) return RevocationRotationResult.DirectoryInvalid
         val remaining = recipients.filter { it.deviceId != targetDeviceId.value }
         if (remaining.isEmpty()) return RevocationRotationResult.InvalidTarget
         val oldActive = keyRing.currentEncryptionKey(active.syncSpaceId) ?: return RevocationRotationResult.DirectoryInvalid
