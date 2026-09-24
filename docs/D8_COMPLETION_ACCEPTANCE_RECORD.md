@@ -34,18 +34,31 @@ Resolved by SYN-005B / OD-044. V1 now freezes strict outer/plaintext wire schema
 HMAC-SHA256 domain-separated key derivation, Tink AES-256-GCM, exact AAD, complete retained
 historical key ring, strict binding validation and fixed derivation/AAD vectors.
 
-Client codec + strict wire/fail-closed tests are present on this branch; Recovery enrollment
-and complete revoke/rotate E2E still need application composition around the new contract.
+Client codec + strict wire/fail-closed tests and fresh-device Recovery enrollment application
+orchestration are present on this branch. A real Ktor/JDBC fresh-device restore/catch-up E2E
+remains required before D8 FINAL PASS.
 
 ## Still required before D8 FINAL PASS
 
-- full Recovery Secret restore and revocation/AMK rotation E2E using RecoveryEnvelopeV1;
+- full Recovery Secret restore and revoke/rotate multi-device E2E using RecoveryEnvelopeV1;
 - active application bootstrap/enrollment composition using the production secure-store lifecycle;
 - Wear direct-versus-phone-relay integration;
 - final PostgreSQL migration/security adversarial suite;
 - final repository/server CI green after all of the above.
 
 D8 must not be marked complete and D9 must not start until these paths execute successfully.
+
+Current application-level revocation evidence is intentionally narrower than that final E2E:
+
+- ACTIVE initiator validates the complete directory before secure-store staging, creates one
+  retryable staged attempt, and publishes its AMK/key-ring metadata only after the server accepts;
+- a transient submit retry reuses the exact prepared request bytes for one `rotationId`;
+- remaining ACTIVE devices strictly bind relay wrapper to envelope, then catch up through the
+  ACTIVE-to-ACTIVE recipient path;
+- PostgreSQL V1→V8 numbered migration/replay runs in the CI PostgreSQL job.
+
+These are PASS-level component/application checks, not substitutes for a shared real-server
+A/B/C/D lifecycle test (including revoked-credential rejection).
 
 ## Fresh-device Recovery enrollment transport — RESOLVED
 
