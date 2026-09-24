@@ -1,8 +1,8 @@
 # D8 Completion Acceptance Record
 
-> Status: **IN PROGRESS — DECISION BLOCKERS RESOLVED; FINAL E2E STILL OPEN**  
+> Status: **IN PROGRESS — RECOVERY/REVOCATION LIFECYCLE E2E PASSED; FINAL ACCEPTANCE STILL OPEN**
 > Branch: `feature/d8-final-acceptance`  
-> Updated: 2026-09-23
+> Updated: 2026-09-24
 
 This record distinguishes acceptance evidence actually executed from work still required.
 It does not start D9.
@@ -35,12 +35,13 @@ HMAC-SHA256 domain-separated key derivation, Tink AES-256-GCM, exact AAD, comple
 historical key ring, strict binding validation and fixed derivation/AAD vectors.
 
 Client codec + strict wire/fail-closed tests and fresh-device Recovery enrollment application
-orchestration are present on this branch. A real Ktor/JDBC fresh-device restore/catch-up E2E
-remains required before D8 FINAL PASS.
+orchestration are present on this branch. `D8RecoveryLifecyclePostgresAcceptanceTest` now executes
+the actual Ktor route pipeline, JDBC/PostgreSQL, a fresh Room replica, Windows DPAPI and Tink
+envelope receive: the recovered device imports the complete retained ring and applies historical
+epoch-7 ciphertext. This is PASS-level Recovery Secret restore/catch-up evidence.
 
 ## Still required before D8 FINAL PASS
 
-- full Recovery Secret restore and revoke/rotate multi-device E2E using RecoveryEnvelopeV1;
 - active application bootstrap/enrollment composition using the production secure-store lifecycle;
 - Wear direct-versus-phone-relay integration;
 - final PostgreSQL migration/security adversarial suite;
@@ -57,8 +58,12 @@ Current application-level revocation evidence is intentionally narrower than tha
   ACTIVE-to-ACTIVE recipient path;
 - PostgreSQL V1→V8 numbered migration/replay runs in the CI PostgreSQL job.
 
-These are PASS-level component/application checks, not substitutes for a shared real-server
-A/B/C/D lifecycle test (including revoked-credential rejection).
+`D8RevocationRotationPostgresAcceptanceTest` additionally executes the shared real Ktor route
+pipeline with JDBC/PostgreSQL, Room key metadata, Windows DPAPI and Tink HPKE across A/B/C:
+A revokes B, C fetches and installs its server-stored package, A/C encrypt at epoch 8, C still
+decrypts epoch-7 history, and B's directory/fetch/upload credential paths all return 401. This is
+PASS-level revoke/rotate multi-device lifecycle evidence. A fresh recovery device is covered by
+the companion Recovery acceptance test above.
 
 ## Fresh-device Recovery enrollment transport — RESOLVED
 
