@@ -21,7 +21,9 @@ class DesktopPlatformSecureStore private constructor(
     PlatformDeviceCredentialStore,
     PlatformPairingPrivateKeyStore,
     PlatformPairingKeyMaterialExporter,
-    PlatformAccountMasterKeyStore {
+    PlatformAccountMasterKeyStore,
+    PlatformAccountMasterKeyGenerator,
+    PlatformContentKeyGenerator {
     constructor(pairingHpke: TinkPairingHpke = TinkPairingHpke()) : this(DesktopSecureBackend.system(), pairingHpke, Unit)
 
     internal constructor(backend: DesktopSecureBackend, pairingHpke: TinkPairingHpke) : this(backend, pairingHpke, Unit)
@@ -62,6 +64,15 @@ class DesktopPlatformSecureStore private constructor(
         return ImportedContentKey(store(SecretKind.CONTENT_KEY, raw), ContentKeyIdentity.fromRawAes256Key(raw))
     }
 
+    override suspend fun generateContentKey(): ImportedContentKey {
+        val raw = newRandomKey()
+        return try {
+            ImportedContentKey(store(SecretKind.CONTENT_KEY, raw), ContentKeyIdentity.fromRawAes256Key(raw))
+        } finally {
+            raw.fill(0)
+        }
+    }
+
     override suspend fun contentAead(reference: SecretReference): SyncPayloadAead? =
         read(reference, SecretKind.CONTENT_KEY)
             ?.takeIf { it.size == CONTENT_KEY_BYTES }
@@ -96,6 +107,11 @@ class DesktopPlatformSecureStore private constructor(
         return store(SecretKind.ACCOUNT_MASTER_KEY, raw)
     }
 
+    override suspend fun generateAccountMasterKey(): SecretReference {
+        val raw = newRandomKey()
+        return try { store(SecretKind.ACCOUNT_MASTER_KEY, raw) } finally { raw.fill(0) }
+    }
+
     override suspend fun delete(reference: SecretReference) {
         val id = referenceId(reference) ?: return
         backend.delete(id)
@@ -106,6 +122,8 @@ class DesktopPlatformSecureStore private constructor(
         backend.store(id, byteArrayOf(kind.tag) + raw)
         return SecretReference(backend.referencePrefix + id)
     }
+
+    private fun newRandomKey(): ByteArray = ByteArray(CONTENT_KEY_BYTES).also(SecureRandom()::nextBytes)
 
     private fun read(reference: SecretReference, expected: SecretKind): ByteArray? {
         val id = referenceId(reference) ?: return null

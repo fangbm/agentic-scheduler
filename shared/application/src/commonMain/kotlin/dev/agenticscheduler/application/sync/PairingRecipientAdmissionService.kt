@@ -12,6 +12,11 @@ interface PlatformAccountMasterKeyStore {
     suspend fun delete(reference: SecretReference)
 }
 
+/** Creates a fresh 256-bit AMK inside platform secure storage. */
+fun interface PlatformAccountMasterKeyGenerator {
+    suspend fun generateAccountMasterKey(): SecretReference
+}
+
 sealed interface PairingRecipientAdmissionResult {
     data class Activated(val state: LocalEnrollmentState.Active) : PairingRecipientAdmissionResult
     data object NotPending : PairingRecipientAdmissionResult

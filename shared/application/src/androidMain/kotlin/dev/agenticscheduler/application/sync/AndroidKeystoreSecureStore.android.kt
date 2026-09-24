@@ -26,7 +26,9 @@ class AndroidKeystoreSecureStore(
     PlatformDeviceCredentialStore,
     PlatformPairingPrivateKeyStore,
     PlatformPairingKeyMaterialExporter,
-    PlatformAccountMasterKeyStore {
+    PlatformAccountMasterKeyStore,
+    PlatformAccountMasterKeyGenerator,
+    PlatformContentKeyGenerator {
     private val applicationContext = context.applicationContext
     private val preferences = applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
@@ -66,6 +68,15 @@ class AndroidKeystoreSecureStore(
         return ImportedContentKey(store(SecretKind.CONTENT_KEY, raw), ContentKeyIdentity.fromRawAes256Key(raw))
     }
 
+    override suspend fun generateContentKey(): ImportedContentKey {
+        val raw = newRandomKey()
+        return try {
+            ImportedContentKey(store(SecretKind.CONTENT_KEY, raw), ContentKeyIdentity.fromRawAes256Key(raw))
+        } finally {
+            raw.fill(0)
+        }
+    }
+
     override suspend fun contentAead(reference: SecretReference): SyncPayloadAead? =
         read(reference, SecretKind.CONTENT_KEY)
             ?.takeIf { it.size == CONTENT_KEY_BYTES }
@@ -98,6 +109,11 @@ class AndroidKeystoreSecureStore(
         return store(SecretKind.ACCOUNT_MASTER_KEY, raw)
     }
 
+    override suspend fun generateAccountMasterKey(): SecretReference {
+        val raw = newRandomKey()
+        return try { store(SecretKind.ACCOUNT_MASTER_KEY, raw) } finally { raw.fill(0) }
+    }
+
     override suspend fun delete(reference: SecretReference) {
         val id = referenceId(reference) ?: return
         check(preferences.edit().remove(id).commit()) { "Android secure-store ciphertext could not be deleted." }
@@ -116,6 +132,8 @@ class AndroidKeystoreSecureStore(
         }
         return reference
     }
+
+    private fun newRandomKey(): ByteArray = ByteArray(CONTENT_KEY_BYTES).also(SecureRandom()::nextBytes)
 
     private fun read(reference: SecretReference, expected: SecretKind): ByteArray? {
         val id = referenceId(reference) ?: return null
