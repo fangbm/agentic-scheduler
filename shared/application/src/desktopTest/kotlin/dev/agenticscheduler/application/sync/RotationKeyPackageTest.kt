@@ -82,6 +82,38 @@ class RotationKeyPackageTest {
         assertEquals(listOf(SecretReference("secure://amk/replay")), accounts.deleted)
     }
 
+    @Test
+    fun `remaining ACTIVE device fetches relay package and advances its rotation ring`() = runBlocking {
+        val enrollments = MemoryEnrollments(active)
+        val accounts = AccountStore(SecretReference("secure://amk/new"))
+        val ring = MemoryRing(
+            state = SyncSpaceKeyState(space, 7),
+            installResult = InstallSyncKeyPackageResult.Advanced(
+                SyncKeyPackageAdoption(setOf(8), setOf(7)),
+            ),
+        )
+        val envelope = envelope(8)
+        val result = RotationPackageCatchUpService(
+            transport = object : RotationPackageTransport {
+                override suspend fun rotationPackages() = listOf(
+                    ClientRotationPackageResponse(
+                        rotationId = envelope.rotationId,
+                        targetDeviceId = envelope.targetDeviceId.value,
+                        packageBase64Url = encodeCanonicalBase64Url(
+                            RotationWireCodec.encodeEnvelope(envelope).encodeToByteArray(),
+                        ),
+                    ),
+                )
+            },
+            recipient = service(enrollments, accounts, ring),
+        ).catchUp()
+
+        val completed = assertIs<RotationPackageCatchUpResult.Completed>(result)
+        assertIs<RotationKeyPackageApplyResult.Applied>(completed.outcomes.single().result)
+        assertEquals(8L, ring.installedEpoch)
+        assertEquals(SecretReference("secure://amk/new"), (enrollments.value as LocalEnrollmentState.Active).accountMasterKeyReference)
+    }
+
     private fun service(
         enrollments: MemoryEnrollments,
         accounts: AccountStore,
