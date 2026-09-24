@@ -1,6 +1,6 @@
 # D8 Completion Acceptance Record
 
-> Status: **IN PROGRESS — CORE D8 LIFECYCLES + WEAR ROUTE PASSED; FINAL AGGREGATE GATE OPEN**
+> Status: **IN PROGRESS — FINAL CI GATE OPEN**
 > Branch: `feature/d8-final-acceptance`  
 > Updated: 2026-09-24
 
@@ -52,10 +52,10 @@ epoch-7 ciphertext. This is PASS-level Recovery Secret restore/catch-up evidence
 | Server test suite | `:server:sync:test --rerun-tasks`. | PASS |
 | Android production secure store | Android 16 physical device (PGFM10), `:apps:android:connectedDebugAndroidTest`; cross-instance read, content-key AEAD, pairing HPKE private-key restore, corrupt/wrong-reference fail-closed, and delete semantics. | PASS |
 | Wear direct/relay logical-route equivalence | `D8ReplicaAcceptanceTest` runs independent direct and nearby-phone opaque-forwarding routes through real Room/Tink replicas. It compares Active State, cursor, handled dots, mutation history and conflict state per route; the phone forwards the exact encrypted envelope without decrypting or rewriting it. | PASS |
+| Final D8 security/adversarial aggregate | `gradlew build --rerun-tasks` on Windows with a fresh Docker PostgreSQL instance (`SYNC_TEST_DATABASE_URL` set). All 360 build, protocol, crypto, lifecycle, database and server test tasks completed successfully. Platform instrumentation evidence remains recorded above. | PASS (local) |
 
 ## Still required before D8 FINAL PASS
 
-- one final aggregate D8 security/adversarial gate over the frozen v1 contracts and completed lifecycle paths;
 - final repository/server CI green on the completed acceptance head.
 
 D8 must not be marked complete and D9 must not start until these paths execute successfully.
