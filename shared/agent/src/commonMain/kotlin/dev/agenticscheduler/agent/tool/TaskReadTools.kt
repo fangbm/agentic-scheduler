@@ -1,6 +1,9 @@
 package dev.agenticscheduler.agent.tool
 
 import dev.agenticscheduler.agent.permission.AgentToolCapability
+import dev.agenticscheduler.application.calendar.CalendarProjectionResult
+import dev.agenticscheduler.application.calendar.CalendarQueryService
+import dev.agenticscheduler.application.calendar.CalendarViewport
 import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.task.Task
@@ -26,8 +29,26 @@ data class AgentToolMetadata(
 
 /** Frozen internal names from AGT-004. They are not an external/MCP schema promise. */
 object AgentToolNames {
+    const val CALENDAR_LIST = "calendar.list"
     const val TASK_GET = "task.get"
     const val TASK_LIST = "task.list"
+}
+
+/**
+ * Typed read-only calendar query. [CalendarViewport] requires the caller to supply an explicit
+ * display timezone, so the Agent never reads a platform default timezone on the user's behalf.
+ */
+class CalendarListTool(
+    private val calendar: CalendarQueryService,
+) {
+    val metadata = AgentToolMetadata(
+        name = AgentToolNames.CALENDAR_LIST,
+        capability = AgentToolCapability.READ,
+        access = AgentToolAccess.READ,
+    )
+
+    suspend fun execute(viewport: CalendarViewport): CalendarProjectionResult =
+        calendar.observe(viewport).first()
 }
 
 sealed interface TaskGetToolResult {
