@@ -38,6 +38,18 @@ class RevocationRotationServiceTest {
         assertEquals(0, fixture.transport.submissions)
     }
 
+    @Test fun `transient server failure retries the exact prepared rotation`() = runBlocking {
+        val fixture = Fixture()
+        val prepared = assertIs<RevocationRotationResult.Prepared>(fixture.service.prepare(account, revoked, "rotation-1", fixture.secret)).value
+        fixture.transport.fail = true
+        val retry = assertIs<RevocationRotationResult.RemoteFailed>(fixture.service.submit(prepared)).retry
+        val first = fixture.transport.lastRequest
+        fixture.transport.fail = false
+        assertIs<RevocationRotationResult.Committed>(fixture.service.submit(retry))
+        assertEquals(first, fixture.transport.lastRequest)
+        assertEquals(2, fixture.transport.submissions)
+    }
+
     private inner class Fixture(devices: List<ClientActiveDeviceDirectoryEntry> = listOf(ClientActiveDeviceDirectoryEntry(self.value, public.value), ClientActiveDeviceDirectoryEntry(revoked.value, public.value))) {
         val secret = RecoverySecret("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")
         val enrollments = Enrollments(active())
@@ -77,7 +89,7 @@ class RevocationRotationServiceTest {
         override suspend fun contentAead(reference: SecretReference) = null
     }
     private class Raw(private val value: ByteArray) : PairingEphemeralKeyMaterial { override fun copyRawKeyBytesForPairing() = value.copyOf() }
-    private class Transport(private val devices: List<ClientActiveDeviceDirectoryEntry>) : RevocationRotationTransport { var submissions = 0; override suspend fun activeDevices() = devices; override suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) { submissions++ } }
+    private class Transport(private val devices: List<ClientActiveDeviceDirectoryEntry>) : RevocationRotationTransport { var submissions = 0; var fail = false; var lastRequest: ClientAtomicRevocationRequest? = null; override suspend fun activeDevices() = devices; override suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) { submissions++; lastRequest = request; if (fail) error("offline") } }
     private object Hpke : PairingHpke { override fun generateDeviceKeyPair() = error("unused"); override fun encrypt(publicKey: HpkePublicKeyBase64Url, plaintext: ByteArray, contextInfo: ByteArray) = HpkeCiphertextComponents(publicKey.value, "AQI"); override fun decrypt(privateKey: PairingPrivateKeyMaterial, encapsulatedKeyBase64Url: String, ciphertextBase64Url: String, contextInfo: ByteArray) = error("unused") }
     private object DirectTransactions : ApplicationTransactionRunner { override suspend fun <T> inWriteTransaction(block: suspend () -> T) = block() }
 }
