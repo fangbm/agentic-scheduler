@@ -32,7 +32,7 @@ class CalendarListToolTest {
             displayTimeZone = TimeZone.of("Asia/Shanghai"),
         )
 
-        assertEquals(expected, tool.execute(viewport))
+        assertEquals(AgentToolOutcome.Success(expected), tool.execute(viewport))
         assertEquals(listOf(viewport), queries.observedViewports)
         assertEquals(AgentToolNames.CALENDAR_LIST, tool.metadata.name)
         assertEquals(AgentToolCapability.READ, tool.metadata.capability)

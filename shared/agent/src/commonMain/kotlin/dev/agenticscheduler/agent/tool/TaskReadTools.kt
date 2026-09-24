@@ -47,22 +47,12 @@ class CalendarListTool(
         access = AgentToolAccess.READ,
     )
 
-    suspend fun execute(viewport: CalendarViewport): CalendarProjectionResult =
-        calendar.observe(viewport).first()
-}
-
-sealed interface TaskGetToolResult {
-    data class Found(val task: Task) : TaskGetToolResult
-
-    data object NotFound : TaskGetToolResult
+    suspend fun execute(viewport: CalendarViewport): AgentToolOutcome<CalendarProjectionResult> =
+        AgentToolOutcome.Success(calendar.observe(viewport).first())
 }
 
 data class TaskListToolInput(
     val status: TaskStatus?,
-)
-
-data class TaskListToolResult(
-    val tasks: ImmutableList<Task>,
 )
 
 /**
@@ -80,8 +70,8 @@ class TaskGetTool(
         access = AgentToolAccess.READ,
     )
 
-    suspend fun execute(taskId: TaskId): TaskGetToolResult =
-        tasks.getTask(taskId)?.let(TaskGetToolResult::Found) ?: TaskGetToolResult.NotFound
+    suspend fun execute(taskId: TaskId): AgentToolOutcome<Task> =
+        tasks.getTask(taskId)?.let { task -> AgentToolOutcome.Success(task) } ?: AgentToolOutcome.NotFound
 }
 
 /** Lists tasks in canonical immutable-ID order, optionally constrained by an explicit status. */
@@ -94,8 +84,8 @@ class TaskListTool(
         access = AgentToolAccess.READ,
     )
 
-    suspend fun execute(input: TaskListToolInput): TaskListToolResult = TaskListToolResult(
-        tasks = tasks.observeTasks()
+    suspend fun execute(input: TaskListToolInput): AgentToolOutcome<ImmutableList<Task>> = AgentToolOutcome.Success(
+        tasks.observeTasks()
             .first()
             .asSequence()
             .filter { task -> input.status == null || task.status == input.status }

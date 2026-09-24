@@ -29,7 +29,7 @@ class TaskReadToolsTest {
         val tool = TaskGetTool(repository)
 
         assertEquals(
-            TaskGetToolResult.NotFound,
+            AgentToolOutcome.NotFound,
             tool.execute(TaskId("018f12a3-4b5c-7000-8000-000000000001")),
         )
         assertEquals(0, repository.writeCount)
@@ -47,8 +47,14 @@ class TaskReadToolsTest {
         val all = tool.execute(TaskListToolInput(status = null))
         val completed = tool.execute(TaskListToolInput(status = TaskStatus.COMPLETED))
 
-        assertEquals(listOf(first.id, second.id), all.tasks.map(Task::id))
-        assertEquals(listOf(second), completed.tasks)
+        assertEquals(
+            listOf(first.id, second.id),
+            (all as AgentToolOutcome.Success).payload.map(Task::id),
+        )
+        assertEquals(
+            listOf(second),
+            (completed as AgentToolOutcome.Success).payload,
+        )
         assertEquals(0, repository.writeCount)
         assertEquals(AgentToolNames.TASK_LIST, tool.metadata.name)
     }
