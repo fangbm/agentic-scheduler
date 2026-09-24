@@ -25,6 +25,33 @@ data class RotationKeyPackageBuildRequest(
     init { require(rotationId.isNotBlank() && rotationId.length <= 128) }
 }
 
+/**
+ * A not-yet-published rotation ring staged exclusively in platform secure
+ * storage. The caller supplies opaque references only; this builder exports
+ * them transiently and immediately seals one recipient envelope.
+ */
+data class StagedRotationKeyPackageBuildRequest(
+    val accountId: AccountId,
+    val rotationId: String,
+    val accountMasterKeyReference: SecretReference,
+    val syncSpaceId: SyncSpaceId,
+    val activeKey: SyncSpaceContentKeyMetadata,
+    val historicalKeys: List<SyncSpaceContentKeyMetadata>,
+    val targetDeviceId: DeviceId,
+    val targetHpkePublicKey: HpkePublicKeyBase64Url,
+) {
+    init {
+        require(rotationId.isNotBlank() && rotationId.length <= 128)
+        require(activeKey.syncSpaceId == syncSpaceId && activeKey.usage == SyncSpaceContentKeyUsage.ACTIVE)
+        require(historicalKeys.map(SyncSpaceContentKeyMetadata::keyEpoch).distinct().size == historicalKeys.size)
+        require(historicalKeys.all {
+            it.syncSpaceId == syncSpaceId &&
+                it.usage == SyncSpaceContentKeyUsage.DECRYPT_ONLY &&
+                it.keyEpoch < activeKey.keyEpoch
+        })
+    }
+}
+
 sealed interface RotationKeyPackageBuildResult {
     data class Built(val envelope: RotationKeyPackageEnvelopeV1) : RotationKeyPackageBuildResult
     data object MissingAccountMasterKey : RotationKeyPackageBuildResult
@@ -57,6 +84,23 @@ class RotationKeyPackageBuilder(
                     it.keyEpoch >= active.keyEpoch
             }
         ) return RotationKeyPackageBuildResult.InvalidKeyRing
+        return buildStaged(
+            StagedRotationKeyPackageBuildRequest(
+                accountId = request.accountId,
+                rotationId = request.rotationId,
+                accountMasterKeyReference = request.accountMasterKeyReference,
+                syncSpaceId = request.syncSpaceId,
+                activeKey = active,
+                historicalKeys = historical,
+                targetDeviceId = request.targetDeviceId,
+                targetHpkePublicKey = request.targetHpkePublicKey,
+            ),
+        )
+    }
+
+    suspend fun buildStaged(request: StagedRotationKeyPackageBuildRequest): RotationKeyPackageBuildResult {
+        val active = request.activeKey
+        val historical = request.historicalKeys.sortedBy(SyncSpaceContentKeyMetadata::keyEpoch)
 
         val accountMasterKey = keyMaterial.exportAccountMasterKeyForPairing(request.accountMasterKeyReference)
             ?: return RotationKeyPackageBuildResult.MissingAccountMasterKey
