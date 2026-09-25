@@ -344,6 +344,7 @@ private fun EventEditorDialog(existing: Event?, selectedDate: LocalDate, display
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Event no longer exists."
+                        EditingResult.Stale -> error = "Event changed. Reload it before saving."
                         is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
@@ -402,6 +403,7 @@ private fun TaskEditorDialog(existing: Task?, editor: TaskEditingService, onSave
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Task no longer exists."
+                        EditingResult.Stale -> error = "Task changed. Reload it before saving."
                         is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }

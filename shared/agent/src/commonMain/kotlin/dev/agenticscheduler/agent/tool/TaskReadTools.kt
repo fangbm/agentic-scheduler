@@ -33,6 +33,7 @@ object AgentToolNames {
     const val TASK_GET = "task.get"
     const val TASK_LIST = "task.list"
     const val TASK_CREATE = "task.create"
+    const val TASK_UPDATE = "task.update"
     const val HISTORY_TIMELINE = "history.timeline"
     const val HISTORY_GET_MUTATION = "history.getMutation"
     const val HISTORY_GET_ENTITY_CHANGES = "history.getEntityChanges"

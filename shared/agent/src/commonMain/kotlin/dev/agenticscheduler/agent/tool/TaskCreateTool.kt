@@ -117,6 +117,7 @@ class TaskCreateTool(
                 is EditingResult.Invalid -> invalid(result.issues.map { it.toToolIssue() })
                 is EditingResult.BlockedBySyncConflict -> AgentToolOutcome.Conflict(result.blocks.map { it.conflictId })
                 EditingResult.NotFound -> AgentToolOutcome.InfrastructureFailure("UNEXPECTED_NOT_FOUND")
+                EditingResult.Stale -> AgentToolOutcome.InfrastructureFailure("UNEXPECTED_STALE")
             }
         } catch (_: AgentOriginWriteNotAllowed) {
             AgentToolOutcome.PermissionDenied(metadata.capability)
@@ -136,22 +137,7 @@ class TaskCreateTool(
             ?: run { issues += AgentToolInputIssue("priority", "UNKNOWN_VALUE"); null }
         if (value.estimatedMinutes != null && value.estimatedMinutes < 0) issues += AgentToolInputIssue("estimatedMinutes", "NEGATIVE")
         if (value.remainingMinutes != null && value.remainingMinutes < 0) issues += AgentToolInputIssue("remainingMinutes", "NEGATIVE")
-        val deadline = value.deadline?.let { value ->
-            val policy = DeadlinePolicy.entries.firstOrNull { it.name == value.policy }
-                ?: run { issues += AgentToolInputIssue("deadline.policy", "UNKNOWN_VALUE"); null }
-            val overflow = OverflowPolicy.entries.firstOrNull { it.name == value.overflowPolicy }
-                ?: run { issues += AgentToolInputIssue("deadline.overflowPolicy", "UNKNOWN_VALUE"); null }
-            if (policy == null || overflow == null) null else try {
-                when (value.kind) {
-                    "DATE_ONLY" -> TaskDeadlineInput.DateOnly(LocalDate.parse(requireNotNull(value.date)), policy, overflow)
-                    "EXACT" -> TaskDeadlineInput.Exact(LocalDateTime.parse(requireNotNull(value.at)), TimeZone.of(requireNotNull(value.timeZone)), policy, overflow)
-                    else -> { issues += AgentToolInputIssue("deadline.kind", "UNKNOWN_VALUE"); null }
-                }
-            } catch (_: IllegalArgumentException) {
-                issues += AgentToolInputIssue("deadline", "INVALID_TIME")
-                null
-            }
-        }
+        val deadline = decodeTaskDeadline(value.deadline, issues)
         if (issues.isNotEmpty()) return Decoded.Invalid(invalid(issues))
         return Decoded.Valid(CreateTaskInput(
             value.title, requireNotNull(priority), value.estimatedMinutes?.minutes,
@@ -160,14 +146,6 @@ class TaskCreateTool(
     }
 
     private fun invalid(issues: List<AgentToolInputIssue>) = AgentToolOutcome.InvalidInput(issues)
-    private fun EditingIssue.toToolIssue(): AgentToolInputIssue = when (this) {
-        EditingIssue.BlankTitle -> AgentToolInputIssue("title", "BLANK")
-        EditingIssue.MissingEventTime -> AgentToolInputIssue("deadline", "MISSING_TIME")
-        EditingIssue.InvalidTimeRange -> AgentToolInputIssue("deadline", "INVALID_TIME_RANGE")
-        is EditingIssue.ZonedTimeTransitionRejected -> AgentToolInputIssue("deadline", "ZONED_TIME_TRANSITION")
-        is EditingIssue.InvalidEffort -> AgentToolInputIssue(field.name.lowercase(), "INVALID_EFFORT")
-    }
-
     private sealed interface Decoded {
         data class Valid(val value: CreateTaskInput) : Decoded
         data class Invalid(val outcome: AgentToolOutcome.InvalidInput) : Decoded
@@ -181,4 +159,29 @@ class TaskCreateTool(
         val remainingMinutes: Long?,
         val deadline: String?,
     )
+}
+
+internal fun decodeTaskDeadline(value: TaskDeadlineToolInput?, issues: MutableList<AgentToolInputIssue>): TaskDeadlineInput? = value?.let {
+    val policy = DeadlinePolicy.entries.firstOrNull { entry -> entry.name == value.policy }
+        ?: run { issues += AgentToolInputIssue("deadline.policy", "UNKNOWN_VALUE"); null }
+    val overflow = OverflowPolicy.entries.firstOrNull { entry -> entry.name == value.overflowPolicy }
+        ?: run { issues += AgentToolInputIssue("deadline.overflowPolicy", "UNKNOWN_VALUE"); null }
+    if (policy == null || overflow == null) null else try {
+        when (value.kind) {
+            "DATE_ONLY" -> TaskDeadlineInput.DateOnly(LocalDate.parse(requireNotNull(value.date)), policy, overflow)
+            "EXACT" -> TaskDeadlineInput.Exact(LocalDateTime.parse(requireNotNull(value.at)), TimeZone.of(requireNotNull(value.timeZone)), policy, overflow)
+            else -> { issues += AgentToolInputIssue("deadline.kind", "UNKNOWN_VALUE"); null }
+        }
+    } catch (_: IllegalArgumentException) {
+        issues += AgentToolInputIssue("deadline", "INVALID_TIME")
+        null
+    }
+}
+
+internal fun EditingIssue.toToolIssue(): AgentToolInputIssue = when (this) {
+    EditingIssue.BlankTitle -> AgentToolInputIssue("title", "BLANK")
+    EditingIssue.MissingEventTime -> AgentToolInputIssue("deadline", "MISSING_TIME")
+    EditingIssue.InvalidTimeRange -> AgentToolInputIssue("deadline", "INVALID_TIME_RANGE")
+    is EditingIssue.ZonedTimeTransitionRejected -> AgentToolInputIssue("deadline", "ZONED_TIME_TRANSITION")
+    is EditingIssue.InvalidEffort -> AgentToolInputIssue(field.name.lowercase(), "INVALID_EFFORT")
 }

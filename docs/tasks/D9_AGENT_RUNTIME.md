@@ -71,6 +71,11 @@ produces a normalized before/after preview, rechecks the preview and policy
 at confirmation, and returns the exact committed MutationId. Focused Room
 tests cover invalid input, denial, unconfirmed/stale preview, and success.
 Other write Tools and full provider-to-Tool orchestration remain open.
+`task.update` now has a typed preview/commit Tool and a transaction-time
+expected-before guard in `TaskEditingService`. Its Room test verifies a
+concurrent user edit makes the Agent preview stale with no extra journal
+operation, while a fresh confirmed preview returns a committed MutationId.
+The bounded provider registry does not expose `task.update` yet.
 
 Provider call IDs are now retained as adapter metadata on AgentToolCall. A
 transcript assembler reconstructs assistant ToolCalls and exactly matching

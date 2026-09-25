@@ -253,6 +253,8 @@ with the business mutation; a Room integration scenario verifies linkage.
 The first typed write Tool, `task.create`, now passes focused preview,
 denial, stale, confirmation, and committed MutationId tests; it is not yet
 available from the Android/Desktop Agent UI.
+`task.update` has a separate typed preview and atomic expected-before
+revalidation test; it is not yet in the provider registry or app UI.
 Application-owned transcript reconstruction now preserves assistant ToolCall
 IDs and paired results across provider switching; persistent run orchestration
 now covers a bounded `task.get` → confirmed `task.create` flow in a local mock,
