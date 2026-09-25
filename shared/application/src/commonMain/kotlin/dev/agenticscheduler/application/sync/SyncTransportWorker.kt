@@ -8,6 +8,8 @@ import dev.agenticscheduler.application.persistence.SyncReceiveRepository
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.SyncPayloadV1
+import dev.agenticscheduler.sync.SyncPayloadV2
+import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.SyncSpaceId
 
 sealed interface SyncUploadResult {
@@ -31,6 +33,9 @@ fun interface SyncEnvelopeReceiver {
     suspend fun receive(encodedEnvelope: String, serverCursor: Long): EncryptedSyncReceiveResult
 }
 
+/** Host-owned, device-local acknowledgement; Agent tools cannot grant it. */
+fun interface AgentOutboundCompatibilityGate { suspend fun enabled(syncSpaceId: SyncSpaceId): Boolean }
+
 data class SyncTransportRunResult(
     val uploaded: Int,
     val fetched: Int,
@@ -53,19 +58,28 @@ class SyncTransportWorker(
     private val deviceId: DeviceId,
     private val transport: SyncTransport,
     private val receiveGateway: SyncEnvelopeReceiver,
+    private val agentOutboundGate: AgentOutboundCompatibilityGate = AgentOutboundCompatibilityGate { false },
 ) {
     suspend fun run(syncSpaceId: SyncSpaceId, fetchLimit: Int = 100): SyncTransportRunResult {
         require(fetchLimit > 0)
         var uploaded = 0
         history.timeline().filter(CommittedMutation::outboundEligible).forEach { committed ->
             val operation = committed.operation
+            if (operation.origin is MutationOrigin.Agent && !agentOutboundGate.enabled(syncSpaceId)) {
+                return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Agent-origin sync requires device-local upgrade acknowledgement."))
+            }
             val existing = outbound.envelope(syncSpaceId, operation.mutationId)
             val stored = existing ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {
                 CurrentEncryptionKeyLookup.Missing -> return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Missing active content key."))
-                is CurrentEncryptionKeyLookup.Available -> when (val encrypted = codec.encrypt(
-                    SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
-                    SyncPayloadV1(operation = operation),
-                )) {
+                is CurrentEncryptionKeyLookup.Available -> when (val encrypted =
+                    if (operation.origin is MutationOrigin.Agent) codec.encrypt(
+                        SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
+                        SyncPayloadV2(operation = operation),
+                    ) else codec.encrypt(
+                        SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
+                        SyncPayloadV1(operation = operation),
+                    )
+                ) {
                     is EncryptSyncPayloadResult.Encrypted -> {
                         val value = StoredOutboundEnvelope(syncSpaceId, operation.mutationId, encrypted.envelope, false)
                         outbound.save(value)

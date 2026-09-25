@@ -20,7 +20,7 @@ D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
 D8     E2EE Multi-device Sync + Thin Server    COMPLETE — SYN-019 ACCEPTANCE + FOUR-PLATFORM CI PASSED
  ↓
-D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY
+D9-01  Agent Runtime + Typed Tools             IN PROGRESS
 D9-02  Agent history sync amendment            AFTER D9-01
 D9-03  Wear Agent/provider provisioning        AFTER D9-01
  ↓
@@ -230,10 +230,45 @@ Status:
 
 ```text
 D9-00 decisions                        FROZEN
-D9-01 Android/Desktop Agent core       READY AFTER D8
+D9-01 Android/Desktop Agent core       IN PROGRESS
 D9-02 synchronized Agent history       AFTER D9-01
 D9-03 Wear Agent/provider provisioning AFTER D9-01
 ```
+
+The D9 review branch now includes the local Agent state repository and Room
+schema v12 migration. Its focused migration/retention tests pass. Full D9-01
+Tool, Provider, audit, and UI acceptance remains open. Context budget and
+incremental compaction checks now pass on the D9 branch.
+Agent-origin business writes now have a v2 inner payload fixture and sync
+codec tests; this is not authorization to activate synchronized Agent writes
+before the default-off all-devices-upgraded opt-in and D8 runtime gate.
+The D9 branch now has explicit editing MutationIds and a default-deny Agent
+mutation gate; enrolled writes still need trusted runtime composition and
+confirmation revalidation. The outbound worker separately blocks Agent v2
+upload without the same opt-in. D7 history reads are exposed as internal Tools.
+The first provider adapter and SSE/tool-call probe pass mock desktop tests,
+but full Agent orchestration and UI composition remain open.
+The Event/Task edit seam can now atomically append Agent ToolResult/AgentAction
+with the business mutation; a Room integration scenario verifies linkage.
+The first typed write Tool, `task.create`, now passes focused preview,
+denial, stale, confirmation, and committed MutationId tests; it is not yet
+available from the Android/Desktop Agent UI.
+`task.update` has a separate typed preview and atomic expected-before
+revalidation test and a bounded provider mock run; it is not yet in app UI.
+Application-owned transcript reconstruction now preserves assistant ToolCall
+IDs and paired results across provider switching; persistent run orchestration
+now covers a bounded `task.get` → confirmed `task.create` flow in a local mock,
+including denial and stale no-write cases. The remainder of the frozen Tool
+registry, app UI composition, and D8 runtime gate are
+still required before D9-01 acceptance.
+Runtime compaction invocation now passes local mock success/failure checks;
+raw AgentMessages remain durable and only hot context selection changes.
+`task.list` and the three D7 history reads are also registered as read-only
+mock-tested Tools; no provider-origin read mutates Task or history state.
+`calendar.list` now reads an explicit-timezone projection through the same
+bounded registry, with a no-write local mock test.
+An oversized latest ToolResult is no longer silently dropped by context
+selection; the bounded run stops with retained raw history instead.
 
 Frozen D9-01 baseline:
 

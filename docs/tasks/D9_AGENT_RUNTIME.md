@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **SPEC FROZEN — D9-01 READY AFTER D8**  
+> Status: **D9-01 IN PROGRESS — D8 COMPLETE**
 > Date: 2026-09-12  
 > Decision source: `docs/AGENT_DECISIONS.md`
 
@@ -26,6 +26,91 @@ Android/Desktop Agent surface / universal command entry
 ```
 
 D9-02 adds synchronized Agent history. D9-03 adds Wear provider provisioning/capability integration.
+
+Implementation progress on this branch: typed permission policy and calendar/task reads,
+followed by local Agent state persistence. Room schema v12 and a v11→v12 migration
+preserve existing D8 rows; focused fresh-install, migration, and thread-deletion
+tests pass. Provider orchestration, context, remaining Tools, audit write flow,
+and Android/Desktop surfaces remain open.
+
+The deterministic ContextAssembler and incremental compaction selector/service
+are now implemented and pass shared desktop tests. Agent-origin business
+mutations now have an inner payload v2 codec and frozen fixture; sync unit
+tests pass. Full provider orchestration, Tool writes, AgentAction execution,
+and UI acceptance remain open.
+
+The D9 branch now returns the committed MutationId from Event/Task editing
+results, supports explicit Agent mutation origin, and fails closed at the
+MutationCoordinator unless trusted host wiring authorizes the Agent write.
+The authorization checks device-local SyncSpace upgrade acknowledgement when
+enrolled; outbound sync independently refuses Agent-origin upload without the
+same acknowledgement, including for Agent mutations created before enrollment.
+Focused application/database gate tests pass. Structured D7 history
+read Tools are implemented. This is infrastructure, not a completed Agent
+write/confirmation flow.
+
+The first Ktor OpenAI-compatible adapter now has a strict structured
+tool-calling capability probe, request-time secure-store credential resolution,
+redacted failures, preservation of assistant ToolCall/tool-result transcript
+messages, and SSE delta assembly. Focused mock-provider desktop tests pass.
+When a credential reference is configured, the adapter refuses non-HTTPS
+provider URLs before reading the secret or sending a request. Explicit
+credential-free HTTP model endpoints remain possible; a future UI must warn
+when a non-loopback endpoint exposes prompt/schedule plaintext in transit.
+The adapter is wired into the bounded persistent run below, but not either UI.
+
+Event/Task editing commands now accept an in-transaction `onCommitted`
+callback. The Room integration test links one Agent-origin Task, ToolResult,
+AgentAction, ChangeLog, and exact MutationId atomically; an audit callback
+failure is verified to roll the Task, journal, and ToolResult back. The actual
+Tool confirmation/runtime path still needs to use this seam.
+
+`task.create` is the first typed write Tool on this branch. It requires
+explicit priority/effort/deadline values, validates before permission,
+produces a normalized before/after preview, rechecks the preview and policy
+at confirmation, and returns the exact committed MutationId. Focused Room
+tests cover invalid input, denial, unconfirmed/stale preview, and success.
+Other write Tools and full provider-to-Tool orchestration remain open.
+`task.update` now has a typed preview/commit Tool and a transaction-time
+expected-before guard in `TaskEditingService`. Its Room test verifies a
+concurrent user edit makes the Agent preview stale with no extra journal
+operation, while a fresh confirmed preview returns a committed MutationId.
+The bounded provider registry now exposes `task.update` after a successful
+structured-call probe. Its local mock covers a stale confirmation after a
+concurrent user edit, then a fresh confirmed update with Agent-origin
+MutationId/AgentAction linkage. Android/Desktop UI still does not expose it.
+
+Provider call IDs are now retained as adapter metadata on AgentToolCall. A
+transcript assembler reconstructs assistant ToolCalls and exactly matching
+ToolResults from application-owned records, refusing unresolved/orphaned
+history. The Room test shows provider/model switching preserves the same
+thread and transcript.
+
+A bounded application-owned Agent run now composes the provider with an
+explicit `calendar.list`, `task.get`, `task.list`, `history.timeline`,
+`history.getMutation`, `history.getEntityChanges`, `task.create`, and
+`task.update` registry, deterministic context budget, and persisted
+ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
+covers proposal → local read → confirmation → Task/MutationId/history linkage,
+plus denial, stale preview, prose-only, unregistered Tool, failed capability
+probe, and stale-summary/current-fact ordering. It is still a narrow slice:
+remaining AGT-004 Tools, full history cursor support, Android/Desktop composition,
+and full acceptance remain open. No synchronized Agent write is enabled in
+production before D8 runtime closure and device-local upgrade opt-in.
+The latest assistant ToolCall/matching ToolResult is mandatory in a resumed
+provider request. An oversized authoritative result now returns
+`CONTEXT_TOO_LARGE` before another provider call while retaining raw messages
+and ToolResults; the focused Room mock test passes.
+The bounded runtime now invokes AGT-010 compaction when measured eligible raw
+candidate demand exceeds the 25% class or the assembled prompt exceeds 80%
+of its input budget. Measuring demand before the class cap is necessary for
+the 25% trigger to be reachable. A saved summary replaces only covered raw
+messages in hot context; the Room mock verifies its source range and that
+both successful and failed summarization retain every raw message.
+`calendar.list` now requires an explicit date window and display timezone,
+uses the existing application projection, and serializes Zoned/AllDay/
+Floating/DateOnly items plus conflict/issue facts as JSON. Its local provider
+mock verifies an all-day item and that the read emits no mutation.
 
 ---
 
@@ -87,6 +172,15 @@ ProviderConfig (non-secret metadata + SecretRef)
 Provider remote conversation/session IDs are disposable adapter metadata and cannot become AgentThread identity.
 
 No destructive migration fallback.
+
+The D8 Room database is already near the JVM method-size limit in Room 3's
+generated schema validator. Registering the eight D9 entities as `@Entity`
+exceeds that limit. `AgentSchema.kt` therefore owns explicit v12 SQL for the
+eight distinct Agent tables in the **same database and transaction**. The
+v11→v12 migration creates them for existing installations; the database
+creation callback creates them for fresh v12 installations; every open checks
+their required columns. The exported Room v12 JSON covers Room-managed D8
+tables, and `AgentSchema.kt` is the authoritative catalog for the Agent tables.
 
 ---
 
@@ -210,17 +304,24 @@ Create AgentAction before/around execution so failures are also auditable, then 
 
 A committed write ToolResult references MutationId and AgentAction records that reference. D7 mutation origin uses `AGENT(agentActionId)`.
 
+Agent-origin business mutations use inner payload v2 inside the unchanged D8
+outer envelope. V1 is retained for non-Agent origins. Existing D8 clients
+quarantine v2 whole operations; D9-01 must not emit one to a SyncSpace unless
+the device-local, user-owned all-devices-upgraded opt-in is enabled. The
+setting defaults off and is not exposed to Agent Tools. Local-only Agent
+writes remain subject to normal confirmation and validation rules.
+
 Do not copy provider secrets or complete system prompts into AgentAction.
 
 ---
 
 # 13. D9-02 sync amendment
 
-After D9-01 local behavior is stable:
+After D9-01 local behavior is stable, extend sync for conversation/history:
 
 ```text
-extend inner SyncPayload protocol version
-add Agent typed operation discriminators
+use a separately versioned Agent conversation/history operation contract
+add Agent history typed operation discriminators
 add Agent semantic merge/tombstone rules from AGT-013
 add migration/compatibility fixtures
 verify older D8 clients quarantine unknown Agent operations safely

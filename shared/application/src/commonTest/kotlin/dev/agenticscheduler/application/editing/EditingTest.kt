@@ -4,6 +4,8 @@ import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.AgentOriginWriteGate
+import dev.agenticscheduler.application.history.AgentOriginWriteNotAllowed
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.history.SyncConflictWriteBlock
@@ -14,6 +16,8 @@ import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.LocalReplicaCausalState
 import dev.agenticscheduler.application.persistence.MutationJournalRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
+import dev.agenticscheduler.sync.MutationOrigin
+import kotlin.test.assertFailsWith
 import dev.agenticscheduler.domain.event.Event
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.id.FocusBlockId
@@ -238,6 +242,57 @@ class EditingTest {
     }
 
     @Test
+    fun `Agent task edit returns the exact committed MutationId and origin`() = runBlocking {
+        val journal = TestJournal()
+        val actionId = id(90)
+        val service = TaskEditingService(
+            FakeTaskRepository(),
+            generator(),
+            MutationCoordinator(CountingTransactions(), journal, generator(), MutationWallClock { fixedEpochMilliseconds }, AgentOriginWriteGate { true }),
+            NoActiveSyncSpaceWritePolicy,
+        )
+
+        val result = assertIs<EditingResult.Success<Task>>(service.create(
+            CreateTaskInput("Agent task", TaskPriority.HIGH, 2.hours, null, null),
+            MutationOrigin.Agent(actionId),
+        ))
+
+        assertEquals(journal.lastMutation?.operation?.mutationId, result.mutationId?.value)
+        assertEquals(MutationOrigin.Agent(actionId), journal.lastMutation?.operation?.origin)
+    }
+
+    @Test
+    fun `Agent origin is denied by default before a write transaction`() = runBlocking {
+        val transactions = CountingTransactions()
+        val tasks = FakeTaskRepository()
+        val service = TaskEditingService(tasks, generator(), coordinator(transactions), NoActiveSyncSpaceWritePolicy)
+
+        assertFailsWith<AgentOriginWriteNotAllowed> {
+            service.create(CreateTaskInput("Blocked", TaskPriority.NORMAL, 1.hours, null, null), MutationOrigin.Agent(id(91)))
+        }
+        assertEquals(0, transactions.writes)
+        assertEquals(0, tasks.taskCount())
+    }
+
+    @Test
+    fun `Task update compares preview before image inside committed transaction`() = runBlocking {
+        val tasks = FakeTaskRepository()
+        val journal = TestJournal()
+        val service = TaskEditingService(tasks, generator(),
+            MutationCoordinator(CountingTransactions(), journal, generator(), MutationWallClock { fixedEpochMilliseconds }),
+            NoActiveSyncSpaceWritePolicy)
+        val created = assertIs<EditingResult.Success<Task>>(service.create(CreateTaskInput("Before", TaskPriority.NORMAL, null, null, null))).value
+        val proposed = UpdateTaskInput(created.id, "Agent edit", TaskStatus.OPEN, TaskPriority.HIGH, null, Duration.ZERO, null, null)
+        val preview = assertIs<EditingResult.Success<TaskUpdatePreview>>(service.previewUpdate(proposed)).value
+        service.update(proposed.copy(title = "Concurrent user edit"))
+        val beforeAttempt = journal.appended
+
+        assertEquals(EditingResult.Stale, service.update(proposed, expectedBefore = preview.before))
+        assertEquals(beforeAttempt, journal.appended)
+        assertEquals("Concurrent user edit", tasks.getTask(created.id)?.title)
+    }
+
+    @Test
     fun `user edit intersecting an open conflict is blocked before Active State or journal`() = runBlocking {
         val repository = FakeEventRepository()
         val journal = TestJournal()
@@ -292,9 +347,10 @@ private class CountingTransactions : ApplicationTransactionRunner {
 private class TestJournal : MutationJournalRepository {
     private var state: LocalReplicaCausalState? = null
     var appended = 0
+    var lastMutation: CommittedMutation? = null
     override suspend fun localReplicaState(): LocalReplicaCausalState? = state
     override suspend fun saveLocalReplicaState(state: LocalReplicaCausalState) { this.state = state }
-    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { appended += 1 }
+    override suspend fun appendCommittedMutation(mutation: CommittedMutation) { appended += 1; lastMutation = mutation }
     override suspend fun advanceFocusBlockTombstones(operation: dev.agenticscheduler.sync.SyncOperation, acceptedDeletes: List<dev.agenticscheduler.sync.FocusBlockDelete>) = Unit
 }
 

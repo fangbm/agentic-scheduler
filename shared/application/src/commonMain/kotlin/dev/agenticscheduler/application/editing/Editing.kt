@@ -2,6 +2,7 @@ package dev.agenticscheduler.application.editing
 
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.application.history.SyncConflictWriteBlock
 import dev.agenticscheduler.application.history.SyncConflictWritePolicy
 import dev.agenticscheduler.application.history.toSemanticImage
@@ -26,6 +27,7 @@ import dev.agenticscheduler.domain.time.TimePlacement
 import dev.agenticscheduler.domain.time.ZonedTimeRange
 import dev.agenticscheduler.sync.EventPut
 import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.TaskPut
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.collections.immutable.toImmutableList
@@ -96,6 +98,16 @@ data class CreateTaskInput(
     val deadline: TaskDeadlineInput?,
 )
 
+/** Validated source facts shown before Task creation; no TaskId or write is allocated. */
+data class TaskCreatePreview(
+    val title: String,
+    val priority: TaskPriority,
+    val effort: TaskEffort,
+    val deadline: TaskDeadline?,
+)
+
+data class TaskUpdatePreview(val before: Task, val after: Task)
+
 data class UpdateTaskInput(
     val id: TaskId,
     val title: String,
@@ -108,11 +120,19 @@ data class UpdateTaskInput(
 )
 
 sealed interface EditingResult<out T> {
-    data class Success<T>(val value: T) : EditingResult<T>
+    /** [mutationId] is filled only after the atomic application transaction commits. */
+    data class Success<T>(val value: T, val mutationId: MutationId? = null) : EditingResult<T>
     data class Invalid(val issues: ImmutableList<EditingIssue>) : EditingResult<Nothing>
     data object NotFound : EditingResult<Nothing>
+    data object Stale : EditingResult<Nothing>
     data class BlockedBySyncConflict(val blocks: ImmutableList<SyncConflictWriteBlock>) : EditingResult<Nothing>
 }
+
+private fun <T> committedResult(execution: MutationExecution<EditingResult<T>>?, fallback: EditingResult<T>?): EditingResult<T> =
+    when (val value = execution?.value ?: requireNotNull(fallback)) {
+        is EditingResult.Success -> value.copy(mutationId = requireNotNull(execution).mutationId)
+        else -> value
+    }
 
 sealed interface EditingIssue {
     data object BlankTitle : EditingIssue
@@ -140,12 +160,16 @@ class EventEditingService(
     private val mutations: MutationCoordinator,
     private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
-    suspend fun create(input: CreateEventInput): EditingResult<Event> {
+    suspend fun create(
+        input: CreateEventInput,
+        origin: MutationOrigin = MutationOrigin.User,
+        onCommitted: suspend (MutationExecution<EditingResult<Event>>) -> Unit = {},
+    ): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
         val event = Event(EventId(ids.next()), input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
         var result: EditingResult<Event>? = null
-        val execution = mutations.executeIfAny(MutationOrigin.User) {
+        val execution = mutations.executeIfAny(origin, onCommitted) {
             val proposed = EventPut(null, event.toSemanticImage())
             val blocks = conflictWritePolicy.blocks(listOf(proposed))
             result = if (blocks.isEmpty()) {
@@ -157,15 +181,19 @@ class EventEditingService(
             }
             requireNotNull(result)
         }
-        return execution?.value ?: requireNotNull(result)
+        return committedResult(execution, result)
     }
 
-    suspend fun update(input: UpdateEventInput): EditingResult<Event> {
+    suspend fun update(
+        input: UpdateEventInput,
+        origin: MutationOrigin = MutationOrigin.User,
+        onCommitted: suspend (MutationExecution<EditingResult<Event>>) -> Unit = {},
+    ): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
         val event = Event(input.id, input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
         var result: EditingResult<Event>? = null
-        val execution = mutations.executeIfAny(MutationOrigin.User) {
+        val execution = mutations.executeIfAny(origin, onCommitted) {
             val before = events.get(input.id)
             result = if (before == null) {
                 EditingResult.NotFound
@@ -182,7 +210,7 @@ class EventEditingService(
             }
             requireNotNull(result)
         }
-        return execution?.value ?: requireNotNull(result)
+        return committedResult(execution, result)
     }
 }
 
@@ -192,13 +220,32 @@ class TaskEditingService(
     private val mutations: MutationCoordinator,
     private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
-    suspend fun create(input: CreateTaskInput): EditingResult<Task> {
+    fun previewCreate(input: CreateTaskInput): EditingResult<TaskCreatePreview> = when (
         val built = validateTask(input.title, input.estimated, Duration.ZERO, input.remaining, input.deadline)
+    ) {
+        is TaskInput.Invalid -> EditingResult.Invalid(built.issues)
+        is TaskInput.Valid -> EditingResult.Success(TaskCreatePreview(input.title, input.priority, built.effort, built.deadline))
+    }
+
+    suspend fun previewUpdate(input: UpdateTaskInput): EditingResult<TaskUpdatePreview> {
+        val built = validateTask(input.title, input.estimated, input.completed, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
+        val before = tasks.getTask(input.id) ?: return EditingResult.NotFound
         val valid = built as TaskInput.Valid
-        val task = Task(TaskId(ids.next()), input.title, TaskStatus.OPEN, input.priority, valid.effort, valid.deadline)
+        return EditingResult.Success(TaskUpdatePreview(before, Task(input.id, input.title, input.status, input.priority, valid.effort, valid.deadline)))
+    }
+
+    suspend fun create(
+        input: CreateTaskInput,
+        origin: MutationOrigin = MutationOrigin.User,
+        onCommitted: suspend (MutationExecution<EditingResult<Task>>) -> Unit = {},
+    ): EditingResult<Task> {
+        val preview = previewCreate(input)
+        if (preview is EditingResult.Invalid) return preview
+        val valid = (preview as EditingResult.Success).value
+        val task = Task(TaskId(ids.next()), valid.title, TaskStatus.OPEN, valid.priority, valid.effort, valid.deadline)
         var result: EditingResult<Task>? = null
-        val execution = mutations.executeIfAny(MutationOrigin.User) {
+        val execution = mutations.executeIfAny(origin, onCommitted) {
             val proposed = TaskPut(null, task.toSemanticImage())
             val blocks = conflictWritePolicy.blocks(listOf(proposed))
             result = if (blocks.isEmpty()) {
@@ -210,19 +257,26 @@ class TaskEditingService(
             }
             requireNotNull(result)
         }
-        return execution?.value ?: requireNotNull(result)
+        return committedResult(execution, result)
     }
 
-    suspend fun update(input: UpdateTaskInput): EditingResult<Task> {
+    suspend fun update(
+        input: UpdateTaskInput,
+        origin: MutationOrigin = MutationOrigin.User,
+        onCommitted: suspend (MutationExecution<EditingResult<Task>>) -> Unit = {},
+        expectedBefore: Task? = null,
+    ): EditingResult<Task> {
         val built = validateTask(input.title, input.estimated, input.completed, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
         val valid = built as TaskInput.Valid
         val task = Task(input.id, input.title, input.status, input.priority, valid.effort, valid.deadline)
         var result: EditingResult<Task>? = null
-        val execution = mutations.executeIfAny(MutationOrigin.User) {
+        val execution = mutations.executeIfAny(origin, onCommitted) {
             val before = tasks.getTask(input.id)
             result = if (before == null) {
                 EditingResult.NotFound
+            } else if (expectedBefore != null && before != expectedBefore) {
+                EditingResult.Stale
             } else {
                 val proposed = TaskPut(before.toSemanticImage(), task.toSemanticImage())
                 val blocks = conflictWritePolicy.blocks(listOf(proposed))
@@ -236,7 +290,7 @@ class TaskEditingService(
             }
             requireNotNull(result)
         }
-        return execution?.value ?: requireNotNull(result)
+        return committedResult(execution, result)
     }
 }
 

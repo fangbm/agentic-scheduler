@@ -403,6 +403,30 @@ Must resolve by: before MCP/external Tool compatibility is promised
 
 Internal D9 Tools may evolve during alpha.
 
+## OD-055 — Agent-origin business sync compatibility
+
+```text
+Status: RESOLVED FOR D9-01
+Decision: Agent business mutations use inner payload v2 with
+          AGENT(agentActionId); outer envelope stays v1; old D8 clients
+          quarantine v2 whole operations. Active-SyncSpace Agent writes
+          require a default-off, device-local user-owned all-devices-upgraded
+          opt-in that Agent Tools cannot change. Agent conversation sync
+          remains D9-02.
+Source: docs/AGENT_DECISIONS.md AGT-012/AGT-013
+```
+
+## OD-056 — Provider credential transport
+
+```text
+Status: RESOLVED FOR D9-01
+Decision: a provider configuration with a credential reference requires
+          HTTPS. Reject plain HTTP before resolving the secret or sending
+          a request; credential-free explicitly configured HTTP endpoints
+          remain possible, with non-loopback plaintext risk shown in UI.
+Source: docs/AGENT_DECISIONS.md AGT-007
+```
+
 ---
 
 # UI
