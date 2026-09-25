@@ -66,13 +66,23 @@ explicit priority/effort/deadline values, validates before permission,
 produces a normalized before/after preview, rechecks the preview and policy
 at confirmation, and returns the exact committed MutationId. Focused Room
 tests cover invalid input, denial, unconfirmed/stale preview, and success.
-Other write Tools and the provider-to-Tool orchestration loop remain open.
+Other write Tools and full provider-to-Tool orchestration remain open.
 
 Provider call IDs are now retained as adapter metadata on AgentToolCall. A
 transcript assembler reconstructs assistant ToolCalls and exactly matching
 ToolResults from application-owned records, refusing unresolved/orphaned
 history. The Room test shows provider/model switching preserves the same
-thread and transcript. Live Agent run orchestration is still open.
+thread and transcript.
+
+A bounded application-owned Agent run now composes the provider with the
+explicit `task.get`/`task.create` registry, deterministic context budget, and
+persisted ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
+covers proposal → local read → confirmation → Task/MutationId/history linkage,
+plus denial, stale preview, prose-only, unregistered Tool, failed capability
+probe, and stale-summary/current-fact ordering. It is still a narrow slice:
+remaining AGT-004 Tools, compaction invocation, Android/Desktop composition,
+and full acceptance remain open. No synchronized Agent write is enabled in
+production before D8 runtime closure and device-local upgrade opt-in.
 
 ---
 

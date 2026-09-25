@@ -14,6 +14,7 @@ import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.history.AgentOriginWriteNotAllowed
 import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.domain.planning.DeadlinePolicy
+import dev.agenticscheduler.domain.planning.Deadline
 import dev.agenticscheduler.domain.planning.OverflowPolicy
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskPriority
@@ -26,6 +27,7 @@ import kotlinx.datetime.TimeZone
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
 import kotlin.time.Duration.Companion.minutes
 
 /** Nullable values must still be explicitly present in the model's JSON. */
@@ -58,6 +60,20 @@ class TaskCreateTool(
 ) {
     val metadata = AgentToolMetadata(AgentToolNames.TASK_CREATE, AgentToolCapability.LOW_RISK_CREATE, AgentToolAccess.WRITE)
     private val json = Json { ignoreUnknownKeys = false; explicitNulls = true }
+
+    fun normalizedPreviewJson(preview: TaskCreateWritePreview): String {
+        val after = preview.after
+        val deadline = after.deadline?.let { value -> when (val date = value.deadline) {
+            is Deadline.DateOnly -> "DATE_ONLY:${date.date}:${value.policy}:${value.overflowPolicy}"
+            is Deadline.Exact -> "EXACT:${date.at}:${date.timeZone.id}:${value.policy}:${value.overflowPolicy}"
+        } }
+        return json.encodeToString(PreviewSnapshot(
+            before = null, title = after.title, priority = after.priority.name,
+            estimatedMinutes = after.effort.estimated?.inWholeMinutes,
+            remainingMinutes = after.effort.remaining?.inWholeMinutes,
+            deadline = deadline,
+        ))
+    }
 
     suspend fun prepare(argumentsJson: String, policy: AgentPermissionPolicy): AgentToolOutcome<TaskCreateWritePreview> {
         val input = when (val decoded = decode(argumentsJson)) {
@@ -156,4 +172,13 @@ class TaskCreateTool(
         data class Valid(val value: CreateTaskInput) : Decoded
         data class Invalid(val outcome: AgentToolOutcome.InvalidInput) : Decoded
     }
+
+    @Serializable private data class PreviewSnapshot(
+        val before: String?,
+        val title: String,
+        val priority: String,
+        val estimatedMinutes: Long?,
+        val remainingMinutes: Long?,
+        val deadline: String?,
+    )
 }
