@@ -255,6 +255,12 @@ class AgentPersistenceTest {
             val committed = assertIs<AgentToolOutcome.Success<CommittedTaskCreate>>(tool.commit(arguments, preview, true, policy, AgentActionId(id(30)))).payload
             assertEquals(committed.task, tasks.getTask(committed.task.id))
             assertEquals(committed.mutationId.value, history.timeline().single().operation.mutationId)
+
+            val directPolicy = policy.withMode(AgentToolCapability.LOW_RISK_CREATE, AgentPermissionMode.ALLOW_DIRECT)
+            assertIs<AgentToolOutcome.InvalidInput>(tool.prepare("{}", directPolicy))
+            val directPreview = assertIs<AgentToolOutcome.Success<TaskCreateWritePreview>>(tool.prepare(arguments, directPolicy)).payload
+            assertIs<AgentToolOutcome.Success<CommittedTaskCreate>>(tool.commit(arguments, directPreview, false, directPolicy, AgentActionId(id(31))))
+            assertEquals(2, history.timeline().size)
         } finally {
             database.close()
         }

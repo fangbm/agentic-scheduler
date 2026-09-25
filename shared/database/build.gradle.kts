@@ -40,7 +40,7 @@ kotlin {
         }
         commonTest.dependencies { implementation(libs.androidx.room3.testing) }
         val desktopTest by getting {
-            dependencies { implementation(kotlin("test")) }
+            dependencies { implementation(kotlin("test")); implementation(libs.ktor.client.core); implementation(libs.ktor.client.mock) }
         }
     }
 }

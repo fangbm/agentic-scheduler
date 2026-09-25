@@ -247,7 +247,7 @@ mutation gate; enrolled writes still need trusted runtime composition and
 confirmation revalidation. The outbound worker separately blocks Agent v2
 upload without the same opt-in. D7 history reads are exposed as internal Tools.
 The first provider adapter and SSE/tool-call probe pass mock desktop tests,
-but Agent orchestration and UI composition remain open.
+but full Agent orchestration and UI composition remain open.
 The Event/Task edit seam can now atomically append Agent ToolResult/AgentAction
 with the business mutation; a Room integration scenario verifies linkage.
 The first typed write Tool, `task.create`, now passes focused preview,
@@ -255,7 +255,10 @@ denial, stale, confirmation, and committed MutationId tests; it is not yet
 available from the Android/Desktop Agent UI.
 Application-owned transcript reconstruction now preserves assistant ToolCall
 IDs and paired results across provider switching; persistent run orchestration
-is still required.
+now covers a bounded `task.get` → confirmed `task.create` flow in a local mock,
+including denial and stale no-write cases. The remainder of the frozen Tool
+registry, compaction invocation, app UI composition, and D8 runtime gate are
+still required before D9-01 acceptance.
 
 Frozen D9-01 baseline:
 
