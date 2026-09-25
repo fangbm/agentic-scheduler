@@ -45,12 +45,14 @@ class AgentRunService(
     private val clock: AgentClock,
     private val taskList: TaskListTool? = null,
     private val historyReads: HistoryReadTools? = null,
+    private val taskUpdate: TaskUpdateTool? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
     private val transcripts = AgentTranscriptAssembler(state)
     private val system = "Use only listed typed tools for reads and writes. Prose is not a mutation. Current tool results outrank summaries. Never claim a write succeeded without a successful tool result."
     private val taskGetSchema = schema("""{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"],"additionalProperties":false}""")
     private val taskCreateSchema = schema("""{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["LOW","NORMAL","HIGH"]},"estimatedMinutes":{"type":["integer","null"]},"remainingMinutes":{"type":["integer","null"]},"deadline":{"type":["object","null"]}},"required":["title","priority","estimatedMinutes","remainingMinutes","deadline"],"additionalProperties":false}""")
+    private val taskUpdateSchema = schema("""{"type":"object","properties":{"taskId":{"type":"string"},"title":{"type":"string"},"status":{"type":"string","enum":["OPEN","IN_PROGRESS","COMPLETED","CANCELLED"]},"priority":{"type":"string","enum":["LOW","NORMAL","HIGH"]},"estimatedMinutes":{"type":["integer","null"]},"completedMinutes":{"type":"integer","minimum":0},"remainingMinutes":{"type":["integer","null"]},"deadline":{"type":["object","null"]}},"required":["taskId","title","status","priority","estimatedMinutes","completedMinutes","remainingMinutes","deadline"],"additionalProperties":false}""")
     private val taskListSchema = schema("""{"type":"object","properties":{"status":{"type":["string","null"],"enum":["OPEN","IN_PROGRESS","COMPLETED","CANCELLED",null]}},"required":["status"],"additionalProperties":false}""")
     private val historyTimelineSchema = schema("""{"type":"object","properties":{"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["limit"],"additionalProperties":false}""")
     private val historyMutationSchema = schema("""{"type":"object","properties":{"mutationId":{"type":"string"}},"required":["mutationId"],"additionalProperties":false}""")
@@ -83,6 +85,24 @@ class AgentRunService(
             return resumeAfterTool(threadId)
         }
         val policy = state.permissionPolicy()
+        if (call.name == AgentToolNames.TASK_UPDATE && taskUpdate != null) {
+            val prepared = taskUpdate.prepare(call.argumentsJson, policy)
+            val preview = when (prepared) {
+                is AgentToolOutcome.ConfirmationRequired -> prepared.preview
+                is AgentToolOutcome.Success -> prepared.payload
+                else -> {
+                    finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "PREVIEW_UNAVAILABLE", AgentActionStatus.STALE)
+                    return resumeAfterTool(threadId)
+                }
+            }
+            if (taskUpdate.normalizedPreviewJson(preview) != call.previewJson) {
+                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
+                return resumeAfterTool(threadId)
+            }
+            executeTaskUpdate(call, action, preview, true, policy)
+            return resumeAfterTool(threadId)
+        }
+        if (call.name != AgentToolNames.TASK_CREATE) return AgentRunResult.Failed("CONFIRMATION_UNSUPPORTED")
         val prepared = taskCreate.prepare(call.argumentsJson, policy)
         val preview = when (prepared) {
             is AgentToolOutcome.ConfirmationRequired -> prepared.preview
@@ -116,6 +136,30 @@ class AgentRunService(
             when (outcome) {
                 is AgentToolOutcome.PermissionDenied -> finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "PERMISSION_DENIED", AgentActionStatus.DENIED)
                 AgentToolOutcome.Stale -> finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE", AgentActionStatus.STALE)
+                is AgentToolOutcome.InvalidInput -> finishWithoutWrite(call, action, AgentToolResultStatus.INVALID_INPUT, "INVALID_INPUT", AgentActionStatus.FAILED)
+                else -> finishWithoutWrite(call, action, AgentToolResultStatus.INFRASTRUCTURE_FAILURE, "COMMIT_FAILED", AgentActionStatus.FAILED)
+            }
+        }
+    }
+
+    private suspend fun executeTaskUpdate(
+        call: AgentToolCall, action: AgentAction, preview: dev.agenticscheduler.application.editing.TaskUpdatePreview,
+        userConfirmed: Boolean, policy: dev.agenticscheduler.agent.permission.AgentPermissionPolicy,
+    ) {
+        val tool = requireNotNull(taskUpdate)
+        val resultId = AgentToolResultId(ids.next())
+        val outcome = tool.commit(call.argumentsJson, preview, userConfirmed, policy, action.id, onCommitted = { committed ->
+            val task = (committed.value as EditingResult.Success).value
+            state.appendToolResult(AgentToolResult(resultId, call.threadId, call.id, call.ordinal, AgentToolResultStatus.SUCCESS,
+                json.encodeToString(TaskCommitSnapshot(task.id.value, committed.mutationId.value)), listOf(committed.mutationId)))
+            state.saveAction(action.copy(toolResultIds = listOf(resultId), mutationIds = listOf(committed.mutationId), status = AgentActionStatus.SUCCEEDED))
+            state.saveToolCall(call.copy(state = AgentToolCallState.COMPLETED))
+        })
+        if (outcome !is AgentToolOutcome.Success) {
+            when (outcome) {
+                is AgentToolOutcome.PermissionDenied -> finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "PERMISSION_DENIED", AgentActionStatus.DENIED)
+                AgentToolOutcome.Stale -> finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE", AgentActionStatus.STALE)
+                AgentToolOutcome.NotFound -> finishWithoutWrite(call, action, AgentToolResultStatus.NOT_FOUND, "NOT_FOUND", AgentActionStatus.FAILED)
                 is AgentToolOutcome.InvalidInput -> finishWithoutWrite(call, action, AgentToolResultStatus.INVALID_INPUT, "INVALID_INPUT", AgentActionStatus.FAILED)
                 else -> finishWithoutWrite(call, action, AgentToolResultStatus.INFRASTRUCTURE_FAILURE, "COMMIT_FAILED", AgentActionStatus.FAILED)
             }
@@ -204,6 +248,25 @@ class AgentRunService(
                 }
                 is AgentToolOutcome.InvalidInput -> { finishWithoutWrite(call, action, AgentToolResultStatus.INVALID_INPUT, "INVALID_INPUT", AgentActionStatus.FAILED); AgentRunResult.Failed("INVALID_INPUT") }
                 is AgentToolOutcome.PermissionDenied -> { finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "PERMISSION_DENIED", AgentActionStatus.DENIED); AgentRunResult.Failed("PERMISSION_DENIED") }
+                else -> AgentRunResult.Failed("TOOL_PREVIEW_FAILURE")
+            }
+        }
+        if (call.name == AgentToolNames.TASK_UPDATE && taskUpdate != null) {
+            val policy = state.permissionPolicy()
+            return when (val prepared = taskUpdate.prepare(call.argumentsJson, policy)) {
+                is AgentToolOutcome.ConfirmationRequired -> {
+                    val previewJson = taskUpdate.normalizedPreviewJson(prepared.preview)
+                    state.saveToolCall(call.copy(state = AgentToolCallState.WAITING_CONFIRMATION, previewJson = previewJson))
+                    state.saveAction(action.copy(permissionDecision = AgentPermissionMode.REQUIRE_CONFIRMATION, status = AgentActionStatus.WAITING_CONFIRMATION))
+                    AgentRunResult.AwaitingConfirmation(call.id, previewJson)
+                }
+                is AgentToolOutcome.Success -> {
+                    executeTaskUpdate(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), prepared.payload, false, policy)
+                    modelStep(threadId, config, emptyList(), allowLocalRead = false)
+                }
+                is AgentToolOutcome.InvalidInput -> { finishWithoutWrite(call, action, AgentToolResultStatus.INVALID_INPUT, "INVALID_INPUT", AgentActionStatus.FAILED); AgentRunResult.Failed("INVALID_INPUT") }
+                is AgentToolOutcome.PermissionDenied -> { finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "PERMISSION_DENIED", AgentActionStatus.DENIED); AgentRunResult.Failed("PERMISSION_DENIED") }
+                AgentToolOutcome.NotFound -> { finishWithoutWrite(call, action, AgentToolResultStatus.NOT_FOUND, "NOT_FOUND", AgentActionStatus.FAILED); AgentRunResult.Failed("NOT_FOUND") }
                 else -> AgentRunResult.Failed("TOOL_PREVIEW_FAILURE")
             }
         }
@@ -306,6 +369,7 @@ class AgentRunService(
         if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_GET_MUTATION, "Read one authoritative MutationId", historyMutationSchema))
         if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_GET_ENTITY_CHANGES, "Read one entity ChangeLog", historyEntitySchema))
         add(ProviderToolDefinition(AgentToolNames.TASK_CREATE, "Propose a Task with explicit values", taskCreateSchema))
+        if (taskUpdate != null) add(ProviderToolDefinition(AgentToolNames.TASK_UPDATE, "Propose a Task update with full source facts", taskUpdateSchema))
     }
 
     private fun group(messages: List<ProviderChatMessage>): List<Pair<Int, List<ProviderChatMessage>>> = buildList {

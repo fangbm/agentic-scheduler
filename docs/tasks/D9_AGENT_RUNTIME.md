@@ -75,7 +75,10 @@ Other write Tools and full provider-to-Tool orchestration remain open.
 expected-before guard in `TaskEditingService`. Its Room test verifies a
 concurrent user edit makes the Agent preview stale with no extra journal
 operation, while a fresh confirmed preview returns a committed MutationId.
-The bounded provider registry does not expose `task.update` yet.
+The bounded provider registry now exposes `task.update` after a successful
+structured-call probe. Its local mock covers a stale confirmation after a
+concurrent user edit, then a fresh confirmed update with Agent-origin
+MutationId/AgentAction linkage. Android/Desktop UI still does not expose it.
 
 Provider call IDs are now retained as adapter metadata on AgentToolCall. A
 transcript assembler reconstructs assistant ToolCalls and exactly matching
