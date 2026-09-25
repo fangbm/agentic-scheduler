@@ -12,6 +12,9 @@ import dev.agenticscheduler.agent.tool.CommittedTaskCreate
 import dev.agenticscheduler.agent.tool.TaskCreateTool
 import dev.agenticscheduler.agent.tool.TaskCreateToolInput
 import dev.agenticscheduler.agent.tool.TaskCreateWritePreview
+import dev.agenticscheduler.agent.tool.TaskUpdateTool
+import dev.agenticscheduler.agent.tool.TaskUpdateToolInput
+import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.agent.provider.AgentTranscriptAssembler
 import dev.agenticscheduler.agent.provider.AgentTranscriptResult
 import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
@@ -33,6 +36,7 @@ import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskPriority
+import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.sync.DeviceId
@@ -291,6 +295,35 @@ class AgentPersistenceTest {
             state.selectProviderConfig(first.id)
             state.selectProviderConfig(second.id)
             assertEquals(before, assertIs<AgentTranscriptResult.Ready>(transcript.assemble(thread.id)).messages)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test fun `task update Tool detects concurrent before-image change and commits fresh preview`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val editing = TaskEditingService(tasks, ids, MutationCoordinator(
+                RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true },
+            ), NoActiveSyncSpaceWritePolicy)
+            val created = assertIs<EditingResult.Success<Task>>(editing.create(CreateTaskInput("Before", TaskPriority.NORMAL, null, null, null))).value
+            val tool = TaskUpdateTool(editing)
+            val policy = AgentPermissionPolicy.default()
+            val input = TaskUpdateToolInput(created.id.value, "Agent edit", "OPEN", "HIGH", null, 0, null, null)
+            val arguments = Json.encodeToString(TaskUpdateToolInput.serializer(), input)
+            assertIs<AgentToolOutcome.InvalidInput>(tool.prepare("{}", policy.withMode(AgentToolCapability.SOURCE_FACT_UPDATE, AgentPermissionMode.DENY)))
+            val shown = assertIs<AgentToolOutcome.ConfirmationRequired<dev.agenticscheduler.application.editing.TaskUpdatePreview>>(tool.prepare(arguments, policy)).preview
+            editing.update(UpdateTaskInput(created.id, "Concurrent user edit", TaskStatus.OPEN, TaskPriority.NORMAL, null, kotlin.time.Duration.ZERO, null, null))
+            assertEquals(AgentToolOutcome.Stale, tool.commit(arguments, shown, true, policy, AgentActionId(id(94))))
+            assertEquals(2, history.timeline().size)
+            val fresh = assertIs<AgentToolOutcome.ConfirmationRequired<dev.agenticscheduler.application.editing.TaskUpdatePreview>>(tool.prepare(arguments, policy)).preview
+            val committed = assertIs<AgentToolOutcome.Success<dev.agenticscheduler.agent.tool.CommittedTaskUpdate>>(tool.commit(arguments, fresh, true, policy, AgentActionId(id(95)))).payload
+            assertEquals("Agent edit", tasks.getTask(created.id)?.title)
+            assertEquals(committed.mutationId.value, history.timeline().last().operation.mutationId)
         } finally {
             database.close()
         }

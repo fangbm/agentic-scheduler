@@ -106,6 +106,8 @@ data class TaskCreatePreview(
     val deadline: TaskDeadline?,
 )
 
+data class TaskUpdatePreview(val before: Task, val after: Task)
+
 data class UpdateTaskInput(
     val id: TaskId,
     val title: String,
@@ -122,6 +124,7 @@ sealed interface EditingResult<out T> {
     data class Success<T>(val value: T, val mutationId: MutationId? = null) : EditingResult<T>
     data class Invalid(val issues: ImmutableList<EditingIssue>) : EditingResult<Nothing>
     data object NotFound : EditingResult<Nothing>
+    data object Stale : EditingResult<Nothing>
     data class BlockedBySyncConflict(val blocks: ImmutableList<SyncConflictWriteBlock>) : EditingResult<Nothing>
 }
 
@@ -224,6 +227,14 @@ class TaskEditingService(
         is TaskInput.Valid -> EditingResult.Success(TaskCreatePreview(input.title, input.priority, built.effort, built.deadline))
     }
 
+    suspend fun previewUpdate(input: UpdateTaskInput): EditingResult<TaskUpdatePreview> {
+        val built = validateTask(input.title, input.estimated, input.completed, input.remaining, input.deadline)
+        if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
+        val before = tasks.getTask(input.id) ?: return EditingResult.NotFound
+        val valid = built as TaskInput.Valid
+        return EditingResult.Success(TaskUpdatePreview(before, Task(input.id, input.title, input.status, input.priority, valid.effort, valid.deadline)))
+    }
+
     suspend fun create(
         input: CreateTaskInput,
         origin: MutationOrigin = MutationOrigin.User,
@@ -253,6 +264,7 @@ class TaskEditingService(
         input: UpdateTaskInput,
         origin: MutationOrigin = MutationOrigin.User,
         onCommitted: suspend (MutationExecution<EditingResult<Task>>) -> Unit = {},
+        expectedBefore: Task? = null,
     ): EditingResult<Task> {
         val built = validateTask(input.title, input.estimated, input.completed, input.remaining, input.deadline)
         if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
@@ -263,6 +275,8 @@ class TaskEditingService(
             val before = tasks.getTask(input.id)
             result = if (before == null) {
                 EditingResult.NotFound
+            } else if (expectedBefore != null && before != expectedBefore) {
+                EditingResult.Stale
             } else {
                 val proposed = TaskPut(before.toSemanticImage(), task.toSemanticImage())
                 val blocks = conflictWritePolicy.blocks(listOf(proposed))

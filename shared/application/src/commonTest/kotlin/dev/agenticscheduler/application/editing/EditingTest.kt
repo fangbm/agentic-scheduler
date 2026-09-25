@@ -275,6 +275,24 @@ class EditingTest {
     }
 
     @Test
+    fun `Task update compares preview before image inside committed transaction`() = runBlocking {
+        val tasks = FakeTaskRepository()
+        val journal = TestJournal()
+        val service = TaskEditingService(tasks, generator(),
+            MutationCoordinator(CountingTransactions(), journal, generator(), MutationWallClock { fixedEpochMilliseconds }),
+            NoActiveSyncSpaceWritePolicy)
+        val created = assertIs<EditingResult.Success<Task>>(service.create(CreateTaskInput("Before", TaskPriority.NORMAL, null, null, null))).value
+        val proposed = UpdateTaskInput(created.id, "Agent edit", TaskStatus.OPEN, TaskPriority.HIGH, null, Duration.ZERO, null, null)
+        val preview = assertIs<EditingResult.Success<TaskUpdatePreview>>(service.previewUpdate(proposed)).value
+        service.update(proposed.copy(title = "Concurrent user edit"))
+        val beforeAttempt = journal.appended
+
+        assertEquals(EditingResult.Stale, service.update(proposed, expectedBefore = preview.before))
+        assertEquals(beforeAttempt, journal.appended)
+        assertEquals("Concurrent user edit", tasks.getTask(created.id)?.title)
+    }
+
+    @Test
     fun `user edit intersecting an open conflict is blocked before Active State or journal`() = runBlocking {
         val repository = FakeEventRepository()
         val journal = TestJournal()
