@@ -39,6 +39,16 @@ mutations now have an inner payload v2 codec and frozen fixture; sync unit
 tests pass. Full provider orchestration, Tool writes, AgentAction execution,
 and UI acceptance remain open.
 
+The D9 branch now returns the committed MutationId from Event/Task editing
+results, supports explicit Agent mutation origin, and fails closed at the
+MutationCoordinator unless trusted host wiring authorizes the Agent write.
+The authorization checks device-local SyncSpace upgrade acknowledgement when
+enrolled; outbound sync independently refuses Agent-origin upload without the
+same acknowledgement, including for Agent mutations created before enrollment.
+Focused application/database gate tests pass. Structured D7 history
+read Tools are implemented. This is infrastructure, not a completed Agent
+write/confirmation flow.
+
 ---
 
 # 2. Required reading

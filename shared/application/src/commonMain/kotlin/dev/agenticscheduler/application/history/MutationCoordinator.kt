@@ -18,6 +18,11 @@ import dev.agenticscheduler.sync.toSnapshot
 
 fun interface MutationWallClock { fun nowEpochMillis(): Long }
 
+/** Deny Agent-origin writes unless a trusted host proves local/sync compatibility. */
+fun interface AgentOriginWriteGate { suspend fun mayCommit(): Boolean }
+
+class AgentOriginWriteNotAllowed : IllegalStateException("Agent-origin mutation is not authorized on this device.")
+
 data class MutationExecution<T>(val value: T, val mutationId: MutationId)
 
 /**
@@ -30,6 +35,7 @@ class MutationCoordinator(
     private val journal: MutationJournalRepository,
     private val ids: UuidV7Generator,
     private val wallClock: MutationWallClock,
+    private val agentOriginWriteGate: AgentOriginWriteGate = AgentOriginWriteGate { false },
 ) {
     suspend fun <T> execute(
         origin: MutationOrigin,
@@ -43,8 +49,9 @@ class MutationCoordinator(
         origin: MutationOrigin,
         onCommitted: suspend (MutationExecution<T>) -> Unit = {},
         block: suspend MutationScope.() -> T,
-    ): MutationExecution<T>? =
-        transactions.inWriteTransaction {
+    ): MutationExecution<T>? {
+        if (origin is MutationOrigin.Agent && !agentOriginWriteGate.mayCommit()) throw AgentOriginWriteNotAllowed()
+        return transactions.inWriteTransaction {
             val scope = MutationScope()
             val value = scope.block()
             val mutations = scope.orderedMutations()
@@ -66,6 +73,7 @@ class MutationCoordinator(
             onCommitted(execution)
             execution
         }
+    }
 
     private fun checkedIncrement(value: Long): Long = check(value < Long.MAX_VALUE) { "Causal counter overflow." }.let { value + 1 }
 }
