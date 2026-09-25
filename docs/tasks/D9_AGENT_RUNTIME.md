@@ -55,6 +55,12 @@ redacted failures, preservation of assistant ToolCall/tool-result transcript
 messages, and SSE delta assembly. Focused mock-provider desktop tests pass.
 The adapter is not yet wired into a persistent Agent run or either UI.
 
+Event/Task editing commands now accept an in-transaction `onCommitted`
+callback. The Room integration test links one Agent-origin Task, ToolResult,
+AgentAction, ChangeLog, and exact MutationId atomically; an audit callback
+failure is verified to roll the Task, journal, and ToolResult back. The actual
+Tool confirmation/runtime path still needs to use this seam.
+
 ---
 
 # 2. Required reading

@@ -7,15 +7,32 @@ import dev.agenticscheduler.agent.permission.AgentPermissionPolicy
 import dev.agenticscheduler.agent.permission.AgentSyncWriteGate
 import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
 import dev.agenticscheduler.application.sync.LocalEnrollmentState
+import dev.agenticscheduler.application.editing.CreateTaskInput
+import dev.agenticscheduler.application.editing.EditingResult
+import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.history.AgentOriginWriteGate
+import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationWallClock
+import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
+import dev.agenticscheduler.application.id.RandomBytes
+import dev.agenticscheduler.application.id.RfcUuidV7Generator
 import dev.agenticscheduler.application.sync.SecretReference
+import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomAgentStateRepository
+import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
+import dev.agenticscheduler.database.repository.RoomTaskRepository
+import dev.agenticscheduler.domain.task.Task
+import dev.agenticscheduler.domain.task.TaskPriority
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EnrollmentRequestId
 import dev.agenticscheduler.sync.HpkePublicKeyBase64Url
 import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.sync.MutationOrigin
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.Rule
 import java.nio.file.Files
 import java.nio.file.Path
@@ -24,6 +41,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.assertIs
+import kotlin.test.assertFailsWith
 
 class AgentPersistenceTest {
     @get:Rule val migrations = MigrationTestHelper(
@@ -126,6 +145,69 @@ class AgentPersistenceTest {
             agentState.setSyncAgentOriginEnabled(space, false)
             assertFalse(gate.mayCommit())
             assertFalse(gate.enabled(space))
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test fun `Agent Task ToolResult audit and ChangeLog share committed MutationId`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            val agent = RoomAgentStateRepository(database)
+            val thread = AgentThread(AgentThreadId(id(20)), "Agent task", 1)
+            val message = AgentMessage(AgentMessageId(id(21)), thread.id, 0, AgentMessageRole.USER, "Create a task", 2)
+            val call = AgentToolCall(AgentToolCallId(id(22)), thread.id, message.id, 0, "task.create", "{}", AgentToolCallState.RUNNING)
+            val action = AgentAction(AgentActionId(id(23)), thread.id, message.id, null, null, listOf(call.id), emptyList(), null, null, null, emptyList(), AgentActionStatus.PROPOSED)
+            val resultId = AgentToolResultId(id(24))
+            agent.saveThread(thread)
+            agent.appendMessage(message)
+            agent.saveToolCall(call)
+            agent.saveAction(action)
+
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size ->
+                ByteArray(size) { (seed++).toByte() }
+            })
+            val history = RoomMutationJournalRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val coordinator = MutationCoordinator(
+                RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 3 },
+                AgentOriginWriteGate { true },
+            )
+            val editing = TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)
+
+            val created = assertIs<EditingResult.Success<Task>>(editing.create(
+                CreateTaskInput("Read paper", TaskPriority.HIGH, null, null, null),
+                MutationOrigin.Agent(action.id.value),
+                onCommitted = { committed ->
+                    agent.appendToolResult(AgentToolResult(resultId, thread.id, call.id, 0, AgentToolResultStatus.SUCCESS, "{}", listOf(committed.mutationId)))
+                    agent.saveAction(action.copy(toolResultIds = listOf(resultId), mutationIds = listOf(committed.mutationId), status = AgentActionStatus.SUCCEEDED))
+                    agent.saveToolCall(call.copy(state = AgentToolCallState.COMPLETED))
+                },
+            ))
+            val mutationId = requireNotNull(created.mutationId)
+            assertEquals(created.value, tasks.getTask(created.value.id))
+            assertEquals(mutationId.value, history.timeline().single().operation.mutationId)
+            assertEquals(MutationOrigin.Agent(action.id.value), history.timeline().single().operation.origin)
+            assertEquals(mutationId.value, history.diff(mutationId.value).single().mutationId)
+            assertEquals(listOf(mutationId), agent.toolResults(thread.id).single().mutationIds)
+            assertEquals(listOf(mutationId), agent.action(action.id)?.mutationIds)
+
+            val failedCall = call.copy(id = AgentToolCallId(id(25)), ordinal = 1)
+            agent.saveToolCall(failedCall)
+            assertFailsWith<IllegalStateException> {
+                editing.create(
+                    CreateTaskInput("Must roll back", TaskPriority.NORMAL, null, null, null),
+                    MutationOrigin.Agent(id(26)),
+                    onCommitted = { committed ->
+                        agent.appendToolResult(AgentToolResult(AgentToolResultId(id(27)), thread.id, failedCall.id, 1, AgentToolResultStatus.SUCCESS, "{}", listOf(committed.mutationId)))
+                        error("Simulated audit failure")
+                    },
+                )
+            }
+            assertEquals(listOf(created.value), tasks.observeTasks().first())
+            assertEquals(1, history.timeline().size)
+            assertEquals(1, agent.toolResults(thread.id).size)
         } finally {
             database.close()
         }

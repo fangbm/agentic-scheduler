@@ -248,6 +248,8 @@ confirmation revalidation. The outbound worker separately blocks Agent v2
 upload without the same opt-in. D7 history reads are exposed as internal Tools.
 The first provider adapter and SSE/tool-call probe pass mock desktop tests,
 but Agent orchestration and UI composition remain open.
+The Event/Task edit seam can now atomically append Agent ToolResult/AgentAction
+with the business mutation; a Room integration scenario verifies linkage.
 
 Frozen D9-01 baseline:
 
