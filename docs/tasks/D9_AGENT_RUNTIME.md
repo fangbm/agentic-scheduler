@@ -68,6 +68,12 @@ at confirmation, and returns the exact committed MutationId. Focused Room
 tests cover invalid input, denial, unconfirmed/stale preview, and success.
 Other write Tools and the provider-to-Tool orchestration loop remain open.
 
+Provider call IDs are now retained as adapter metadata on AgentToolCall. A
+transcript assembler reconstructs assistant ToolCalls and exactly matching
+ToolResults from application-owned records, refusing unresolved/orphaned
+history. The Room test shows provider/model switching preserves the same
+thread and transcript. Live Agent run orchestration is still open.
+
 ---
 
 # 2. Required reading

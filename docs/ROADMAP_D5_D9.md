@@ -253,6 +253,9 @@ with the business mutation; a Room integration scenario verifies linkage.
 The first typed write Tool, `task.create`, now passes focused preview,
 denial, stale, confirmation, and committed MutationId tests; it is not yet
 available from the Android/Desktop Agent UI.
+Application-owned transcript reconstruction now preserves assistant ToolCall
+IDs and paired results across provider switching; persistent run orchestration
+is still required.
 
 Frozen D9-01 baseline:
 

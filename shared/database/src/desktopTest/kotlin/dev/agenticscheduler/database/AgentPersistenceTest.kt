@@ -12,6 +12,8 @@ import dev.agenticscheduler.agent.tool.CommittedTaskCreate
 import dev.agenticscheduler.agent.tool.TaskCreateTool
 import dev.agenticscheduler.agent.tool.TaskCreateToolInput
 import dev.agenticscheduler.agent.tool.TaskCreateWritePreview
+import dev.agenticscheduler.agent.provider.AgentTranscriptAssembler
+import dev.agenticscheduler.agent.provider.AgentTranscriptResult
 import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
 import dev.agenticscheduler.application.sync.LocalEnrollmentState
 import dev.agenticscheduler.application.editing.CreateTaskInput
@@ -65,7 +67,7 @@ class AgentPersistenceTest {
             val repository = RoomAgentStateRepository(database)
             val thread = AgentThread(AgentThreadId(id(1)), "Schedule", 100)
             val message = AgentMessage(AgentMessageId(id(2)), thread.id, 0, AgentMessageRole.USER, "Move my task", 101)
-            val call = AgentToolCall(AgentToolCallId(id(3)), thread.id, message.id, 0, "task.update", "{}", AgentToolCallState.COMPLETED)
+            val call = AgentToolCall(AgentToolCallId(id(3)), thread.id, message.id, 0, "task.update", "{}", AgentToolCallState.COMPLETED, providerCallId = "provider-call-3")
             val result = AgentToolResult(AgentToolResultId(id(4)), thread.id, call.id, 0, AgentToolResultStatus.SUCCESS, "{}", listOf(MutationId(id(7))))
             val summary = ContextSummary(ContextSummaryId(id(5)), thread.id, message.id, message.id, 1, "Earlier request", 102, null, null)
             val action = AgentAction(AgentActionId(id(6)), thread.id, message.id, null, null, listOf(call.id), listOf(result.id), null, null, null, result.mutationIds, AgentActionStatus.SUCCEEDED)
@@ -86,6 +88,7 @@ class AgentPersistenceTest {
             assertTrue(repository.syncAgentOriginEnabled(SyncSpaceId("personal")))
             assertFalse(repository.syncAgentOriginEnabled(SyncSpaceId("other")))
             assertEquals(message, repository.messages(thread.id).single())
+            assertEquals(call, repository.toolCalls(thread.id).single())
             assertEquals(result, repository.toolResults(thread.id).single())
             assertEquals(summary, repository.summaries(thread.id).single())
 
@@ -252,6 +255,36 @@ class AgentPersistenceTest {
             val committed = assertIs<AgentToolOutcome.Success<CommittedTaskCreate>>(tool.commit(arguments, preview, true, policy, AgentActionId(id(30)))).payload
             assertEquals(committed.task, tasks.getTask(committed.task.id))
             assertEquals(committed.mutationId.value, history.timeline().single().operation.mutationId)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test fun `provider switch keeps application transcript and exact tool result pairing`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            val state = RoomAgentStateRepository(database)
+            val thread = AgentThread(AgentThreadId(id(40)), null, 1)
+            val user = AgentMessage(AgentMessageId(id(41)), thread.id, 0, AgentMessageRole.USER, "Find my task", 2)
+            val assistant = AgentMessage(AgentMessageId(id(42)), thread.id, 1, AgentMessageRole.ASSISTANT, "", 3)
+            val call = AgentToolCall(AgentToolCallId(id(43)), thread.id, assistant.id, 0, "task.get", "{\"taskId\":\"x\"}", AgentToolCallState.COMPLETED, providerCallId = "remote-call-1")
+            state.saveThread(thread)
+            state.appendMessage(user)
+            state.appendMessage(assistant)
+            state.saveToolCall(call)
+            val transcript = AgentTranscriptAssembler(state)
+            assertEquals(AgentTranscriptResult.UnresolvedToolCall, transcript.assemble(thread.id))
+            state.appendToolResult(AgentToolResult(AgentToolResultId(id(44)), thread.id, call.id, 0, AgentToolResultStatus.SUCCESS, "{\"status\":\"OK\"}"))
+            val before = assertIs<AgentTranscriptResult.Ready>(transcript.assemble(thread.id)).messages
+            assertEquals("remote-call-1", before[1].toolCalls?.single()?.id)
+            assertEquals("remote-call-1", before[2].toolCallId)
+            val first = ProviderConfig(ProviderConfigId(id(45)), "https://first.example/v1", "first", 8192, 2048, false, true, null)
+            val second = first.copy(id = ProviderConfigId(id(46)), baseUrl = "https://second.example/v1", model = "second")
+            state.saveProviderConfig(first)
+            state.saveProviderConfig(second)
+            state.selectProviderConfig(first.id)
+            state.selectProviderConfig(second.id)
+            assertEquals(before, assertIs<AgentTranscriptResult.Ready>(transcript.assemble(thread.id)).messages)
         } finally {
             database.close()
         }
