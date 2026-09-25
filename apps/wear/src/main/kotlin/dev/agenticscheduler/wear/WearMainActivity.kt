@@ -1,12 +1,15 @@
 package dev.agenticscheduler.wear
 
 import android.os.Bundle
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarConflict
@@ -19,6 +22,8 @@ import dev.agenticscheduler.application.calendar.intersectsLocalDate
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
+import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
 import dev.agenticscheduler.application.sync.AndroidKeystoreSecureStore
 import dev.agenticscheduler.application.sync.TinkPairingHpke
 import dev.agenticscheduler.database.openAndroidDatabase
@@ -34,6 +39,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.TimeZone
@@ -41,8 +47,9 @@ import kotlinx.datetime.plus
 import kotlinx.datetime.toLocalDateTime
 
 class WearMainActivity : ComponentActivity() {
+    private val d8StartupState = mutableStateOf(D8StartupState.Activating)
     private val database by lazy { openAndroidDatabase(this) }
-    private val d8Runtime by lazy {
+    private val d8RuntimeLazy = lazy {
         RoomD8RuntimeComposition(
             database,
             AndroidKeystoreSecureStore(this),
@@ -51,7 +58,11 @@ class WearMainActivity : ComponentActivity() {
             MutationWallClock { Clock.System.now().toEpochMilliseconds() },
         )
     }
+    private val d8Runtime by d8RuntimeLazy
     private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
+    private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
     private val calendarQueryService: CalendarQueryService by lazy {
         ConflictAwareSourceFactReadService(
             RoomEventRepository(database),
@@ -64,22 +75,87 @@ class WearMainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        d8RuntimeConfigurationOrNull()?.let { configuration ->
+        val configuration = try {
+            d8RuntimeConfigurationOrNull()
+        } catch (_: Throwable) {
+            d8StartupState.value = D8StartupState.Blocked
+            null
+        }
+        if (d8StartupState.value != D8StartupState.Blocked && configuration == null) {
+            d8StartupState.value = D8StartupState.Ready
+        } else if (configuration != null) {
+            d8StartupState.value = D8StartupState.Activating
             d8Scope.launch {
-                d8Runtime.activate(configuration)
-                d8Runtime.catchUp()
+                try {
+                    when (d8Runtime.activate(configuration)) {
+                        is ActiveSyncRuntimeCreation.Active -> {
+                            val trigger = d8Runtime.newCatchUpTrigger(
+                                d8Scope,
+                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; retry remains scheduled.") },
+                            )
+                            d8SyncTrigger = trigger
+                            trigger.start()
+                            registerNetworkRetry(trigger)
+                            d8StartupState.value = D8StartupState.Ready
+                        }
+                        ActiveSyncRuntimeCreation.NoEnrollment -> d8StartupState.value = D8StartupState.Ready
+                        ActiveSyncRuntimeCreation.EnrollmentNotActive,
+                        is ActiveSyncRuntimeCreation.MissingDeviceCredential,
+                        -> d8StartupState.value = D8StartupState.Blocked
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    d8StartupState.value = D8StartupState.Blocked
+                }
             }
         }
         setContent {
+            val startupState by d8StartupState
             MaterialTheme {
-                WearAgenda(calendarQueryService)
+                when (startupState) {
+                    D8StartupState.Ready -> WearAgenda(calendarQueryService)
+                    D8StartupState.Activating -> Text("Connecting to your secure sync space…")
+                    D8StartupState.Blocked -> Text("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
+                }
             }
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        d8SyncTrigger?.requestCatchUp()
+    }
+
     override fun onDestroy() {
+        d8NetworkCallback?.let { callback ->
+            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback) }
+        }
+        d8NetworkCallback = null
+        d8SyncTrigger?.close()
+        d8SyncTrigger = null
         d8Scope.cancel()
+        if (d8RuntimeLazy.isInitialized()) {
+            d8ShutdownScope.launch {
+                try {
+                    d8Runtime.deactivate()
+                } finally {
+                    d8ShutdownScope.cancel()
+                }
+            }
+        }
         super.onDestroy()
+    }
+
+    private fun registerNetworkRetry(trigger: ActiveSyncCatchUpTrigger) {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trigger.requestCatchUp()
+            }
+        }
+        connectivity.registerDefaultNetworkCallback(callback)
+        d8NetworkCallback = callback
     }
 
     private fun d8RuntimeConfigurationOrNull(): ActiveSyncRuntimeConfiguration? {
@@ -96,6 +172,8 @@ class WearMainActivity : ComponentActivity() {
         const val D8_SYNC_ACCOUNT_ID = "dev.agenticscheduler.sync.ACCOUNT_ID"
     }
 }
+
+private enum class D8StartupState { Activating, Ready, Blocked }
 
 @androidx.compose.runtime.Composable
 private fun WearAgenda(service: CalendarQueryService) {

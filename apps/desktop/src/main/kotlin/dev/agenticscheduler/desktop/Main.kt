@@ -11,6 +11,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -70,6 +71,8 @@ import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
+import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
 import dev.agenticscheduler.application.sync.DesktopPlatformSecureStore
 import dev.agenticscheduler.application.sync.TinkPairingHpke
 import dev.agenticscheduler.sync.AccountId
@@ -80,9 +83,11 @@ import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -95,37 +100,104 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 
 fun main() = application {
-    val databaseFile = File(System.getProperty("user.home"), ".agentic-scheduler/agentic-scheduler.db").also { it.parentFile.mkdirs() }
-    val database = openDesktopDatabase(databaseFile.absolutePath)
-    val events = RoomEventRepository(database)
-    val tasks = RoomTaskRepository(database)
-    val academics = RoomAcademicRepository(database)
-    val profiles = RoomPlanningProfileRepository(database)
-    val transactions = RoomApplicationTransactionRunner(database)
-    val ids = productionUuidV7Generator()
-    val mutations = MutationCoordinator(transactions, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() })
-    val d8Runtime = RoomD8RuntimeComposition(
-        database,
-        DesktopPlatformSecureStore(),
-        TinkPairingHpke(),
-        ids,
-        MutationWallClock { Clock.System.now().toEpochMilliseconds() },
-    )
-    val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    desktopD8RuntimeConfigurationOrNull()?.let { configuration ->
-        d8Scope.launch {
-            d8Runtime.activate(configuration)
-            d8Runtime.catchUp()
+    val startupConfiguration = remember { runCatching { desktopD8RuntimeConfigurationOrNull() } }
+    val initialStartupState = when {
+        startupConfiguration.isFailure -> D8StartupState.Blocked
+        startupConfiguration.getOrNull() == null -> D8StartupState.Ready
+        else -> D8StartupState.Activating
+    }
+    val startupState = remember { mutableStateOf(initialStartupState) }
+    val databaseFile = remember { File(System.getProperty("user.home"), ".agentic-scheduler/agentic-scheduler.db").also { it.parentFile.mkdirs() } }
+    val database = remember(databaseFile) { openDesktopDatabase(databaseFile.absolutePath) }
+    val events = remember(database) { RoomEventRepository(database) }
+    val tasks = remember(database) { RoomTaskRepository(database) }
+    val academics = remember(database) { RoomAcademicRepository(database) }
+    val profiles = remember(database) { RoomPlanningProfileRepository(database) }
+    val transactions = remember(database) { RoomApplicationTransactionRunner(database) }
+    val ids = remember { productionUuidV7Generator() }
+    val mutations = remember(transactions, database, ids) { MutationCoordinator(transactions, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
+    val d8Runtime = remember(database, ids) {
+        RoomD8RuntimeComposition(
+            database,
+            DesktopPlatformSecureStore(),
+            TinkPairingHpke(),
+            ids,
+            MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+        )
+    }
+    val d8Scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    val d8ShutdownScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
+    val d8SyncTrigger = remember { mutableStateOf<ActiveSyncCatchUpTrigger?>(null) }
+    LaunchedEffect(Unit) {
+        val configuration = startupConfiguration.getOrElse {
+            startupState.value = D8StartupState.Blocked
+            return@LaunchedEffect
+        }
+        if (configuration == null) {
+            startupState.value = D8StartupState.Ready
+            return@LaunchedEffect
+        }
+        try {
+            when (d8Runtime.activate(configuration)) {
+                is ActiveSyncRuntimeCreation.Active -> {
+                    val trigger = d8Runtime.newCatchUpTrigger(
+                        d8Scope,
+                        onUnexpectedFailure = { System.err.println("D8 catch-up failed unexpectedly; retry remains scheduled.") },
+                    )
+                    d8SyncTrigger.value = trigger
+                    trigger.start()
+                    startupState.value = D8StartupState.Ready
+                }
+                ActiveSyncRuntimeCreation.NoEnrollment -> startupState.value = D8StartupState.Ready
+                ActiveSyncRuntimeCreation.EnrollmentNotActive,
+                is ActiveSyncRuntimeCreation.MissingDeviceCredential,
+                -> startupState.value = D8StartupState.Blocked
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            startupState.value = D8StartupState.Blocked
         }
     }
-    val reads = ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts)
-    Window(onCloseRequest = { d8Scope.cancel(); exitApplication() }, title = "Agentic Scheduler") {
+    val reads = remember(events, tasks, profiles, academics, d8Runtime) {
+        ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts)
+    }
+    val planner = remember(tasks, events, profiles, academics, ids, mutations, d8Runtime) {
+        DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = d8Runtime.writePolicy, sourceFacts = d8Runtime.sourceFacts)
+    }
+    val profileSettings = remember(profiles, ids, mutations, d8Runtime) { PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy) }
+    val eventEditor = remember(events, ids, mutations, d8Runtime) { EventEditingService(events, ids, mutations, d8Runtime.writePolicy) }
+    val taskEditor = remember(tasks, ids, mutations, d8Runtime) { TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy) }
+    Window(onCloseRequest = {
+        d8SyncTrigger.value?.close()
+        d8Scope.cancel()
+        d8ShutdownScope.launch {
+            try {
+                d8Runtime.deactivate()
+                withContext(Dispatchers.Main) { exitApplication() }
+            } finally {
+                d8ShutdownScope.cancel()
+            }
+        }
+    }, title = "Agentic Scheduler") {
+        val currentStartupState by startupState
         MaterialTheme {
             Surface {
-                DesktopScheduler(reads, DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = d8Runtime.writePolicy, sourceFacts = d8Runtime.sourceFacts), PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy), EventEditingService(events, ids, mutations, d8Runtime.writePolicy), TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy))
+                when (currentStartupState) {
+                    D8StartupState.Ready -> DesktopScheduler(reads, planner, profileSettings, eventEditor, taskEditor)
+                    D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
+                    D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
+                }
             }
         }
     }
+}
+
+private enum class D8StartupState { Activating, Ready, Blocked }
+
+@Composable
+private fun D8StartupStatus(message: String) {
+    Column { Text(message) }
 }
 
 private fun desktopD8RuntimeConfigurationOrNull(): ActiveSyncRuntimeConfiguration? {

@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao interface MutationJournalDao {
     @Query("SELECT * FROM replica_causal_state WHERE state_key = 'LOCAL'") suspend fun localReplicaState(): ReplicaCausalStateRecord?
+    @Query("SELECT COUNT(*) FROM mutation_record WHERE outbound_eligible = 1") fun observeOutboundMutationRevision(): Flow<Long>
     @Upsert suspend fun saveLocalReplicaState(value: ReplicaCausalStateRecord)
     @Insert suspend fun insertMutationRecord(value: MutationRecord)
     @Insert suspend fun insertChangeLogEntries(values: List<ChangeLogEntryRecord>)

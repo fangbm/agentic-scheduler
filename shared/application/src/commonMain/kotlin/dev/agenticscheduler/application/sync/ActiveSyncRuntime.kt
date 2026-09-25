@@ -23,8 +23,10 @@ import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.EntityMutation
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * Explicit, deployment-owned D8 endpoint selection. There is deliberately no
@@ -62,7 +64,11 @@ sealed interface ActiveSyncRuntimeCreation {
     data class Active(val runtime: ActiveSyncRuntime) : ActiveSyncRuntimeCreation
     data object NoEnrollment : ActiveSyncRuntimeCreation
     data object EnrollmentNotActive : ActiveSyncRuntimeCreation
-    data object MissingDeviceCredential : ActiveSyncRuntimeCreation
+    /**
+     * The durable enrollment is ACTIVE, so callers must keep its conflict
+     * write guard even though its secure-store credential is unavailable.
+     */
+    data class MissingDeviceCredential(val writePolicy: SyncConflictWritePolicy) : ActiveSyncRuntimeCreation
 }
 
 sealed interface ActiveSyncRuntimeCatchUpResult {
@@ -140,13 +146,20 @@ class ActiveSyncRuntimeFactory(
     private val dependencies: ActiveSyncRuntimeDependencies,
     private val transportFactory: ActiveSyncRuntimeTransportFactory = KtorActiveSyncRuntimeTransportFactory,
 ) {
-    suspend fun create(configuration: ActiveSyncRuntimeConfiguration): ActiveSyncRuntimeCreation {
+    suspend fun create(
+        configuration: ActiveSyncRuntimeConfiguration,
+        onActiveEnrollment: suspend (SyncConflictWritePolicy) -> Unit = {},
+    ): ActiveSyncRuntimeCreation {
         val enrollment = dependencies.enrollments.state(configuration.accountId)
             ?: return ActiveSyncRuntimeCreation.NoEnrollment
         val active = enrollment as? LocalEnrollmentState.Active
             ?: return ActiveSyncRuntimeCreation.EnrollmentNotActive
+        val activeWritePolicy = SyncConflictWriteGuard(dependencies.receiveState, active.syncSpaceId)
+        // Publish the durable enrollment's write guard before touching secure
+        // storage or constructing transports, both of which may suspend/fail.
+        onActiveEnrollment(activeWritePolicy)
         if (dependencies.secureStore.load(active.deviceCredentialReference) == null) {
-            return ActiveSyncRuntimeCreation.MissingDeviceCredential
+            return ActiveSyncRuntimeCreation.MissingDeviceCredential(activeWritePolicy)
         }
 
         val credentialProvider: suspend () -> DeviceCredential? = {
@@ -214,48 +227,123 @@ class ActiveSyncRuntimeFactory(
  */
 class ActiveSyncRuntimeHost {
     private val mutex = Mutex()
-    private var active: ActiveSyncRuntime? = null
+    private val activationMutex = Mutex()
+    private val catchUpMutex = Mutex()
+    private var active: RuntimeSlot? = null
+    private var inactiveWritePolicy: SyncConflictWritePolicy = NoActiveSyncSpaceWritePolicy
+
+    /** A lease keeps its transport alive while catch-up is outside the host lock. */
+    private class RuntimeSlot(val runtime: ActiveSyncRuntime) {
+        var inFlightCatchUps: Int = 0
+        var retired: Boolean = false
+        var closeClaimed: Boolean = false
+    }
 
     val sourceFacts: ConflictAwareSourceFactQuery = object : ConflictAwareSourceFactQuery {
-        override suspend fun project(durable: EntityMutation) = mutex.withLock {
-            (active?.sourceFacts ?: NoActiveSyncSpaceSourceFactQuery).project(durable)
+        override suspend fun project(durable: EntityMutation) =
+            sourceFactsSnapshot().project(durable)
+
+        private suspend fun sourceFactsSnapshot(): ConflictAwareSourceFactQuery = mutex.withLock {
+            active?.runtime?.sourceFacts ?: NoActiveSyncSpaceSourceFactQuery
         }
 
-        override suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>) = mutex.withLock {
-            (active?.sourceFacts ?: NoActiveSyncSpaceSourceFactQuery).projectCollection(entityKind, durable)
-        }
+        override suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>) =
+            sourceFactsSnapshot().projectCollection(entityKind, durable)
     }
 
     val writePolicy: SyncConflictWritePolicy = SyncConflictWritePolicy { proposed ->
-        mutex.withLock { (active?.writePolicy ?: NoActiveSyncSpaceWritePolicy).blocks(proposed) }
+        val policy = mutex.withLock { active?.runtime?.writePolicy ?: inactiveWritePolicy }
+        policy.blocks(proposed)
     }
 
     suspend fun activate(
         factory: ActiveSyncRuntimeFactory,
         configuration: ActiveSyncRuntimeConfiguration,
-    ): ActiveSyncRuntimeCreation = mutex.withLock {
-        val created = factory.create(configuration)
-        when (created) {
-            is ActiveSyncRuntimeCreation.Active -> {
-                active?.close()
-                active = created.runtime
+    ): ActiveSyncRuntimeCreation = activationMutex.withLock {
+        // Factory creation reads Room and secure storage. Keep it outside the
+        // host mutex so a transaction can still obtain its conflict policy.
+        val created = factory.create(configuration) { activePolicy ->
+            mutex.withLock { inactiveWritePolicy = activePolicy }
+        }
+        var closeRetired: ActiveSyncRuntime? = null
+        mutex.withLock {
+            val previous = active
+            active = (created as? ActiveSyncRuntimeCreation.Active)?.let { RuntimeSlot(it.runtime) }
+
+            when (created) {
+                is ActiveSyncRuntimeCreation.Active -> inactiveWritePolicy = NoActiveSyncSpaceWritePolicy
+                is ActiveSyncRuntimeCreation.MissingDeviceCredential -> inactiveWritePolicy = created.writePolicy
+                ActiveSyncRuntimeCreation.NoEnrollment -> inactiveWritePolicy = NoActiveSyncSpaceWritePolicy
+                ActiveSyncRuntimeCreation.EnrollmentNotActive -> Unit
             }
-            else -> {
-                // An explicit activation attempt that cannot prove a local
-                // ACTIVE enrollment must not leave a prior runtime connected.
-                active?.close()
-                active = null
+
+            if (previous != null) {
+                closeRetired = retireLocked(previous)
             }
         }
+        closeRetired?.close()
         created
     }
 
-    suspend fun catchUp(fetchLimit: Int = 100): ActiveSyncRuntimeCatchUpResult? = mutex.withLock {
-        active?.catchUp(fetchLimit)
+    suspend fun catchUp(fetchLimit: Int = 100): ActiveSyncRuntimeCatchUpResult? = catchUpMutex.withLock {
+        val slot = mutex.withLock {
+            active?.also { it.inFlightCatchUps += 1 }
+        }
+        if (slot == null) {
+            null
+        } else {
+            try {
+                // Network and database synchronization must never run while the
+                // host mutex is held. The slot lease protects the transport.
+                slot.runtime.catchUp(fetchLimit)
+            } finally {
+                withContext(NonCancellable) { release(slot) }
+            }
+        }
     }
 
-    suspend fun deactivate() = mutex.withLock {
-        active?.close()
-        active = null
+    /**
+     * Detaches the current runtime immediately. An in-flight catch-up may
+     * finish using its lease; its transport is closed by the final release.
+     * This method never waits for network/database work.
+     */
+    suspend fun deactivate() = activationMutex.withLock {
+        var closeRetired: ActiveSyncRuntime? = null
+        mutex.withLock {
+            val previous = active
+            active = null
+            if (previous != null) {
+                // Keep its conflict guard after transport shutdown. Deactivation
+                // is a lifecycle event, not proof that the local enrollment ended.
+                inactiveWritePolicy = previous.runtime.writePolicy
+                closeRetired = retireLocked(previous)
+            }
+        }
+        closeRetired?.close()
+    }
+
+    /** Must be called with [mutex] held. Returns the runtime if it can close now. */
+    private fun retireLocked(slot: RuntimeSlot): ActiveSyncRuntime? {
+        slot.retired = true
+        return if (slot.inFlightCatchUps == 0 && !slot.closeClaimed) {
+            slot.closeClaimed = true
+            slot.runtime
+        } else {
+            null
+        }
+    }
+
+    private suspend fun release(slot: RuntimeSlot) {
+        val close = mutex.withLock {
+            check(slot.inFlightCatchUps > 0) { "Runtime catch-up lease underflow." }
+            slot.inFlightCatchUps -= 1
+            if (slot.retired && slot.inFlightCatchUps == 0 && !slot.closeClaimed) {
+                slot.closeClaimed = true
+                slot.runtime
+            } else {
+                null
+            }
+        }
+        close?.close()
     }
 }

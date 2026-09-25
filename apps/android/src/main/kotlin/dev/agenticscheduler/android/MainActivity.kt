@@ -1,6 +1,8 @@
 package dev.agenticscheduler.android
 
 import android.os.Bundle
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -72,6 +74,8 @@ import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
+import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
 import dev.agenticscheduler.application.sync.AndroidKeystoreSecureStore
 import dev.agenticscheduler.application.sync.TinkPairingHpke
 import dev.agenticscheduler.sync.AccountId
@@ -84,6 +88,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -96,6 +101,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 
 class MainActivity : ComponentActivity() {
+    private val d8StartupState = mutableStateOf(D8StartupState.Activating)
     private val database by lazy { openAndroidDatabase(this) }
     private val events by lazy { RoomEventRepository(database) }
     private val tasks by lazy { RoomTaskRepository(database) }
@@ -104,7 +110,7 @@ class MainActivity : ComponentActivity() {
     private val academics by lazy { RoomAcademicRepository(database) }
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
     private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
-    private val d8Runtime by lazy {
+    private val d8RuntimeLazy = lazy {
         RoomD8RuntimeComposition(
             database,
             AndroidKeystoreSecureStore(this),
@@ -113,7 +119,11 @@ class MainActivity : ComponentActivity() {
             MutationWallClock { Clock.System.now().toEpochMilliseconds() },
         )
     }
+    private val d8Runtime by d8RuntimeLazy
     private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
+    private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
     private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts) }
     private val eventEditor by lazy { EventEditingService(events, ids, mutations, d8Runtime.writePolicy) }
     private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy) }
@@ -122,24 +132,89 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        d8RuntimeConfigurationOrNull()?.let { configuration ->
+        val configuration = try {
+            d8RuntimeConfigurationOrNull()
+        } catch (_: Throwable) {
+            d8StartupState.value = D8StartupState.Blocked
+            null
+        }
+        if (d8StartupState.value != D8StartupState.Blocked && configuration == null) {
+            d8StartupState.value = D8StartupState.Ready
+        } else if (configuration != null) {
+            d8StartupState.value = D8StartupState.Activating
             d8Scope.launch {
-                d8Runtime.activate(configuration)
-                d8Runtime.catchUp()
+                try {
+                    when (d8Runtime.activate(configuration)) {
+                        is ActiveSyncRuntimeCreation.Active -> {
+                            val trigger = d8Runtime.newCatchUpTrigger(
+                                d8Scope,
+                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; retry remains scheduled.") },
+                            )
+                            d8SyncTrigger = trigger
+                            trigger.start()
+                            registerNetworkRetry(trigger)
+                            d8StartupState.value = D8StartupState.Ready
+                        }
+                        ActiveSyncRuntimeCreation.NoEnrollment -> d8StartupState.value = D8StartupState.Ready
+                        ActiveSyncRuntimeCreation.EnrollmentNotActive,
+                        is ActiveSyncRuntimeCreation.MissingDeviceCredential,
+                        -> d8StartupState.value = D8StartupState.Blocked
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    d8StartupState.value = D8StartupState.Blocked
+                }
             }
         }
         setContent {
+            val startupState by d8StartupState
             MaterialTheme {
                 Surface {
-                    AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                    when (startupState) {
+                        D8StartupState.Ready -> AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                        D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
+                        D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
+                    }
                 }
             }
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        d8SyncTrigger?.requestCatchUp()
+    }
+
     override fun onDestroy() {
+        d8NetworkCallback?.let { callback ->
+            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback) }
+        }
+        d8NetworkCallback = null
+        d8SyncTrigger?.close()
+        d8SyncTrigger = null
         d8Scope.cancel()
+        if (d8RuntimeLazy.isInitialized()) {
+            d8ShutdownScope.launch {
+                try {
+                    d8Runtime.deactivate()
+                } finally {
+                    d8ShutdownScope.cancel()
+                }
+            }
+        }
         super.onDestroy()
+    }
+
+    private fun registerNetworkRetry(trigger: ActiveSyncCatchUpTrigger) {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trigger.requestCatchUp()
+            }
+        }
+        connectivity.registerDefaultNetworkCallback(callback)
+        d8NetworkCallback = callback
     }
 
     /**
@@ -160,6 +235,13 @@ class MainActivity : ComponentActivity() {
         const val D8_SYNC_BASE_URL = "dev.agenticscheduler.sync.BASE_URL"
         const val D8_SYNC_ACCOUNT_ID = "dev.agenticscheduler.sync.ACCOUNT_ID"
     }
+}
+
+private enum class D8StartupState { Activating, Ready, Blocked }
+
+@Composable
+private fun D8StartupStatus(message: String) {
+    Column { Text(message) }
 }
 
 @Composable

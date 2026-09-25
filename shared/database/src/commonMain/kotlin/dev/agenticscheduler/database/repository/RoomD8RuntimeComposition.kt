@@ -5,6 +5,7 @@ import dev.agenticscheduler.application.history.SyncConflictWritePolicy
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCatchUpResult
+import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeDependencies
@@ -15,6 +16,7 @@ import dev.agenticscheduler.application.sync.KtorActiveSyncRuntimeTransportFacto
 import dev.agenticscheduler.application.sync.PairingHpke
 import dev.agenticscheduler.application.sync.PlatformD8SecureStore
 import dev.agenticscheduler.database.AgenticSchedulerDatabase
+import kotlinx.coroutines.CoroutineScope
 
 /**
  * Production Room composition for the D8 runtime. All lifecycle metadata and
@@ -22,7 +24,7 @@ import dev.agenticscheduler.database.AgenticSchedulerDatabase
  * [PlatformD8SecureStore] and never enter Room.
  */
 class RoomD8RuntimeComposition(
-    database: AgenticSchedulerDatabase,
+    private val database: AgenticSchedulerDatabase,
     secureStore: PlatformD8SecureStore,
     pairingHpke: PairingHpke,
     ids: UuidV7Generator,
@@ -62,6 +64,21 @@ class RoomD8RuntimeComposition(
         host.activate(factory, configuration)
 
     suspend fun catchUp(fetchLimit: Int = 100): ActiveSyncRuntimeCatchUpResult? = host.catchUp(fetchLimit)
+
+    /**
+     * Observe durable local outbound mutations and serialize catch-up work for
+     * the lifetime of the supplied application scope.
+     */
+    fun newCatchUpTrigger(
+        scope: CoroutineScope,
+        fetchLimit: Int = 100,
+        onUnexpectedFailure: () -> Unit = {},
+    ): ActiveSyncCatchUpTrigger = ActiveSyncCatchUpTrigger(
+        scope = scope,
+        committedOutboundMutationRevision = database.mutationJournalDao().observeOutboundMutationRevision(),
+        catchUp = { catchUp(fetchLimit) },
+        onUnexpectedFailure = onUnexpectedFailure,
+    )
 
     suspend fun deactivate() = host.deactivate()
 }
