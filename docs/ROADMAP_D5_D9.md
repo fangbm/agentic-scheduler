@@ -250,6 +250,9 @@ The first provider adapter and SSE/tool-call probe pass mock desktop tests,
 but Agent orchestration and UI composition remain open.
 The Event/Task edit seam can now atomically append Agent ToolResult/AgentAction
 with the business mutation; a Room integration scenario verifies linkage.
+The first typed write Tool, `task.create`, now passes focused preview,
+denial, stale, confirmation, and committed MutationId tests; it is not yet
+available from the Android/Desktop Agent UI.
 
 Frozen D9-01 baseline:
 

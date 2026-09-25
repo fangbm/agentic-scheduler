@@ -61,6 +61,13 @@ AgentAction, ChangeLog, and exact MutationId atomically; an audit callback
 failure is verified to roll the Task, journal, and ToolResult back. The actual
 Tool confirmation/runtime path still needs to use this seam.
 
+`task.create` is the first typed write Tool on this branch. It requires
+explicit priority/effort/deadline values, validates before permission,
+produces a normalized before/after preview, rechecks the preview and policy
+at confirmation, and returns the exact committed MutationId. Focused Room
+tests cover invalid input, denial, unconfirmed/stale preview, and success.
+Other write Tools and the provider-to-Tool orchestration loop remain open.
+
 ---
 
 # 2. Required reading

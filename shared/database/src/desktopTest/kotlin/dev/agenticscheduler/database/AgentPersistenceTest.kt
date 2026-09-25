@@ -5,6 +5,13 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import dev.agenticscheduler.agent.history.*
 import dev.agenticscheduler.agent.permission.AgentPermissionPolicy
 import dev.agenticscheduler.agent.permission.AgentSyncWriteGate
+import dev.agenticscheduler.agent.permission.AgentPermissionMode
+import dev.agenticscheduler.agent.permission.AgentToolCapability
+import dev.agenticscheduler.agent.tool.AgentToolOutcome
+import dev.agenticscheduler.agent.tool.CommittedTaskCreate
+import dev.agenticscheduler.agent.tool.TaskCreateTool
+import dev.agenticscheduler.agent.tool.TaskCreateToolInput
+import dev.agenticscheduler.agent.tool.TaskCreateWritePreview
 import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
 import dev.agenticscheduler.application.sync.LocalEnrollmentState
 import dev.agenticscheduler.application.editing.CreateTaskInput
@@ -33,6 +40,7 @@ import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.MutationOrigin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
+import kotlinx.serialization.json.Json
 import org.junit.Rule
 import java.nio.file.Files
 import java.nio.file.Path
@@ -208,6 +216,42 @@ class AgentPersistenceTest {
             assertEquals(listOf(created.value), tasks.observeTasks().first())
             assertEquals(1, history.timeline().size)
             assertEquals(1, agent.toolResults(thread.id).size)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test fun `task create Tool validates before permission and confirms only current preview`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size ->
+                ByteArray(size) { (seed++).toByte() }
+            })
+            val history = RoomMutationJournalRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val editing = TaskEditingService(tasks, ids, MutationCoordinator(
+                RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true },
+            ), NoActiveSyncSpaceWritePolicy)
+            val tool = TaskCreateTool(editing)
+            val policy = AgentPermissionPolicy.default()
+            val deniedPolicy = policy.withMode(AgentToolCapability.LOW_RISK_CREATE, AgentPermissionMode.DENY)
+            val arguments = Json.encodeToString(TaskCreateToolInput.serializer(), TaskCreateToolInput("Write", "HIGH", 30, null, null))
+
+            assertIs<AgentToolOutcome.InvalidInput>(tool.prepare("{}", deniedPolicy))
+            assertIs<AgentToolOutcome.PermissionDenied>(tool.prepare(arguments, deniedPolicy))
+            val preview = assertIs<AgentToolOutcome.ConfirmationRequired<TaskCreateWritePreview>>(tool.prepare(arguments, policy)).preview
+            assertTrue(tasks.observeTasks().first().isEmpty())
+            assertTrue(history.timeline().isEmpty())
+
+            assertEquals(AgentToolOutcome.Stale, tool.commit(arguments, preview.copy(after = preview.after.copy(title = "Tampered")), true, policy, AgentActionId(id(30))))
+            assertIs<AgentToolOutcome.PermissionDenied>(tool.commit(arguments, preview, false, policy, AgentActionId(id(30))))
+            assertIs<AgentToolOutcome.PermissionDenied>(tool.commit(arguments, preview, true, deniedPolicy, AgentActionId(id(30))))
+            assertTrue(history.timeline().isEmpty())
+
+            val committed = assertIs<AgentToolOutcome.Success<CommittedTaskCreate>>(tool.commit(arguments, preview, true, policy, AgentActionId(id(30)))).payload
+            assertEquals(committed.task, tasks.getTask(committed.task.id))
+            assertEquals(committed.mutationId.value, history.timeline().single().operation.mutationId)
         } finally {
             database.close()
         }
