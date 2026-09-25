@@ -126,6 +126,7 @@ class RoomD8CatchUpTriggerTest {
         try {
             trigger.start()
             withTimeout(5_000) { entered.await() }
+            assertEquals(1, withTimeout(5_000) { calls.receive() })
 
             val ids = productionUuidV7Generator()
             val coordinator = MutationCoordinator(
