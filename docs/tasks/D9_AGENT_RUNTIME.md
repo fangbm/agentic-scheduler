@@ -53,7 +53,11 @@ The first Ktor OpenAI-compatible adapter now has a strict structured
 tool-calling capability probe, request-time secure-store credential resolution,
 redacted failures, preservation of assistant ToolCall/tool-result transcript
 messages, and SSE delta assembly. Focused mock-provider desktop tests pass.
-The adapter is not yet wired into a persistent Agent run or either UI.
+When a credential reference is configured, the adapter refuses non-HTTPS
+provider URLs before reading the secret or sending a request. Explicit
+credential-free HTTP model endpoints remain possible; a future UI must warn
+when a non-loopback endpoint exposes prompt/schedule plaintext in transit.
+The adapter is wired into the bounded persistent run below, but not either UI.
 
 Event/Task editing commands now accept an in-transaction `onCommitted`
 callback. The Room integration test links one Agent-origin Task, ToolResult,
@@ -75,7 +79,8 @@ history. The Room test shows provider/model switching preserves the same
 thread and transcript.
 
 A bounded application-owned Agent run now composes the provider with an
-explicit `task.get`, `task.list`, `history.timeline`, and `task.create`
+explicit `task.get`, `task.list`, `history.timeline`,
+`history.getMutation`, `history.getEntityChanges`, and `task.create`
 registry, deterministic context budget, and
 persisted ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
 covers proposal → local read → confirmation → Task/MutationId/history linkage,

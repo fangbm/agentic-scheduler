@@ -188,9 +188,11 @@ class AgentRunIntegrationTest {
     }
 
     @Test fun `task list and history timeline stay read only in the provider registry`() = runBlocking {
-        for ((toolName, arguments) in listOf(
-            AgentToolNames.TASK_LIST to "{\"status\":null}",
-            AgentToolNames.HISTORY_TIMELINE to "{\"limit\":10}",
+        for ((toolName, arguments, expectedStatus) in listOf(
+            Triple(AgentToolNames.TASK_LIST, "{\"status\":null}", AgentToolResultStatus.SUCCESS),
+            Triple(AgentToolNames.HISTORY_TIMELINE, "{\"limit\":10}", AgentToolResultStatus.SUCCESS),
+            Triple(AgentToolNames.HISTORY_GET_MUTATION, "{\"mutationId\":\"${id(92)}\"}", AgentToolResultStatus.NOT_FOUND),
+            Triple(AgentToolNames.HISTORY_GET_ENTITY_CHANGES, "{\"entityKind\":\"TASK\",\"entityId\":\"${id(93)}\",\"limit\":10}", AgentToolResultStatus.SUCCESS),
         )) {
             val database = openInMemoryDesktopDatabase()
             val replies = mutableListOf(
@@ -216,7 +218,7 @@ class AgentRunIntegrationTest {
                     TaskListTool(tasks), HistoryReadTools(HistoryQueryService(history)))
                 val threadId = runtime.createThread()
                 assertEquals("Read complete.", assertIs<AgentRunResult.Completed>(runtime.run(threadId, "Show me records")).assistantText)
-                assertEquals(AgentToolResultStatus.SUCCESS, state.toolResults(threadId).single().status)
+                assertEquals(expectedStatus, state.toolResults(threadId).single().status)
                 assertTrue(history.timeline().isEmpty())
                 assertTrue(tasks.observeTasks().first().isEmpty())
             } finally {

@@ -12,11 +12,14 @@ import dev.agenticscheduler.agent.tool.*
 import dev.agenticscheduler.agent.provider.*
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.editing.EditingResult
+import dev.agenticscheduler.application.persistence.HistoryChange
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.planning.Deadline
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.sync.SyncOperation
+import dev.agenticscheduler.sync.EntityKind
+import dev.agenticscheduler.sync.MutationId
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -50,6 +53,8 @@ class AgentRunService(
     private val taskCreateSchema = schema("""{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["LOW","NORMAL","HIGH"]},"estimatedMinutes":{"type":["integer","null"]},"remainingMinutes":{"type":["integer","null"]},"deadline":{"type":["object","null"]}},"required":["title","priority","estimatedMinutes","remainingMinutes","deadline"],"additionalProperties":false}""")
     private val taskListSchema = schema("""{"type":"object","properties":{"status":{"type":["string","null"],"enum":["OPEN","IN_PROGRESS","COMPLETED","CANCELLED",null]}},"required":["status"],"additionalProperties":false}""")
     private val historyTimelineSchema = schema("""{"type":"object","properties":{"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["limit"],"additionalProperties":false}""")
+    private val historyMutationSchema = schema("""{"type":"object","properties":{"mutationId":{"type":"string"}},"required":["mutationId"],"additionalProperties":false}""")
+    private val historyEntitySchema = schema("""{"type":"object","properties":{"entityKind":{"type":"string"},"entityId":{"type":"string"},"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["entityKind","entityId","limit"],"additionalProperties":false}""")
 
     suspend fun createThread(): AgentThreadId = AgentThreadId(ids.next()).also { state.saveThread(AgentThread(it, null, clock.nowEpochMillis())) }
 
@@ -202,7 +207,7 @@ class AgentRunService(
                 else -> AgentRunResult.Failed("TOOL_PREVIEW_FAILURE")
             }
         }
-        if (call.name in setOf(AgentToolNames.TASK_GET, AgentToolNames.TASK_LIST, AgentToolNames.HISTORY_TIMELINE) &&
+        if (call.name in setOf(AgentToolNames.TASK_GET, AgentToolNames.TASK_LIST, AgentToolNames.HISTORY_TIMELINE, AgentToolNames.HISTORY_GET_MUTATION, AgentToolNames.HISTORY_GET_ENTITY_CHANGES) &&
             state.permissionPolicy().modeFor(dev.agenticscheduler.agent.permission.AgentToolCapability.READ) != AgentPermissionMode.ALLOW_DIRECT) {
             finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "READ_NOT_ALLOWED", AgentActionStatus.DENIED)
             return AgentRunResult.Failed("READ_NOT_ALLOWED")
@@ -249,6 +254,35 @@ class AgentRunService(
             finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
             return modelStep(threadId, config, tools, allowLocalRead = false)
         }
+        if (call.name == AgentToolNames.HISTORY_GET_MUTATION && allowLocalRead && historyReads != null) {
+            val mutationId = runCatching { MutationId(json.decodeFromString(MutationInput.serializer(), call.argumentsJson).mutationId) }.getOrNull()
+            val result = if (mutationId == null) AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT" else try {
+                when (val read = historyReads.getMutation(mutationId)) {
+                    is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS to json.encodeToString(HistoryEntry(read.payload.operation, read.payload.committedAtEpochMillis))
+                    AgentToolOutcome.NotFound -> AgentToolResultStatus.NOT_FOUND to "NOT_FOUND"
+                    else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
+                AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+            }
+            finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
+        if (call.name == AgentToolNames.HISTORY_GET_ENTITY_CHANGES && allowLocalRead && historyReads != null) {
+            val input = runCatching { json.decodeFromString(EntityChangesInput.serializer(), call.argumentsJson) }.getOrNull()
+            val kind = input?.entityKind?.let { name -> EntityKind.entries.firstOrNull { it.name == name } }
+            val result = if (input == null || kind == null) AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT" else try {
+                when (val read = historyReads.getEntityChanges(HistoryEntityChangesInput(kind, input.entityId, limit = input.limit))) {
+                    is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS to json.encodeToString(read.payload.map { it.toSnapshot() })
+                    is AgentToolOutcome.InvalidInput -> AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT"
+                    else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
+                AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+            }
+            finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
         finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "TOOL_CALL_LIMIT", AgentActionStatus.DENIED)
         return AgentRunResult.Failed("TOOL_CALL_LIMIT")
     }
@@ -269,6 +303,8 @@ class AgentRunService(
         add(ProviderToolDefinition(AgentToolNames.TASK_GET, "Read one Task by immutable ID", taskGetSchema))
         if (taskList != null) add(ProviderToolDefinition(AgentToolNames.TASK_LIST, "List Tasks with explicit optional status", taskListSchema))
         if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_TIMELINE, "Read authoritative mutation history", historyTimelineSchema))
+        if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_GET_MUTATION, "Read one authoritative MutationId", historyMutationSchema))
+        if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_GET_ENTITY_CHANGES, "Read one entity ChangeLog", historyEntitySchema))
         add(ProviderToolDefinition(AgentToolNames.TASK_CREATE, "Propose a Task with explicit values", taskCreateSchema))
     }
 
@@ -285,7 +321,18 @@ class AgentRunService(
     @Serializable private data class TaskGetInput(val taskId: String)
     @Serializable private data class TaskListInput(val status: String?)
     @Serializable private data class TimelineInput(val limit: Int?)
+    @Serializable private data class MutationInput(val mutationId: String)
+    @Serializable private data class EntityChangesInput(val entityKind: String, val entityId: String, val limit: Int?)
     @Serializable private data class HistoryEntry(val operation: SyncOperation, val committedAtEpochMillis: Long)
+    @Serializable private data class ChangeEntry(
+        val mutationId: String, val ordinal: Int, val entityKind: String, val entityId: String,
+        val operationKind: String, val beforeImageJson: String?, val afterImageJson: String?,
+        val hlcPhysicalMillis: Long, val hlcLogical: Long, val hlcReplicaId: String,
+    )
+    private fun HistoryChange.toSnapshot() = ChangeEntry(
+        mutationId, ordinal, entityKind.name, entityId, operationKind, beforeImageJson, afterImageJson,
+        hlc.physicalMillis, hlc.logical, hlc.replicaId.value,
+    )
     @Serializable private data class TaskReadSnapshot(
         val id: String, val title: String, val status: String, val priority: String,
         val estimated: String?, val completed: String, val remaining: String?,
