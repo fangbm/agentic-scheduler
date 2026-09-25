@@ -27,6 +27,12 @@ Android/Desktop Agent surface / universal command entry
 
 D9-02 adds synchronized Agent history. D9-03 adds Wear provider provisioning/capability integration.
 
+Implementation progress on this branch: typed permission policy and calendar/task reads,
+followed by local Agent state persistence. Room schema v12 and a v11→v12 migration
+preserve existing D8 rows; focused fresh-install, migration, and thread-deletion
+tests pass. Provider orchestration, context, remaining Tools, audit write flow,
+and Android/Desktop surfaces remain open.
+
 ---
 
 # 2. Required reading
@@ -87,6 +93,15 @@ ProviderConfig (non-secret metadata + SecretRef)
 Provider remote conversation/session IDs are disposable adapter metadata and cannot become AgentThread identity.
 
 No destructive migration fallback.
+
+The D8 Room database is already near the JVM method-size limit in Room 3's
+generated schema validator. Registering the eight D9 entities as `@Entity`
+exceeds that limit. `AgentSchema.kt` therefore owns explicit v12 SQL for the
+eight distinct Agent tables in the **same database and transaction**. The
+v11→v12 migration creates them for existing installations; the database
+creation callback creates them for fresh v12 installations; every open checks
+their required columns. The exported Room v12 JSON covers Room-managed D8
+tables, and `AgentSchema.kt` is the authoritative catalog for the Agent tables.
 
 ---
 

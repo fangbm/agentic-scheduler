@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.android.multiplatform.library)
     alias(libs.plugins.room3)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 kotlin {
@@ -28,12 +29,14 @@ kotlin {
         commonMain.dependencies {
             implementation(project(":shared:domain"))
             implementation(project(":shared:application"))
+            implementation(project(":shared:agent"))
             implementation(project(":shared:sync"))
             implementation(libs.androidx.room3.runtime)
             implementation(libs.androidx.sqlite.bundled)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.collections.immutable)
+            implementation(libs.kotlinx.serialization.json)
         }
         commonTest.dependencies { implementation(libs.androidx.room3.testing) }
         val desktopTest by getting {

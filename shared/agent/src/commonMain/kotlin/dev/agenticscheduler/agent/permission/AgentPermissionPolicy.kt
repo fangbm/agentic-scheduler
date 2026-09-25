@@ -1,5 +1,7 @@
 package dev.agenticscheduler.agent.permission
 
+import kotlinx.serialization.Serializable
+
 /**
  * The local, user-owned authority for one class of Agent Tool.
  *
@@ -19,6 +21,7 @@ enum class AgentToolCapability {
     EXTERNAL_SIDE_EFFECT,
 }
 
+@Serializable
 enum class AgentPermissionMode {
     ALLOW_DIRECT,
     REQUIRE_CONFIRMATION,
