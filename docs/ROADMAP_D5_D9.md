@@ -237,7 +237,8 @@ D9-03 Wear Agent/provider provisioning AFTER D9-01
 
 The D9 review branch now includes the local Agent state repository and Room
 schema v12 migration. Its focused migration/retention tests pass. Full D9-01
-Tool, Provider, ContextAssembler, audit, and UI acceptance remains open.
+Tool, Provider, audit, and UI acceptance remains open. Context budget and
+incremental compaction checks now pass on the D9 branch.
 
 Frozen D9-01 baseline:
 

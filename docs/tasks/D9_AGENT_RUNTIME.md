@@ -33,6 +33,10 @@ preserve existing D8 rows; focused fresh-install, migration, and thread-deletion
 tests pass. Provider orchestration, context, remaining Tools, audit write flow,
 and Android/Desktop surfaces remain open.
 
+The deterministic ContextAssembler and incremental compaction selector/service
+are now implemented and pass shared desktop tests. Full provider orchestration,
+Tool writes, AgentAction execution, and UI acceptance remain open.
+
 ---
 
 # 2. Required reading
