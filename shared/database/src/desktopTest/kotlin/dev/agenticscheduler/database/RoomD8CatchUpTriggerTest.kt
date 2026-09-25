@@ -23,9 +23,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.yield
 import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
@@ -90,14 +91,27 @@ class RoomD8CatchUpTriggerTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         val calls = Channel<Int>(Channel.UNLIMITED)
         val entered = CompletableDeferred<Unit>()
+        val committedMutationObserved = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
         val activeRuns = AtomicInteger(0)
         val maximumConcurrentRuns = AtomicInteger(0)
         val invocation = AtomicInteger(0)
 
+        val revisionsWithAcknowledgement = flow {
+            var previousRevision: Long? = null
+            database.mutationJournalDao().observeOutboundMutationRevision().collect { revision ->
+                emit(revision)
+                if (previousRevision != null && revision != previousRevision) {
+                    // `emit` returns only after the trigger's downstream
+                    // collector has enqueued this revision's catch-up request.
+                    committedMutationObserved.complete(Unit)
+                }
+                previousRevision = revision
+            }
+        }
         val trigger = ActiveSyncCatchUpTrigger(
             scope = scope,
-            committedOutboundMutationRevision = database.mutationJournalDao().observeOutboundMutationRevision(),
+            committedOutboundMutationRevision = revisionsWithAcknowledgement,
             catchUp = {
                 val concurrent = activeRuns.incrementAndGet()
                 maximumConcurrentRuns.updateAndGet { previous -> maxOf(previous, concurrent) }
@@ -148,7 +162,7 @@ class RoomD8CatchUpTriggerTest {
 
             // A committed mutation arriving during catch-up is queued, not run
             // concurrently with the network/database work already in progress.
-            yield()
+            withTimeout(5_000) { committedMutationObserved.await() }
             assertEquals(1, invocation.get())
             releaseFirst.complete(Unit)
             assertEquals(2, withTimeout(5_000) { calls.receive() })
