@@ -9,6 +9,7 @@ import dev.agenticscheduler.application.history.AgentOriginWriteGate
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
+import dev.agenticscheduler.application.history.HistoryQueryService
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
@@ -183,6 +184,80 @@ class AgentRunIntegrationTest {
                 client.close()
                 database.close()
             }
+        }
+    }
+
+    @Test fun `task list and history timeline stay read only in the provider registry`() = runBlocking {
+        for ((toolName, arguments) in listOf(
+            AgentToolNames.TASK_LIST to "{\"status\":null}",
+            AgentToolNames.HISTORY_TIMELINE to "{\"limit\":10}",
+        )) {
+            val database = openInMemoryDesktopDatabase()
+            val replies = mutableListOf(
+                reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+                reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("read-1", function = ProviderFunctionCall(toolName, arguments))))),
+                reply(ProviderChatMessage("assistant", "Read complete.")),
+            )
+            val client = HttpClient(MockEngine) { engine { addHandler {
+                respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+            } } }
+            try {
+                var seed = 0
+                val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+                val state = RoomAgentStateRepository(database)
+                val tasks = RoomTaskRepository(database)
+                val history = RoomMutationJournalRepository(database)
+                val config = ProviderConfig(ProviderConfigId(id(80)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+                state.saveProviderConfig(config)
+                state.selectProviderConfig(config.id)
+                val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+                val runtime = AgentRunService(state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                    TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 },
+                    TaskListTool(tasks), HistoryReadTools(HistoryQueryService(history)))
+                val threadId = runtime.createThread()
+                assertEquals("Read complete.", assertIs<AgentRunResult.Completed>(runtime.run(threadId, "Show me records")).assistantText)
+                assertEquals(AgentToolResultStatus.SUCCESS, state.toolResults(threadId).single().status)
+                assertTrue(history.timeline().isEmpty())
+                assertTrue(tasks.observeTasks().first().isEmpty())
+            } finally {
+                client.close()
+                database.close()
+            }
+        }
+    }
+
+    @Test fun `oversized authoritative read result stops before provider retry and preserves raw history`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val task = Task(TaskId(id(90)), "A".repeat(5_000), TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, ZERO, null), null)
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("get-1", function = ProviderFunctionCall(AgentToolNames.TASK_GET, "{\"taskId\":\"${task.id.value}\"}"))))),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            tasks.upsertTask(task)
+            val config = ProviderConfig(ProviderConfigId(id(91)), "https://model.example/v1", "chosen-model", 4096, 1024, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val runtime = AgentRunService(state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 })
+            val threadId = runtime.createThread()
+            assertEquals(AgentRunResult.Failed("CONTEXT_TOO_LARGE"), runtime.run(threadId, "Read the task"))
+            assertTrue(replies.isEmpty())
+            assertEquals(AgentToolResultStatus.SUCCESS, state.toolResults(threadId).single().status)
+            assertEquals(2, state.messages(threadId).size)
+            assertTrue(history.timeline().isEmpty())
+        } finally {
+            client.close()
+            database.close()
         }
     }
 

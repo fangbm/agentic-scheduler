@@ -15,6 +15,8 @@ import dev.agenticscheduler.application.editing.EditingResult
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.planning.Deadline
 import dev.agenticscheduler.domain.task.Task
+import dev.agenticscheduler.domain.task.TaskStatus
+import dev.agenticscheduler.sync.SyncOperation
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -38,12 +40,16 @@ class AgentRunService(
     private val taskCreate: TaskCreateTool,
     private val ids: UuidV7Generator,
     private val clock: AgentClock,
+    private val taskList: TaskListTool? = null,
+    private val historyReads: HistoryReadTools? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
     private val transcripts = AgentTranscriptAssembler(state)
     private val system = "Use only listed typed tools for reads and writes. Prose is not a mutation. Current tool results outrank summaries. Never claim a write succeeded without a successful tool result."
     private val taskGetSchema = schema("""{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"],"additionalProperties":false}""")
     private val taskCreateSchema = schema("""{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["LOW","NORMAL","HIGH"]},"estimatedMinutes":{"type":["integer","null"]},"remainingMinutes":{"type":["integer","null"]},"deadline":{"type":["object","null"]}},"required":["title","priority","estimatedMinutes","remainingMinutes","deadline"],"additionalProperties":false}""")
+    private val taskListSchema = schema("""{"type":"object","properties":{"status":{"type":["string","null"],"enum":["OPEN","IN_PROGRESS","COMPLETED","CANCELLED",null]}},"required":["status"],"additionalProperties":false}""")
+    private val historyTimelineSchema = schema("""{"type":"object","properties":{"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["limit"],"additionalProperties":false}""")
 
     suspend fun createThread(): AgentThreadId = AgentThreadId(ids.next()).also { state.saveThread(AgentThread(it, null, clock.nowEpochMillis())) }
 
@@ -132,15 +138,17 @@ class AgentRunService(
         if (lastUser < 0) return AgentRunResult.Failed("NO_USER_MESSAGE")
         val groups = group(transcript)
         val currentGroup = groups.indexOfFirst { it.first <= lastUser && lastUser < it.first + it.second.size }
+        val latestToolGroup = groups.indexOfLast { (start, messages) -> start > lastUser && messages.any { it.role == "tool" } }
+        val latestToolAnchor = groups.getOrNull(latestToolGroup)?.second?.let { json.encodeToString(it) }
         val summary = state.summaries(threadId).maxWithOrNull(compareBy<ContextSummary>({ it.createdAtEpochMillis }, { it.id.value }))
         val candidates = groups.mapIndexedNotNull { index, (_, messages) ->
-            if (index == currentGroup) null else ContextCandidate(index.toString(),
+            if (index == currentGroup || index == latestToolGroup) null else ContextCandidate(index.toString(),
                 if (messages.any { it.role == "tool" }) ContextClass.CURRENT_DOMAIN else ContextClass.RAW_MESSAGES,
                 json.encodeToString(messages), index, index.toLong())
         } + summary?.let { value ->
             listOf(ContextCandidate("summary:${value.id.value}", ContextClass.SUMMARY, value.text, 0, value.createdAtEpochMillis))
         }.orEmpty()
-        val assembled = budget.assemble(ContextRequest(system, tools.map { it.name to it.parameters.toString() }, transcript[lastUser].content.orEmpty(), null, candidates))
+        val assembled = budget.assemble(ContextRequest(system, tools.map { it.name to it.parameters.toString() }, transcript[lastUser].content.orEmpty(), latestToolAnchor, candidates))
         if (assembled is ContextAssemblyResult.ContextTooLarge) return AgentRunResult.Failed("CONTEXT_TOO_LARGE")
         val selected = (assembled as ContextAssemblyResult.Ready).parts.map { it.id }.toSet()
         val messages = buildList {
@@ -148,7 +156,7 @@ class AgentRunService(
             summary?.let { value ->
                 if ("summary:${value.id.value}" in selected) add(ProviderChatMessage("user", "Earlier, potentially stale summary: ${value.text}"))
             }
-            groups.forEachIndexed { index, pair -> if (index == currentGroup || index.toString() in selected) addAll(pair.second) }
+            groups.forEachIndexed { index, pair -> if (index == currentGroup || index == latestToolGroup || index.toString() in selected) addAll(pair.second) }
         }
         return when (val response = provider.complete(config, messages, tools)) {
             is ProviderCallResult.Failure -> AgentRunResult.Failed(response.redactedCode)
@@ -194,17 +202,48 @@ class AgentRunService(
                 else -> AgentRunResult.Failed("TOOL_PREVIEW_FAILURE")
             }
         }
+        if (call.name in setOf(AgentToolNames.TASK_GET, AgentToolNames.TASK_LIST, AgentToolNames.HISTORY_TIMELINE) &&
+            state.permissionPolicy().modeFor(dev.agenticscheduler.agent.permission.AgentToolCapability.READ) != AgentPermissionMode.ALLOW_DIRECT) {
+            finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "READ_NOT_ALLOWED", AgentActionStatus.DENIED)
+            return AgentRunResult.Failed("READ_NOT_ALLOWED")
+        }
         if (call.name == AgentToolNames.TASK_GET && allowLocalRead) {
-            if (state.permissionPolicy().modeFor(dev.agenticscheduler.agent.permission.AgentToolCapability.READ) != AgentPermissionMode.ALLOW_DIRECT) {
-                finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "READ_NOT_ALLOWED", AgentActionStatus.DENIED)
-                return AgentRunResult.Failed("READ_NOT_ALLOWED")
-            }
             val taskId = runCatching { TaskId(json.decodeFromString(TaskGetInput.serializer(), call.argumentsJson).taskId) }.getOrNull()
             val result = if (taskId == null) AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT" else try { when (val read = taskGet.execute(taskId)) {
                 is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS to json.encodeToString(read.payload.toSnapshot())
                 AgentToolOutcome.NotFound -> AgentToolResultStatus.NOT_FOUND to "NOT_FOUND"
                 else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
             } } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
+                AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+            }
+            finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
+        if (call.name == AgentToolNames.TASK_LIST && allowLocalRead && taskList != null) {
+            val input = runCatching { json.decodeFromString(TaskListInput.serializer(), call.argumentsJson) }.getOrNull()
+            val status = input?.status?.let { name -> TaskStatus.entries.firstOrNull { it.name == name } }
+            val result = if (input == null || (input.status != null && status == null)) {
+                AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT"
+            } else try {
+                when (val read = taskList.execute(TaskListToolInput(status))) {
+                    is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS to json.encodeToString(read.payload.map { it.toSnapshot() })
+                    else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
+                AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+            }
+            finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
+        if (call.name == AgentToolNames.HISTORY_TIMELINE && allowLocalRead && historyReads != null) {
+            val input = runCatching { json.decodeFromString(TimelineInput.serializer(), call.argumentsJson) }.getOrNull()
+            val result = if (input == null) AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT" else try {
+                when (val read = historyReads.timeline(HistoryTimelineInput(limit = input.limit))) {
+                    is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS to json.encodeToString(read.payload.map { HistoryEntry(it.operation, it.committedAtEpochMillis) })
+                    is AgentToolOutcome.InvalidInput -> AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT"
+                    else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
                 AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
             }
             finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
@@ -226,10 +265,12 @@ class AgentRunService(
     }
 
     private suspend fun selectedConfig(): ProviderConfig? = state.selectedProviderConfigId()?.let { state.providerConfig(it) }
-    private fun supportedTools() = listOf(
-        ProviderToolDefinition(AgentToolNames.TASK_GET, "Read one Task by immutable ID", taskGetSchema),
-        ProviderToolDefinition(AgentToolNames.TASK_CREATE, "Propose a Task with explicit values", taskCreateSchema),
-    )
+    private fun supportedTools() = buildList {
+        add(ProviderToolDefinition(AgentToolNames.TASK_GET, "Read one Task by immutable ID", taskGetSchema))
+        if (taskList != null) add(ProviderToolDefinition(AgentToolNames.TASK_LIST, "List Tasks with explicit optional status", taskListSchema))
+        if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_TIMELINE, "Read authoritative mutation history", historyTimelineSchema))
+        add(ProviderToolDefinition(AgentToolNames.TASK_CREATE, "Propose a Task with explicit values", taskCreateSchema))
+    }
 
     private fun group(messages: List<ProviderChatMessage>): List<Pair<Int, List<ProviderChatMessage>>> = buildList {
         var index = 0
@@ -242,6 +283,9 @@ class AgentRunService(
     private fun schema(value: String): JsonObject = Json.parseToJsonElement(value).jsonObject
 
     @Serializable private data class TaskGetInput(val taskId: String)
+    @Serializable private data class TaskListInput(val status: String?)
+    @Serializable private data class TimelineInput(val limit: Int?)
+    @Serializable private data class HistoryEntry(val operation: SyncOperation, val committedAtEpochMillis: Long)
     @Serializable private data class TaskReadSnapshot(
         val id: String, val title: String, val status: String, val priority: String,
         val estimated: String?, val completed: String, val remaining: String?,
