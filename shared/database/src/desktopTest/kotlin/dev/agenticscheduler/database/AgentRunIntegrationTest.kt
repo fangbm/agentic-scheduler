@@ -5,6 +5,7 @@ import dev.agenticscheduler.agent.provider.*
 import dev.agenticscheduler.agent.runtime.*
 import dev.agenticscheduler.agent.tool.*
 import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.history.AgentOriginWriteGate
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
@@ -257,6 +258,53 @@ class AgentRunIntegrationTest {
             assertEquals(AgentToolResultStatus.SUCCESS, state.toolResults(threadId).single().status)
             assertEquals(2, state.messages(threadId).size)
             assertTrue(history.timeline().isEmpty())
+        } finally {
+            client.close()
+            database.close()
+        }
+    }
+
+    @Test fun `task update runtime rejects stale confirmation then commits a fresh preview`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val task = Task(TaskId(id(96)), "Before", TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, ZERO, null), null)
+        val arguments = json.encodeToString(TaskUpdateToolInput(task.id.value, "Agent edit", "OPEN", "HIGH", null, 0, null, null))
+        fun probe() = reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}")))))
+        fun update(callId: String) = reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall(callId, function = ProviderFunctionCall(AgentToolNames.TASK_UPDATE, arguments)))))
+        val replies = mutableListOf(probe(), update("update-1"), reply(ProviderChatMessage("assistant", "No update.")),
+            probe(), update("update-2"), reply(ProviderChatMessage("assistant", "Updated.")))
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            tasks.upsertTask(task)
+            val config = ProviderConfig(ProviderConfigId(id(97)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val editing = TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)
+            val runtime = AgentRunService(state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(editing), ids, AgentClock { 6 }, taskUpdate = TaskUpdateTool(editing))
+            val threadId = runtime.createThread()
+
+            val first = assertIs<AgentRunResult.AwaitingConfirmation>(runtime.run(threadId, "Update it"))
+            editing.update(UpdateTaskInput(task.id, "User changed", TaskStatus.OPEN, TaskPriority.NORMAL, null, ZERO, null, null))
+            assertIs<AgentRunResult.Completed>(runtime.confirm(threadId, first.callId, true))
+            assertEquals(1, history.timeline().size)
+            assertEquals("User changed", tasks.getTask(task.id)?.title)
+            assertEquals(AgentToolResultStatus.STALE, state.toolResults(threadId).single().status)
+
+            val second = assertIs<AgentRunResult.AwaitingConfirmation>(runtime.run(threadId, "Try the update again"))
+            assertEquals("Updated.", assertIs<AgentRunResult.Completed>(runtime.confirm(threadId, second.callId, true)).assistantText)
+            assertEquals("Agent edit", tasks.getTask(task.id)?.title)
+            assertEquals(2, history.timeline().size)
+            val agentMutation = history.timeline().last().operation
+            val agentOrigin = assertIs<MutationOrigin.Agent>(agentMutation.origin)
+            assertEquals(agentMutation.mutationId, state.action(AgentActionId(agentOrigin.agentActionId))?.mutationIds?.single()?.value)
         } finally {
             client.close()
             database.close()
