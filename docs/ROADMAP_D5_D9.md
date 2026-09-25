@@ -235,6 +235,10 @@ D9-02 synchronized Agent history       AFTER D9-01
 D9-03 Wear Agent/provider provisioning AFTER D9-01
 ```
 
+The D9 review branch now includes the local Agent state repository and Room
+schema v12 migration. Its focused migration/retention tests pass. Full D9-01
+Tool, Provider, ContextAssembler, audit, and UI acceptance remains open.
+
 Frozen D9-01 baseline:
 
 ```text
