@@ -74,15 +74,20 @@ ToolResults from application-owned records, refusing unresolved/orphaned
 history. The Room test shows provider/model switching preserves the same
 thread and transcript.
 
-A bounded application-owned Agent run now composes the provider with the
-explicit `task.get`/`task.create` registry, deterministic context budget, and
+A bounded application-owned Agent run now composes the provider with an
+explicit `task.get`, `task.list`, `history.timeline`, and `task.create`
+registry, deterministic context budget, and
 persisted ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
 covers proposal → local read → confirmation → Task/MutationId/history linkage,
 plus denial, stale preview, prose-only, unregistered Tool, failed capability
 probe, and stale-summary/current-fact ordering. It is still a narrow slice:
-remaining AGT-004 Tools, compaction invocation, Android/Desktop composition,
+remaining AGT-004 Tools, full history cursor support, compaction invocation, Android/Desktop composition,
 and full acceptance remain open. No synchronized Agent write is enabled in
 production before D8 runtime closure and device-local upgrade opt-in.
+The latest assistant ToolCall/matching ToolResult is mandatory in a resumed
+provider request. An oversized authoritative result now returns
+`CONTEXT_TOO_LARGE` before another provider call while retaining raw messages
+and ToolResults; the focused Room mock test passes.
 
 ---
 

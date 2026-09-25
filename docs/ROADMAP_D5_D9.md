@@ -259,6 +259,10 @@ now covers a bounded `task.get` → confirmed `task.create` flow in a local mock
 including denial and stale no-write cases. The remainder of the frozen Tool
 registry, compaction invocation, app UI composition, and D8 runtime gate are
 still required before D9-01 acceptance.
+`task.list` and `history.timeline` are also registered as read-only mock-tested
+Tools; no provider-origin read mutates Task or history state.
+An oversized latest ToolResult is no longer silently dropped by context
+selection; the bounded run stops with retained raw history instead.
 
 Frozen D9-01 baseline:
 
