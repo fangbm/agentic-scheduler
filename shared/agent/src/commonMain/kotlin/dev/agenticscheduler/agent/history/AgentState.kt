@@ -51,7 +51,9 @@ data class AgentToolCall(
     val argumentsJson: String,
     val state: AgentToolCallState,
     val previewJson: String? = null,
-) { init { require(ordinal >= 0 && name.isNotBlank() && argumentsJson.isNotBlank()) } }
+    /** Adapter-local call ID needed to resume a matching OpenAI-compatible tool result. */
+    val providerCallId: String? = null,
+) { init { require(ordinal >= 0 && name.isNotBlank() && argumentsJson.isNotBlank() && (providerCallId == null || providerCallId.isNotBlank())) } }
 
 @Serializable enum class AgentToolResultStatus {
     SUCCESS, INVALID_INPUT, NOT_FOUND, PERMISSION_DENIED, STALE, CONFLICT, INFEASIBLE, INFRASTRUCTURE_FAILURE,
