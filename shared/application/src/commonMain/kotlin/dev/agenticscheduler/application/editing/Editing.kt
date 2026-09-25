@@ -98,6 +98,14 @@ data class CreateTaskInput(
     val deadline: TaskDeadlineInput?,
 )
 
+/** Validated source facts shown before Task creation; no TaskId or write is allocated. */
+data class TaskCreatePreview(
+    val title: String,
+    val priority: TaskPriority,
+    val effort: TaskEffort,
+    val deadline: TaskDeadline?,
+)
+
 data class UpdateTaskInput(
     val id: TaskId,
     val title: String,
@@ -209,15 +217,22 @@ class TaskEditingService(
     private val mutations: MutationCoordinator,
     private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
+    fun previewCreate(input: CreateTaskInput): EditingResult<TaskCreatePreview> = when (
+        val built = validateTask(input.title, input.estimated, Duration.ZERO, input.remaining, input.deadline)
+    ) {
+        is TaskInput.Invalid -> EditingResult.Invalid(built.issues)
+        is TaskInput.Valid -> EditingResult.Success(TaskCreatePreview(input.title, input.priority, built.effort, built.deadline))
+    }
+
     suspend fun create(
         input: CreateTaskInput,
         origin: MutationOrigin = MutationOrigin.User,
         onCommitted: suspend (MutationExecution<EditingResult<Task>>) -> Unit = {},
     ): EditingResult<Task> {
-        val built = validateTask(input.title, input.estimated, Duration.ZERO, input.remaining, input.deadline)
-        if (built is TaskInput.Invalid) return EditingResult.Invalid(built.issues)
-        val valid = built as TaskInput.Valid
-        val task = Task(TaskId(ids.next()), input.title, TaskStatus.OPEN, input.priority, valid.effort, valid.deadline)
+        val preview = previewCreate(input)
+        if (preview is EditingResult.Invalid) return preview
+        val valid = (preview as EditingResult.Success).value
+        val task = Task(TaskId(ids.next()), valid.title, TaskStatus.OPEN, valid.priority, valid.effort, valid.deadline)
         var result: EditingResult<Task>? = null
         val execution = mutations.executeIfAny(origin, onCommitted) {
             val proposed = TaskPut(null, task.toSemanticImage())
