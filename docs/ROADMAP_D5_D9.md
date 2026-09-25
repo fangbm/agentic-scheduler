@@ -259,8 +259,10 @@ Application-owned transcript reconstruction now preserves assistant ToolCall
 IDs and paired results across provider switching; persistent run orchestration
 now covers a bounded `task.get` → confirmed `task.create` flow in a local mock,
 including denial and stale no-write cases. The remainder of the frozen Tool
-registry, compaction invocation, app UI composition, and D8 runtime gate are
+registry, app UI composition, and D8 runtime gate are
 still required before D9-01 acceptance.
+Runtime compaction invocation now passes local mock success/failure checks;
+raw AgentMessages remain durable and only hot context selection changes.
 `task.list` and the three D7 history reads are also registered as read-only
 mock-tested Tools; no provider-origin read mutates Task or history state.
 An oversized latest ToolResult is no longer silently dropped by context

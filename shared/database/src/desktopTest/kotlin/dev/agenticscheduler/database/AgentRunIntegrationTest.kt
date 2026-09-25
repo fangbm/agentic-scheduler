@@ -30,6 +30,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.client.request.HttpRequestData
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.flow.first
@@ -308,6 +309,56 @@ class AgentRunIntegrationTest {
         } finally {
             client.close()
             database.close()
+        }
+    }
+
+    @Test fun `runtime compaction saves an incremental summary and failure retains raw messages`() = runBlocking {
+        for (summaryFails in listOf(false, true)) {
+            val database = openInMemoryDesktopDatabase()
+            val requests = mutableListOf<HttpRequestData>()
+            var requestIndex = 0
+            val client = HttpClient(MockEngine) { engine { addHandler { request ->
+                requests += request
+                when (requestIndex++) {
+                    0 -> respond(reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}"))))))
+                    1 -> if (summaryFails) respond("{}", status = HttpStatusCode.InternalServerError) else respond(reply(ProviderChatMessage("assistant", "Earlier planning notes")))
+                    else -> respond(reply(ProviderChatMessage("assistant", "Ready")))
+                }
+            } } }
+            try {
+                var seed = 0
+                val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+                val state = RoomAgentStateRepository(database)
+                val tasks = RoomTaskRepository(database)
+                val history = RoomMutationJournalRepository(database)
+                val config = ProviderConfig(ProviderConfigId(id(120)), "https://model.example/v1", "chosen-model", 4096, 1024, false, true, null)
+                state.saveProviderConfig(config)
+                state.selectProviderConfig(config.id)
+                val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+                val runtime = AgentRunService(state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                    TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 })
+                val threadId = runtime.createThread()
+                val old = (0 until 14).map { index ->
+                    AgentMessage(AgentMessageId(id(100 + index)), threadId, index.toLong(), AgentMessageRole.USER, "old-$index " + "A".repeat(200), index.toLong())
+                }
+                old.forEach { state.appendMessage(it) }
+
+                assertEquals("Ready", assertIs<AgentRunResult.Completed>(runtime.run(threadId, "What next?")).assistantText)
+                assertEquals(16, state.messages(threadId).size)
+                assertEquals(3, requests.size)
+                val summaries = state.summaries(threadId)
+                if (summaryFails) {
+                    assertTrue(summaries.isEmpty())
+                } else {
+                    assertEquals(old.first().id, summaries.single().sourceStartMessageId)
+                    assertEquals(old[2].id, summaries.single().sourceEndMessageId)
+                    assertTrue((requests.last().body as TextContent).text.contains("Earlier planning notes"))
+                }
+                assertTrue(history.timeline().isEmpty())
+            } finally {
+                client.close()
+                database.close()
+            }
         }
     }
 

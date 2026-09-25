@@ -1,16 +1,21 @@
 package dev.agenticscheduler.agent.runtime
 
 import dev.agenticscheduler.agent.context.ContextAssembler
+import dev.agenticscheduler.agent.context.CompactionPressure
+import dev.agenticscheduler.agent.context.ContextCompactionResult
+import dev.agenticscheduler.agent.context.ContextCompactionService
 import dev.agenticscheduler.agent.context.ContextCandidate
 import dev.agenticscheduler.agent.context.ContextClass
 import dev.agenticscheduler.agent.context.ContextRequest
 import dev.agenticscheduler.agent.context.ContextAssemblyResult
+import dev.agenticscheduler.agent.context.ContextSummaryProvider
 import dev.agenticscheduler.agent.context.Utf8ByteBudgetMeter
 import dev.agenticscheduler.agent.history.*
 import dev.agenticscheduler.agent.permission.AgentPermissionMode
 import dev.agenticscheduler.agent.tool.*
 import dev.agenticscheduler.agent.provider.*
 import dev.agenticscheduler.application.id.UuidV7Generator
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.editing.EditingResult
 import dev.agenticscheduler.application.persistence.HistoryChange
 import dev.agenticscheduler.domain.id.TaskId
@@ -182,30 +187,71 @@ class AgentRunService(
             AgentTranscriptResult.UnresolvedToolCall -> return AgentRunResult.Failed("UNRESOLVED_TOOL_CALL")
             AgentTranscriptResult.InvalidHistory -> return AgentRunResult.Failed("INVALID_HISTORY")
         }
-        val budget = ContextAssembler(Utf8ByteBudgetMeter(config.maxContextUnits, config.reservedOutputUnits))
+        val meter = Utf8ByteBudgetMeter(config.maxContextUnits, config.reservedOutputUnits)
+        val budget = ContextAssembler(meter)
         val lastUser = transcript.indexOfLast { it.role == "user" }
         if (lastUser < 0) return AgentRunResult.Failed("NO_USER_MESSAGE")
         val groups = group(transcript)
+        val rawMessages = state.messages(threadId).sortedWith(compareBy({ it.ordinal }, { it.id.value }))
+        if (groups.size != rawMessages.size) return AgentRunResult.Failed("INVALID_HISTORY")
         val currentGroup = groups.indexOfFirst { it.first <= lastUser && lastUser < it.first + it.second.size }
         val latestToolGroup = groups.indexOfLast { (start, messages) -> start > lastUser && messages.any { it.role == "tool" } }
         val latestToolAnchor = groups.getOrNull(latestToolGroup)?.second?.let { json.encodeToString(it) }
-        val summary = state.summaries(threadId).maxWithOrNull(compareBy<ContextSummary>({ it.createdAtEpochMillis }, { it.id.value }))
-        val candidates = groups.mapIndexedNotNull { index, (_, messages) ->
-            if (index == currentGroup || index == latestToolGroup) null else ContextCandidate(index.toString(),
-                if (messages.any { it.role == "tool" }) ContextClass.CURRENT_DOMAIN else ContextClass.RAW_MESSAGES,
-                json.encodeToString(messages), index, index.toLong())
-        } + summary?.let { value ->
-            listOf(ContextCandidate("summary:${value.id.value}", ContextClass.SUMMARY, value.text, 0, value.createdAtEpochMillis))
-        }.orEmpty()
-        val assembled = budget.assemble(ContextRequest(system, tools.map { it.name to it.parameters.toString() }, transcript[lastUser].content.orEmpty(), latestToolAnchor, candidates))
+        var summary = state.summaries(threadId).maxWithOrNull(compareBy<ContextSummary>({ it.createdAtEpochMillis }, { it.id.value }))
+        if (summary != null && rawMessages.none { it.id == summary.sourceEndMessageId }) return AgentRunResult.Failed("INVALID_HISTORY")
+        fun candidates(): List<ContextCandidate> {
+            val coveredEnd = summary?.let { value -> rawMessages.indexOfFirst { it.id == value.sourceEndMessageId } }
+            return groups.mapIndexedNotNull { index, (_, messages) ->
+                val source = if (messages.any { it.role == "tool" }) ContextClass.CURRENT_DOMAIN else ContextClass.RAW_MESSAGES
+                if (index == currentGroup || index == latestToolGroup || (source == ContextClass.RAW_MESSAGES && coveredEnd != null && index <= coveredEnd)) null
+                else ContextCandidate(rawMessages[index].id.value, source, json.encodeToString(messages), index, rawMessages[index].createdAtEpochMillis)
+            } + summary?.let { value ->
+                listOf(ContextCandidate("summary:${value.id.value}", ContextClass.SUMMARY, value.text, 0, value.createdAtEpochMillis))
+            }.orEmpty()
+        }
+        fun assemble(values: List<ContextCandidate>) = budget.assemble(ContextRequest(
+            system, tools.map { it.name to it.parameters.toString() }, transcript[lastUser].content.orEmpty(), latestToolAnchor, values,
+        ))
+        var candidates = candidates()
+        var assembled = assemble(candidates)
         if (assembled is ContextAssemblyResult.ContextTooLarge) return AgentRunResult.Failed("CONTEXT_TOO_LARGE")
+        val ready = assembled as ContextAssemblyResult.Ready
+        val rawDemand = candidates.asSequence().filter { it.source == ContextClass.RAW_MESSAGES }
+            .fold(0L) { total, candidate ->
+                val cost = meter.measure(candidate.serialized)
+                if (cost > Long.MAX_VALUE - total) Long.MAX_VALUE else total + cost
+            }
+        val compactor = ContextCompactionService(ContextSummaryProvider { previous, prefix ->
+            val prompt = json.encodeToString(prefix)
+            when (val result = provider.complete(config, listOf(
+                ProviderChatMessage("system", "Summarize earlier conversation without inventing current facts. This summary is non-authoritative."),
+                ProviderChatMessage("user", (previous?.text?.let { "Previous summary: $it\n" } ?: "") + prompt),
+            ), emptyList())) {
+                is ProviderCallResult.Success -> result.message.content?.takeIf { result.message.toolCalls.isNullOrEmpty() && it.isNotBlank() }
+                    ?: error("Summary response has no plain text.")
+                is ProviderCallResult.Failure -> error("Summary provider unavailable.")
+            }
+        }, state::appendSummary, ids, EpochMillisecondsClock { clock.nowEpochMillis() }, 1)
+        val protected = state.toolCalls(threadId).asSequence()
+            .filter { it.state == AgentToolCallState.PROPOSED || it.state == AgentToolCallState.WAITING_CONFIRMATION || it.state == AgentToolCallState.RUNNING }
+            .map { it.sourceMessageId }.toSet()
+        when (val compacted = compactor.compact(rawMessages, summary, protected,
+            CompactionPressure(rawDemand, ready.usedUnits, ready.maxInputUnits), config.id, config.model)) {
+            is ContextCompactionResult.Saved -> {
+                summary = compacted.summary
+                candidates = candidates()
+                assembled = assemble(candidates)
+                if (assembled is ContextAssemblyResult.ContextTooLarge) return AgentRunResult.Failed("CONTEXT_TOO_LARGE")
+            }
+            ContextCompactionResult.NotNeeded, is ContextCompactionResult.Failed -> Unit
+        }
         val selected = (assembled as ContextAssemblyResult.Ready).parts.map { it.id }.toSet()
         val messages = buildList {
             add(ProviderChatMessage("system", system))
             summary?.let { value ->
                 if ("summary:${value.id.value}" in selected) add(ProviderChatMessage("user", "Earlier, potentially stale summary: ${value.text}"))
             }
-            groups.forEachIndexed { index, pair -> if (index == currentGroup || index == latestToolGroup || index.toString() in selected) addAll(pair.second) }
+            groups.forEachIndexed { index, pair -> if (index == currentGroup || index == latestToolGroup || rawMessages[index].id.value in selected) addAll(pair.second) }
         }
         return when (val response = provider.complete(config, messages, tools)) {
             is ProviderCallResult.Failure -> AgentRunResult.Failed(response.redactedCode)

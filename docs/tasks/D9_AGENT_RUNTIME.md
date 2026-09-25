@@ -94,13 +94,19 @@ persisted ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
 covers proposal → local read → confirmation → Task/MutationId/history linkage,
 plus denial, stale preview, prose-only, unregistered Tool, failed capability
 probe, and stale-summary/current-fact ordering. It is still a narrow slice:
-remaining AGT-004 Tools, full history cursor support, compaction invocation, Android/Desktop composition,
+remaining AGT-004 Tools, full history cursor support, Android/Desktop composition,
 and full acceptance remain open. No synchronized Agent write is enabled in
 production before D8 runtime closure and device-local upgrade opt-in.
 The latest assistant ToolCall/matching ToolResult is mandatory in a resumed
 provider request. An oversized authoritative result now returns
 `CONTEXT_TOO_LARGE` before another provider call while retaining raw messages
 and ToolResults; the focused Room mock test passes.
+The bounded runtime now invokes AGT-010 compaction when measured eligible raw
+candidate demand exceeds the 25% class or the assembled prompt exceeds 80%
+of its input budget. Measuring demand before the class cap is necessary for
+the 25% trigger to be reachable. A saved summary replaces only covered raw
+messages in hot context; the Room mock verifies its source range and that
+both successful and failed summarization retain every raw message.
 
 ---
 
