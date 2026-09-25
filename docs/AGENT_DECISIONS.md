@@ -240,6 +240,12 @@ never appear in logs/ToolResult
 never get sent to another device through ordinary D8 sync
 ```
 
+A provider configured with a credential reference requires an HTTPS base URL;
+the adapter rejects plain HTTP before resolving that credential. Explicitly
+configured credential-free HTTP endpoints remain possible (for example a
+local model); the future UI must not imply that non-loopback HTTP protects
+prompt or schedule plaintext in transit.
+
 D9-03 Watch provisioning uses the separately encrypted `ProviderCredentialEnvelope` frozen by OD-042/SYN-018.
 
 ---

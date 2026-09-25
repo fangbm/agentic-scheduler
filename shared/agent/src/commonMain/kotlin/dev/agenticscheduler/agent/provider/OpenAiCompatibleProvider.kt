@@ -98,6 +98,9 @@ class OpenAiCompatibleProvider(
         streaming: Boolean = false,
     ): ProviderCallResult {
         if (messages.isEmpty()) return ProviderCallResult.Failure("EMPTY_TRANSCRIPT")
+        if (config.credentialReference != null && !config.baseUrl.startsWith("https://", ignoreCase = true)) {
+            return ProviderCallResult.Failure("INSECURE_CREDENTIAL_TRANSPORT")
+        }
         val credential = try {
             config.credentialReference?.let { credentials.resolve(it) }
         } catch (cancelled: CancellationException) {

@@ -65,6 +65,16 @@ class OpenAiCompatibleProviderTest {
         client.close()
     }
 
+    @Test fun `credential is never resolved or sent to plain HTTP endpoint`() = runBlocking {
+        var secretReads = 0
+        val client = HttpClient(MockEngine) { engine { addHandler { error("Network must not be used") } } }
+        val provider = OpenAiCompatibleProvider(client, ProviderCredentialResolver { secretReads++; "secret-token" })
+        val result = provider.complete(config().copy(baseUrl = "http://model.example/v1"), listOf(ProviderChatMessage("user", "Hello")), emptyList())
+        assertEquals(ProviderCallResult.Failure("INSECURE_CREDENTIAL_TRANSPORT"), result)
+        assertEquals(0, secretReads)
+        client.close()
+    }
+
     @Test fun `SSE tool deltas assemble by index before entering Agent history`() = runBlocking {
         val client = HttpClient(MockEngine) { engine { addHandler {
             respond(

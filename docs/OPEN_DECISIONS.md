@@ -416,6 +416,17 @@ Decision: Agent business mutations use inner payload v2 with
 Source: docs/AGENT_DECISIONS.md AGT-012/AGT-013
 ```
 
+## OD-056 — Provider credential transport
+
+```text
+Status: RESOLVED FOR D9-01
+Decision: a provider configuration with a credential reference requires
+          HTTPS. Reject plain HTTP before resolving the secret or sending
+          a request; credential-free explicitly configured HTTP endpoints
+          remain possible, with non-loopback plaintext risk shown in UI.
+Source: docs/AGENT_DECISIONS.md AGT-007
+```
+
 ---
 
 # UI
