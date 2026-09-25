@@ -17,6 +17,11 @@ import dev.agenticscheduler.agent.provider.*
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.editing.EditingResult
+import dev.agenticscheduler.application.calendar.CalendarItem
+import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
+import dev.agenticscheduler.application.calendar.CalendarProjectionResult
+import dev.agenticscheduler.application.calendar.CalendarSourceRef
+import dev.agenticscheduler.application.calendar.CalendarViewport
 import dev.agenticscheduler.application.persistence.HistoryChange
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.planning.Deadline
@@ -25,6 +30,8 @@ import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.TimeZone
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -51,6 +58,7 @@ class AgentRunService(
     private val taskList: TaskListTool? = null,
     private val historyReads: HistoryReadTools? = null,
     private val taskUpdate: TaskUpdateTool? = null,
+    private val calendarList: CalendarListTool? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
     private val transcripts = AgentTranscriptAssembler(state)
@@ -62,6 +70,7 @@ class AgentRunService(
     private val historyTimelineSchema = schema("""{"type":"object","properties":{"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["limit"],"additionalProperties":false}""")
     private val historyMutationSchema = schema("""{"type":"object","properties":{"mutationId":{"type":"string"}},"required":["mutationId"],"additionalProperties":false}""")
     private val historyEntitySchema = schema("""{"type":"object","properties":{"entityKind":{"type":"string"},"entityId":{"type":"string"},"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["entityKind","entityId","limit"],"additionalProperties":false}""")
+    private val calendarSchema = schema("""{"type":"object","properties":{"startDate":{"type":"string"},"endDateExclusive":{"type":"string"},"displayTimeZone":{"type":"string"}},"required":["startDate","endDateExclusive","displayTimeZone"],"additionalProperties":false}""")
 
     suspend fun createThread(): AgentThreadId = AgentThreadId(ids.next()).also { state.saveThread(AgentThread(it, null, clock.nowEpochMillis())) }
 
@@ -316,7 +325,7 @@ class AgentRunService(
                 else -> AgentRunResult.Failed("TOOL_PREVIEW_FAILURE")
             }
         }
-        if (call.name in setOf(AgentToolNames.TASK_GET, AgentToolNames.TASK_LIST, AgentToolNames.HISTORY_TIMELINE, AgentToolNames.HISTORY_GET_MUTATION, AgentToolNames.HISTORY_GET_ENTITY_CHANGES) &&
+        if (call.name in setOf(AgentToolNames.CALENDAR_LIST, AgentToolNames.TASK_GET, AgentToolNames.TASK_LIST, AgentToolNames.HISTORY_TIMELINE, AgentToolNames.HISTORY_GET_MUTATION, AgentToolNames.HISTORY_GET_ENTITY_CHANGES) &&
             state.permissionPolicy().modeFor(dev.agenticscheduler.agent.permission.AgentToolCapability.READ) != AgentPermissionMode.ALLOW_DIRECT) {
             finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "READ_NOT_ALLOWED", AgentActionStatus.DENIED)
             return AgentRunResult.Failed("READ_NOT_ALLOWED")
@@ -328,6 +337,22 @@ class AgentRunService(
                 AgentToolOutcome.NotFound -> AgentToolResultStatus.NOT_FOUND to "NOT_FOUND"
                 else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
             } } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
+                AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+            }
+            finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
+        if (call.name == AgentToolNames.CALENDAR_LIST && allowLocalRead && calendarList != null) {
+            val viewport = runCatching {
+                val input = json.decodeFromString(CalendarInput.serializer(), call.argumentsJson)
+                CalendarViewport(LocalDate.parse(input.startDate), LocalDate.parse(input.endDateExclusive), TimeZone.of(input.displayTimeZone))
+            }.getOrNull()
+            val result = if (viewport == null) AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT" else try {
+                when (val read = calendarList.execute(viewport)) {
+                    is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS to json.encodeToString(read.payload.toSnapshot())
+                    else -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
+                }
+            } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {
                 AgentToolResultStatus.INFRASTRUCTURE_FAILURE to "READ_FAILED"
             }
             finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
@@ -410,6 +435,7 @@ class AgentRunService(
     private suspend fun selectedConfig(): ProviderConfig? = state.selectedProviderConfigId()?.let { state.providerConfig(it) }
     private fun supportedTools() = buildList {
         add(ProviderToolDefinition(AgentToolNames.TASK_GET, "Read one Task by immutable ID", taskGetSchema))
+        if (calendarList != null) add(ProviderToolDefinition(AgentToolNames.CALENDAR_LIST, "Read calendar items in explicit date window and display timezone", calendarSchema))
         if (taskList != null) add(ProviderToolDefinition(AgentToolNames.TASK_LIST, "List Tasks with explicit optional status", taskListSchema))
         if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_TIMELINE, "Read authoritative mutation history", historyTimelineSchema))
         if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_GET_MUTATION, "Read one authoritative MutationId", historyMutationSchema))
@@ -429,6 +455,37 @@ class AgentRunService(
     private fun schema(value: String): JsonObject = Json.parseToJsonElement(value).jsonObject
 
     @Serializable private data class TaskGetInput(val taskId: String)
+    @Serializable private data class CalendarInput(val startDate: String, val endDateExclusive: String, val displayTimeZone: String)
+    @Serializable private data class CalendarSnapshot(
+        val items: List<CalendarItemSnapshot>, val conflicts: List<CalendarConflictSnapshot>, val issues: List<CalendarIssueSnapshot>,
+    )
+    @Serializable private data class CalendarItemSnapshot(
+        val source: CalendarSourceSnapshot, val title: String, val timeKind: String,
+        val start: String, val endExclusive: String?, val timeZone: String?,
+    )
+    @Serializable private data class CalendarSourceSnapshot(val kind: String, val id: String, val academicWeekNumber: Int? = null)
+    @Serializable private data class CalendarConflictSnapshot(val first: CalendarSourceSnapshot, val second: CalendarSourceSnapshot)
+    @Serializable private data class CalendarIssueSnapshot(val code: String, val reference: String, val detail: String)
+    private fun CalendarProjectionResult.toSnapshot() = CalendarSnapshot(
+        items.map { item -> when (item) {
+            is CalendarItem.Zoned -> CalendarItemSnapshot(item.source.toSnapshot(), item.title, "ZONED", item.originalRange.start.toString(), item.originalRange.endExclusive.toString(), item.originalRange.timeZone.id)
+            is CalendarItem.AllDay -> CalendarItemSnapshot(item.source.toSnapshot(), item.title, "ALL_DAY", item.range.startDate.toString(), item.range.endDateExclusive.toString(), null)
+            is CalendarItem.Floating -> CalendarItemSnapshot(item.source.toSnapshot(), item.title, "FLOATING", item.range.start.toString(), item.range.endExclusive.toString(), null)
+            is CalendarItem.DateOnly -> CalendarItemSnapshot(item.source.toSnapshot(), item.title, "DATE_ONLY", item.date.toString(), null, null)
+        } },
+        conflicts.map { CalendarConflictSnapshot(it.first.toSnapshot(), it.second.toSnapshot()) },
+        issues.map { issue -> when (issue) {
+            is CalendarProjectionIssue.AcademicResolution -> CalendarIssueSnapshot("ACADEMIC_RESOLUTION", issue.courseId.value, issue.issue.toString())
+            is CalendarProjectionIssue.MissingSemester -> CalendarIssueSnapshot("MISSING_SEMESTER", issue.courseId.value, issue.semesterId.value)
+            is CalendarProjectionIssue.SyncConflictUnprojectable -> CalendarIssueSnapshot("SYNC_CONFLICT_UNPROJECTABLE", issue.conflictIds.joinToString(","), issue.reason)
+        } },
+    )
+    private fun CalendarSourceRef.toSnapshot(): CalendarSourceSnapshot = when (this) {
+        is CalendarSourceRef.Event -> CalendarSourceSnapshot("EVENT", id.value)
+        is CalendarSourceRef.FocusBlock -> CalendarSourceSnapshot("FOCUS_BLOCK", id.value)
+        is CalendarSourceRef.Exam -> CalendarSourceSnapshot("EXAM", id.value)
+        is CalendarSourceRef.CourseSession -> CalendarSourceSnapshot("COURSE_SESSION", key.scheduleRuleId.value, key.academicWeekNumber.value)
+    }
     @Serializable private data class TaskListInput(val status: String?)
     @Serializable private data class TimelineInput(val limit: Int?)
     @Serializable private data class MutationInput(val mutationId: String)

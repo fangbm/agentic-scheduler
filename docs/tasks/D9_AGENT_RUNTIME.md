@@ -87,10 +87,10 @@ history. The Room test shows provider/model switching preserves the same
 thread and transcript.
 
 A bounded application-owned Agent run now composes the provider with an
-explicit `task.get`, `task.list`, `history.timeline`,
-`history.getMutation`, `history.getEntityChanges`, and `task.create`
-registry, deterministic context budget, and
-persisted ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
+explicit `calendar.list`, `task.get`, `task.list`, `history.timeline`,
+`history.getMutation`, `history.getEntityChanges`, `task.create`, and
+`task.update` registry, deterministic context budget, and persisted
+ToolCall/ToolResult/AgentAction records. Its local Ktor mock test
 covers proposal → local read → confirmation → Task/MutationId/history linkage,
 plus denial, stale preview, prose-only, unregistered Tool, failed capability
 probe, and stale-summary/current-fact ordering. It is still a narrow slice:
@@ -107,6 +107,10 @@ of its input budget. Measuring demand before the class cap is necessary for
 the 25% trigger to be reachable. A saved summary replaces only covered raw
 messages in hot context; the Room mock verifies its source range and that
 both successful and failed summarization retain every raw message.
+`calendar.list` now requires an explicit date window and display timezone,
+uses the existing application projection, and serializes Zoned/AllDay/
+Floating/DateOnly items plus conflict/issue facts as JSON. Its local provider
+mock verifies an all-day item and that the read emits no mutation.
 
 ---
 
