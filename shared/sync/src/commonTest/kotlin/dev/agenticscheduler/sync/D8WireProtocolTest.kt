@@ -3,6 +3,7 @@ package dev.agenticscheduler.sync
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFailsWith
 
 class D8WireProtocolTest {
     @Test fun `v1 envelope and payload use frozen fixtures`() {
@@ -31,8 +32,18 @@ class D8WireProtocolTest {
 
     @Test fun `unknown inner payload version or mutation rejects the whole operation`() {
         val payload = SyncWireCodec.encodePayload(SyncPayloadV1(operation = operation()))
-        assertEquals(2, assertIs<PayloadDecodeResult.UnsupportedVersion>(SyncWireCodec.decodePayload(payload.replace("\"payloadVersion\":1", "\"payloadVersion\":2"))).actual)
+        assertEquals(3, assertIs<PayloadDecodeResult.UnsupportedVersion>(SyncWireCodec.decodePayload(payload.replace("\"payloadVersion\":1", "\"payloadVersion\":3"))).actual)
         assertEquals("FutureMutation", assertIs<PayloadDecodeResult.UnsupportedMutation>(SyncWireCodec.decodePayload(payload.replace("\"type\":\"EventPut\"", "\"type\":\"FutureMutation\""))).discriminator)
+    }
+
+    @Test fun `agent origin has frozen v2 fixture and cannot be down encoded`() {
+        val agent = operation().copy(origin = MutationOrigin.Agent("00000000-0000-7000-8000-000000000004"))
+        val expected = """{"payloadVersion":2,"operation":{"mutationId":"00000000-0000-7000-8000-000000000001","dvv":{"context":[],"dot":{"replicaId":"00000000-0000-7000-8000-000000000002","counter":1}},"hlc":{"physicalMillis":100,"logical":0,"replicaId":"00000000-0000-7000-8000-000000000002"},"origin":{"type":"AGENT","agentActionId":"00000000-0000-7000-8000-000000000004"},"orderedMutations":[{"type":"EventPut","before":null,"after":{"id":"00000000-0000-7000-8000-000000000003","title":"Read","time":{"type":"ALL_DAY","dates":{"startDate":"2026-01-01","endDateExclusive":"2026-01-02"}},"flexibility":"HARD","pinState":"UNPINNED"},"entityKind":"EVENT"}]}}"""
+        assertEquals(expected, SyncWireCodec.encodePayload(SyncPayloadV2(operation = agent)))
+        assertEquals(DecodedSyncPayload(2, agent), assertIs<PayloadDecodeResult.Supported>(SyncWireCodec.decodePayload(expected)).payload)
+        assertFailsWith<IllegalArgumentException> { SyncWireCodec.encodePayload(SyncPayloadV1(operation = agent)) }
+        assertIs<PayloadDecodeResult.UnsupportedMutation>(SyncWireCodec.decodePayload(expected.replace("\"payloadVersion\":2", "\"payloadVersion\":1")))
+        assertIs<PayloadDecodeResult.Invalid>(SyncWireCodec.decodePayload(expected.replace("\"type\":\"AGENT\"", "\"type\":\"USER\"")))
     }
 
     private fun operation() = SyncOperation(

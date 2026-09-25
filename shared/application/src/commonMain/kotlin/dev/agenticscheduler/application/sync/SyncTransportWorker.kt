@@ -8,6 +8,8 @@ import dev.agenticscheduler.application.persistence.SyncReceiveRepository
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.SyncPayloadV1
+import dev.agenticscheduler.sync.SyncPayloadV2
+import dev.agenticscheduler.sync.MutationOrigin
 import dev.agenticscheduler.sync.SyncSpaceId
 
 sealed interface SyncUploadResult {
@@ -62,10 +64,15 @@ class SyncTransportWorker(
             val existing = outbound.envelope(syncSpaceId, operation.mutationId)
             val stored = existing ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {
                 CurrentEncryptionKeyLookup.Missing -> return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Missing active content key."))
-                is CurrentEncryptionKeyLookup.Available -> when (val encrypted = codec.encrypt(
-                    SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
-                    SyncPayloadV1(operation = operation),
-                )) {
+                is CurrentEncryptionKeyLookup.Available -> when (val encrypted =
+                    if (operation.origin is MutationOrigin.Agent) codec.encrypt(
+                        SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
+                        SyncPayloadV2(operation = operation),
+                    ) else codec.encrypt(
+                        SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
+                        SyncPayloadV1(operation = operation),
+                    )
+                ) {
                     is EncryptSyncPayloadResult.Encrypted -> {
                         val value = StoredOutboundEnvelope(syncSpaceId, operation.mutationId, encrypted.envelope, false)
                         outbound.save(value)

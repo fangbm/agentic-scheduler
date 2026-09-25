@@ -34,6 +34,9 @@ sealed interface MutationOrigin {
     @Serializable @SerialName("USER") data object User : MutationOrigin
     @Serializable @SerialName("PLANNER") data object Planner : MutationOrigin
     @Serializable @SerialName("SYSTEM") data object System : MutationOrigin
+    @Serializable @SerialName("AGENT") data class Agent(val agentActionId: String) : MutationOrigin {
+        init { MutationId(agentActionId) }
+    }
     /** SYN-015A explicit cross-replica conflict-resolution intent. */
     @Serializable @SerialName("CONFLICT_RESOLUTION")
     data class ConflictResolution(val conflictId: String) : MutationOrigin {

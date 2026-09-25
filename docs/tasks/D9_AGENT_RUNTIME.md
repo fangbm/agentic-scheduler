@@ -34,8 +34,10 @@ tests pass. Provider orchestration, context, remaining Tools, audit write flow,
 and Android/Desktop surfaces remain open.
 
 The deterministic ContextAssembler and incremental compaction selector/service
-are now implemented and pass shared desktop tests. Full provider orchestration,
-Tool writes, AgentAction execution, and UI acceptance remain open.
+are now implemented and pass shared desktop tests. Agent-origin business
+mutations now have an inner payload v2 codec and frozen fixture; sync unit
+tests pass. Full provider orchestration, Tool writes, AgentAction execution,
+and UI acceptance remain open.
 
 ---
 
@@ -229,17 +231,24 @@ Create AgentAction before/around execution so failures are also auditable, then 
 
 A committed write ToolResult references MutationId and AgentAction records that reference. D7 mutation origin uses `AGENT(agentActionId)`.
 
+Agent-origin business mutations use inner payload v2 inside the unchanged D8
+outer envelope. V1 is retained for non-Agent origins. Existing D8 clients
+quarantine v2 whole operations; D9-01 must not emit one to a SyncSpace unless
+the device-local, user-owned all-devices-upgraded opt-in is enabled. The
+setting defaults off and is not exposed to Agent Tools. Local-only Agent
+writes remain subject to normal confirmation and validation rules.
+
 Do not copy provider secrets or complete system prompts into AgentAction.
 
 ---
 
 # 13. D9-02 sync amendment
 
-After D9-01 local behavior is stable:
+After D9-01 local behavior is stable, extend sync for conversation/history:
 
 ```text
-extend inner SyncPayload protocol version
-add Agent typed operation discriminators
+use a separately versioned Agent conversation/history operation contract
+add Agent history typed operation discriminators
 add Agent semantic merge/tombstone rules from AGT-013
 add migration/compatibility fixtures
 verify older D8 clients quarantine unknown Agent operations safely
