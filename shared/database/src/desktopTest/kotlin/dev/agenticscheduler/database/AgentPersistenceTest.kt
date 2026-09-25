@@ -4,9 +4,16 @@ import androidx.room3.testing.MigrationTestHelper
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import dev.agenticscheduler.agent.history.*
 import dev.agenticscheduler.agent.permission.AgentPermissionPolicy
+import dev.agenticscheduler.agent.permission.AgentSyncWriteGate
+import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
+import dev.agenticscheduler.application.sync.LocalEnrollmentState
 import dev.agenticscheduler.application.sync.SecretReference
 import dev.agenticscheduler.database.repository.RoomAgentStateRepository
 import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.AccountId
+import dev.agenticscheduler.sync.DeviceId
+import dev.agenticscheduler.sync.EnrollmentRequestId
+import dev.agenticscheduler.sync.HpkePublicKeyBase64Url
 import dev.agenticscheduler.sync.SyncSpaceId
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
@@ -85,6 +92,42 @@ class AgentPersistenceTest {
             upgraded.prepare("SELECT thread_id FROM agent_thread").use { statement -> assertFalse(statement.step()) }
         } finally {
             upgraded.close()
+        }
+    }
+
+    @Test fun `Agent sync write gate defaults closed for active space and follows local opt in`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            val agentState = RoomAgentStateRepository(database)
+            val accountId = AccountId("personal-account")
+            val space = SyncSpaceId("personal-space")
+            val enrollment = object : LocalEnrollmentRepository {
+                var current: LocalEnrollmentState? = null
+                override suspend fun state(accountId: AccountId) = current
+                override suspend fun savePending(value: LocalEnrollmentState.Pending) { current = value }
+                override suspend fun saveActive(value: LocalEnrollmentState.Active) { current = value }
+            }
+            val gate = AgentSyncWriteGate(accountId, enrollment, agentState)
+            assertTrue(gate.mayCommit()) // No enrolled SyncSpace: local-only write.
+            assertFalse(gate.enabled(space))
+
+            enrollment.saveActive(LocalEnrollmentState.Active(
+                accountId, DeviceId("desktop"), EnrollmentRequestId("request"),
+                HpkePublicKeyBase64Url("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+                SecretReference("secure://hpke"), space,
+                SecretReference("secure://amk"), SecretReference("secure://credential"),
+            ))
+            assertFalse(gate.mayCommit())
+            assertFalse(gate.enabled(space))
+            agentState.setSyncAgentOriginEnabled(space, true)
+            assertTrue(gate.mayCommit())
+            assertTrue(gate.enabled(space))
+            assertFalse(gate.enabled(SyncSpaceId("other-space")))
+            agentState.setSyncAgentOriginEnabled(space, false)
+            assertFalse(gate.mayCommit())
+            assertFalse(gate.enabled(space))
+        } finally {
+            database.close()
         }
     }
 

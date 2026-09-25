@@ -242,6 +242,10 @@ incremental compaction checks now pass on the D9 branch.
 Agent-origin business writes now have a v2 inner payload fixture and sync
 codec tests; this is not authorization to activate synchronized Agent writes
 before the default-off all-devices-upgraded opt-in and D8 runtime gate.
+The D9 branch now has explicit editing MutationIds and a default-deny Agent
+mutation gate; enrolled writes still need trusted runtime composition and
+confirmation revalidation. The outbound worker separately blocks Agent v2
+upload without the same opt-in. D7 history reads are exposed as internal Tools.
 
 Frozen D9-01 baseline:
 
