@@ -8,14 +8,15 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Serializes production catch-up requests from app start, committed local
- * mutations, and explicit lifecycle/network retry signals.
+ * mutations, and explicit lifecycle/network retry signals. The initial value
+ * from the same distinct revision subscription also requests startup catch-up,
+ * so commits made before collection begins are included.
  *
  * The observed revision is backed by committed outbound-eligible journal rows,
  * so receive-only writes do not recursively schedule uploads. Network failures
@@ -33,18 +34,16 @@ class ActiveSyncCatchUpTrigger(
     private var runner: Job? = null
     private var started = false
 
-    /** Starts one worker, observes commits, and requests an initial catch-up. */
+    /** Starts one worker and observes revisions, including the initial revision. */
     fun start() {
         check(!started) { "Active sync catch-up trigger has already started." }
         started = true
         runner = scope.launch { runRequests() }
         observer = scope.launch {
             committedOutboundMutationRevision
-                .drop(1)
                 .distinctUntilChanged()
                 .collect { requestCatchUp() }
         }
-        requestCatchUp()
     }
 
     /** Safe to call on foreground entry or a platform network-available signal. */

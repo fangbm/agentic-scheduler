@@ -7,6 +7,8 @@ import dev.agenticscheduler.database.repository.RoomLocalEnrollmentRepository
 import dev.agenticscheduler.database.repository.RoomSyncReceiveRepository
 import dev.agenticscheduler.database.repository.RoomSyncKeyMetadataRepository
 import dev.agenticscheduler.database.repository.RoomD8RuntimeComposition
+import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
+import dev.agenticscheduler.application.history.ConflictProjection
 import dev.agenticscheduler.sync.*
 import java.io.File
 import kotlinx.coroutines.runBlocking
@@ -16,25 +18,27 @@ import kotlin.test.assertIs
 
 class ActiveSyncRuntimeActivationTest {
     @Test
-    fun `missing credential keeps active enrollment conflict guard while no enrollment stays local`() = runBlocking {
-        val databaseFile = File.createTempFile("agentic-d8-activation-", ".db")
-        val store = DesktopPlatformSecureStore(MemoryBackend(), TinkPairingHpke())
-        val database = openDesktopDatabase(databaseFile.absolutePath)
-        val account = AccountId("activation-account")
-        val space = SyncSpaceId("activation-space")
-        try {
-            val hpke = store.generatePairingDeviceKey()
-            val credential = store.generate()
-            val amk = store.generateAccountMasterKey()
-            val contentKey = store.generateContentKey()
-            RoomSyncKeyMetadataRepository(database).installNewEpoch(
-                space,
-                7,
-                contentKey.reference,
-                contentKey.identity,
-            )
-            RoomLocalEnrollmentRepository(database).saveActive(
-                LocalEnrollmentState.Active(
+    fun `missing credential and deactivation retain active enrollment conflict boundaries`() {
+        runBlocking<Unit> {
+            val databaseFile = File.createTempFile("agentic-d8-activation-", ".db")
+            val store = DesktopPlatformSecureStore(MemoryBackend(), TinkPairingHpke())
+            val database = openDesktopDatabase(databaseFile.absolutePath)
+            val account = AccountId("activation-account")
+            val space = SyncSpaceId("activation-space")
+            var localRuntime: RoomD8RuntimeComposition? = null
+            var runtime: RoomD8RuntimeComposition? = null
+            try {
+                val hpke = store.generatePairingDeviceKey()
+                val credential = store.generate()
+                val amk = store.generateAccountMasterKey()
+                val contentKey = store.generateContentKey()
+                RoomSyncKeyMetadataRepository(database).installNewEpoch(
+                    space,
+                    7,
+                    contentKey.reference,
+                    contentKey.identity,
+                )
+                val enrollment = LocalEnrollmentState.Active(
                     account,
                     DeviceId("activation-device"),
                     EnrollmentRequestId("activation-enrollment"),
@@ -43,46 +47,83 @@ class ActiveSyncRuntimeActivationTest {
                     space,
                     amk,
                     credential.reference,
-                ),
-            )
-            store.delete(credential.reference)
+                )
+                val enrollmentRepository = RoomLocalEnrollmentRepository(database)
+                enrollmentRepository.saveActive(enrollment)
+                store.delete(credential.reference)
 
-            val conflicted = event("conflicted-event", "before")
-            RoomSyncReceiveRepository(database).saveConflict(conflict(conflicted))
-            val runtime = RoomD8RuntimeComposition(
-                database,
-                store,
-                TinkPairingHpke(),
-                productionUuidV7Generator(),
-                MutationWallClock { 1L },
-            )
+                val conflicted = event("conflicted-event", "before")
+                RoomSyncReceiveRepository(database).saveConflict(conflict(conflicted))
+                val activeAccountRuntime = RoomD8RuntimeComposition(
+                    database,
+                    store,
+                    TinkPairingHpke(),
+                    productionUuidV7Generator(),
+                    MutationWallClock { 1L },
+                )
+                runtime = activeAccountRuntime
 
-            assertIs<ActiveSyncRuntimeCreation.MissingDeviceCredential>(
-                runtime.activate(ActiveSyncRuntimeConfiguration(account, "https://sync.example")),
-            )
-            assertEquals(
-                listOf("title"),
-                runtime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "edited"))))
-                    .single().blockedGroups,
-            )
-            assertEquals(
-                emptyList(),
-                runtime.writePolicy.blocks(listOf(EventPut(null, event("unrelated-event", "new")))),
-            )
+                assertIs<ActiveSyncRuntimeCreation.MissingDeviceCredential>(
+                    activeAccountRuntime.activate(ActiveSyncRuntimeConfiguration(account, "https://sync.example")),
+                )
+                assertEquals(
+                    listOf("title"),
+                    activeAccountRuntime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "edited"))))
+                        .single().blockedGroups,
+                )
+                assertEquals(
+                    emptyList(),
+                    activeAccountRuntime.writePolicy.blocks(listOf(EventPut(null, event("unrelated-event", "new")))),
+                )
+                assertConflictProjection(activeAccountRuntime.sourceFacts, conflicted)
 
-            assertIs<ActiveSyncRuntimeCreation.NoEnrollment>(
-                runtime.activate(
-                    ActiveSyncRuntimeConfiguration(AccountId("local-only-account"), "https://sync.example"),
-                ),
-            )
-            assertEquals(
-                emptyList(),
-                runtime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "local edit")))),
-            )
-            runtime.deactivate()
-        } finally {
-            databaseFile.delete()
+                // A separate local-only composition remains local without clearing
+                // the configured account's durable conflict boundary.
+                val localOnlyRuntime = RoomD8RuntimeComposition(
+                    database,
+                    store,
+                    TinkPairingHpke(),
+                    productionUuidV7Generator(),
+                    MutationWallClock { 1L },
+                )
+                localRuntime = localOnlyRuntime
+                assertIs<ActiveSyncRuntimeCreation.NoEnrollment>(
+                    localOnlyRuntime.activate(
+                        ActiveSyncRuntimeConfiguration(AccountId("local-only-account"), "https://sync.example"),
+                    ),
+                )
+                assertEquals(
+                    emptyList(),
+                    localOnlyRuntime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "local edit")))),
+                )
+
+                val replacementCredential = store.generate()
+                enrollmentRepository.saveActive(enrollment.copy(deviceCredentialReference = replacementCredential.reference))
+                assertIs<ActiveSyncRuntimeCreation.Active>(
+                    activeAccountRuntime.activate(ActiveSyncRuntimeConfiguration(account, "https://sync.example")),
+                )
+                activeAccountRuntime.deactivate()
+                assertConflictProjection(activeAccountRuntime.sourceFacts, conflicted)
+                assertEquals(
+                    listOf("title"),
+                    activeAccountRuntime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "after deactivation"))))
+                        .single().blockedGroups,
+                )
+            } finally {
+                localRuntime?.deactivate()
+                runtime?.deactivate()
+                databaseFile.delete()
+            }
         }
+    }
+
+    private suspend fun assertConflictProjection(
+        sourceFacts: ConflictAwareSourceFactQuery,
+        durable: EventImage,
+    ) {
+        val projection = assertIs<ConflictProjection.Projected>(sourceFacts.project(EventPut(null, durable)))
+        assertEquals("remote", assertIs<EventPut>(projection.mutation).after.title)
+        assertEquals(listOf("activation-conflict-${durable.id}"), projection.openConflictIds)
     }
 
     private fun event(id: String, title: String) = EventImage(

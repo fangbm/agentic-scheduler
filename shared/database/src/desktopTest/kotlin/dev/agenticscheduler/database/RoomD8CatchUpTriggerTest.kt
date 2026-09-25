@@ -34,7 +34,57 @@ import kotlin.test.assertIs
 
 class RoomD8CatchUpTriggerTest {
     @Test
-    fun `committed local mutation schedules serialized catch-up and explicit retry is callable`() = kotlinx.coroutines.runBlocking {
+    fun `initial revision emission catches up mutations committed before first collection`(): Unit {
+        kotlinx.coroutines.runBlocking {
+        val databaseFile = File.createTempFile("agentic-d8-trigger-initial-", ".db")
+        val database = openDesktopDatabase(databaseFile.absolutePath)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val calls = Channel<Unit>(Channel.UNLIMITED)
+        val ids = productionUuidV7Generator()
+        val coordinator = MutationCoordinator(
+            RoomApplicationTransactionRunner(database),
+            RoomMutationJournalRepository(database),
+            ids,
+            MutationWallClock { 100L },
+        )
+        val taskEditor = TaskEditingService(
+            RoomTaskRepository(database),
+            ids,
+            coordinator,
+            NoActiveSyncSpaceWritePolicy,
+        )
+        val trigger = ActiveSyncCatchUpTrigger(
+            scope = scope,
+            committedOutboundMutationRevision = database.mutationJournalDao().observeOutboundMutationRevision(),
+            catchUp = {
+                calls.send(Unit)
+                ActiveSyncRuntimeCatchUpResult.Completed(emptyList(), SyncTransportRunResult(0, 0, 0))
+            },
+        )
+
+        try {
+            assertIs<EditingResult.Success<*>>(
+                taskEditor.create(CreateTaskInput("Committed before subscription", TaskPriority.NORMAL, null, null, null)),
+            )
+
+            trigger.start()
+
+            // The initial value of the single revision subscription is the
+            // startup signal; it must include rows committed before collection.
+            withTimeout(5_000) { calls.receive() }
+            assertEquals(null, withTimeoutOrNull(300) { calls.receive() })
+        } finally {
+            trigger.close()
+            scope.cancel()
+            database.close()
+            databaseFile.delete()
+        }
+        }
+    }
+
+    @Test
+    fun `committed local mutation schedules serialized catch-up and explicit retry is callable`(): Unit {
+        kotlinx.coroutines.runBlocking {
         val databaseFile = File.createTempFile("agentic-d8-trigger-", ".db")
         val database = openDesktopDatabase(databaseFile.absolutePath)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -111,10 +161,12 @@ class RoomD8CatchUpTriggerTest {
             database.close()
             databaseFile.delete()
         }
+        }
     }
 
     @Test
-    fun `receive-only journal rows do not trigger outbound catch-up`() = kotlinx.coroutines.runBlocking {
+    fun `receive-only journal rows do not trigger outbound catch-up`(): Unit {
+        kotlinx.coroutines.runBlocking {
         val databaseFile = File.createTempFile("agentic-d8-trigger-inbound-", ".db")
         val database = openDesktopDatabase(databaseFile.absolutePath)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -150,6 +202,7 @@ class RoomD8CatchUpTriggerTest {
             scope.cancel()
             database.close()
             databaseFile.delete()
+        }
         }
     }
 }
