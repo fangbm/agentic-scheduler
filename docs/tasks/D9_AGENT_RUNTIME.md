@@ -49,6 +49,12 @@ Focused application/database gate tests pass. Structured D7 history
 read Tools are implemented. This is infrastructure, not a completed Agent
 write/confirmation flow.
 
+The first Ktor OpenAI-compatible adapter now has a strict structured
+tool-calling capability probe, request-time secure-store credential resolution,
+redacted failures, preservation of assistant ToolCall/tool-result transcript
+messages, and SSE delta assembly. Focused mock-provider desktop tests pass.
+The adapter is not yet wired into a persistent Agent run or either UI.
+
 ---
 
 # 2. Required reading

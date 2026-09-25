@@ -18,7 +18,8 @@ kotlin {
         commonMain.dependencies {
             api(project(":shared:application"))
             api(libs.kotlinx.serialization.json)
+            implementation(libs.ktor.client.core)
         }
-        commonTest.dependencies { implementation(kotlin("test")) }
+        commonTest.dependencies { implementation(kotlin("test")); implementation(libs.ktor.client.mock) }
     }
 }
