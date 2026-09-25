@@ -155,6 +155,7 @@ class RotationKeyPackageTest {
         var value: LocalEnrollmentState = initial
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? =
             value.takeIf { it.accountId == accountId }
+        override suspend fun states(): List<LocalEnrollmentState> = listOf(value)
         override suspend fun savePending(value: LocalEnrollmentState.Pending) { error("Not used") }
         override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
     }

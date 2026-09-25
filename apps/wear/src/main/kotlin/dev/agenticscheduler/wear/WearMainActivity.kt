@@ -15,8 +15,8 @@ import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
-import dev.agenticscheduler.application.calendar.CalendarQueryService
 import dev.agenticscheduler.application.calendar.CalendarViewport
+import dev.agenticscheduler.application.history.ConflictAwareRead
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
 import dev.agenticscheduler.application.calendar.intersectsLocalDate
 import dev.agenticscheduler.application.id.productionUuidV7Generator
@@ -32,6 +32,7 @@ import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.database.repository.RoomD8RuntimeComposition
+import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.sync.AccountId
 import kotlinx.collections.immutable.toImmutableList
 import kotlin.time.Clock
@@ -63,7 +64,7 @@ class WearMainActivity : ComponentActivity() {
     private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
     private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
-    private val calendarQueryService: CalendarQueryService by lazy {
+    private val calendarQueryService: ConflictAwareSourceFactReadService by lazy {
         ConflictAwareSourceFactReadService(
             RoomEventRepository(database),
             RoomTaskRepository(database),
@@ -100,6 +101,7 @@ class WearMainActivity : ComponentActivity() {
                         }
                         ActiveSyncRuntimeCreation.NoEnrollment -> d8StartupState.value = D8StartupState.Ready
                         ActiveSyncRuntimeCreation.EnrollmentNotActive,
+                        is ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch,
                         is ActiveSyncRuntimeCreation.MissingDeviceCredential,
                         -> d8StartupState.value = D8StartupState.Blocked
                     }
@@ -176,7 +178,7 @@ class WearMainActivity : ComponentActivity() {
 private enum class D8StartupState { Activating, Ready, Blocked }
 
 @androidx.compose.runtime.Composable
-private fun WearAgenda(service: CalendarQueryService) {
+private fun WearAgenda(service: ConflictAwareSourceFactReadService) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     val today = Clock.System.now().toLocalDateTime(displayTimeZone).date
     val viewport = remember(today, displayTimeZone) {
@@ -184,11 +186,21 @@ private fun WearAgenda(service: CalendarQueryService) {
     }
     val projection = remember(service, viewport) { service.observe(viewport) }
     val result by projection.collectAsState(emptyProjection())
+    val taskRead by remember(service) { service.observeTasks() }.collectAsState(
+        ConflictAwareRead.Projected(emptyList<Task>().toImmutableList()),
+    )
     val todayItems = result.items.filter { it.intersectsLocalDate(today, displayTimeZone) }.take(3)
     val upcomingItems = result.items.filterNot { it.intersectsLocalDate(today, displayTimeZone) }.take(3)
     val todayText = todayItems.joinToString { it.title }.ifEmpty { "None" }
     val upcomingText = upcomingItems.joinToString { it.title }.ifEmpty { "None" }
-    Text("Today\n$todayText\nUpcoming\n$upcomingText${if (result.conflicts.isNotEmpty()) "\nConflict" else ""}")
+    val taskSyncConflictRefs = (taskRead as? ConflictAwareRead.Projected<*>)?.syncConflictRefs.orEmpty()
+    val syncConflictCount = (result.syncConflictRefs + taskSyncConflictRefs)
+        .flatMap { it.conflictIds }
+        .distinct()
+        .size
+    val calendarOverlap = if (result.conflicts.isNotEmpty()) "\nCalendar overlaps: ${result.conflicts.size}" else ""
+    val syncConflicts = if (syncConflictCount > 0) "\nSync conflicts: $syncConflictCount" else ""
+    Text("Today\n$todayText\nUpcoming\n$upcomingText$calendarOverlap$syncConflicts")
 }
 
 private fun emptyProjection() = CalendarProjectionResult(

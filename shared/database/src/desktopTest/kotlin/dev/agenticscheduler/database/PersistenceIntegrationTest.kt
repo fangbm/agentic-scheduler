@@ -585,6 +585,7 @@ class PersistenceIntegrationTest {
         )
         val failingLocal = object : dev.agenticscheduler.application.sync.LocalEnrollmentRepository {
             override suspend fun state(accountId: dev.agenticscheduler.sync.AccountId) = local.state(accountId)
+            override suspend fun states() = local.states()
             override suspend fun savePending(value: dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending) = local.savePending(value)
             override suspend fun saveActive(value: dev.agenticscheduler.application.sync.LocalEnrollmentState.Active): Nothing = error("active metadata write failed")
         }

@@ -87,15 +87,15 @@ class ActiveSyncRuntimeActivationTest {
                     MutationWallClock { 1L },
                 )
                 localRuntime = localOnlyRuntime
-                assertIs<ActiveSyncRuntimeCreation.NoEnrollment>(
+                val mismatch = assertIs<ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch>(
                     localOnlyRuntime.activate(
                         ActiveSyncRuntimeConfiguration(AccountId("local-only-account"), "https://sync.example"),
                     ),
                 )
-                assertEquals(
-                    emptyList(),
-                    localOnlyRuntime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "local edit")))),
-                )
+                assertEquals(AccountId("local-only-account"), mismatch.configuredAccountId)
+                assertEquals(listOf(account), mismatch.activeAccountIds)
+                assertAccountMismatch { localOnlyRuntime.writePolicy.blocks(listOf(EventPut(conflicted, conflicted.copy(title = "local edit")))) }
+                assertAccountMismatch { localOnlyRuntime.sourceFacts.project(EventPut(null, conflicted)) }
 
                 val replacementCredential = store.generate()
                 enrollmentRepository.saveActive(enrollment.copy(deviceCredentialReference = replacementCredential.reference))
@@ -124,6 +124,15 @@ class ActiveSyncRuntimeActivationTest {
         val projection = assertIs<ConflictProjection.Projected>(sourceFacts.project(EventPut(null, durable)))
         assertEquals("remote", assertIs<EventPut>(projection.mutation).after.title)
         assertEquals(listOf("activation-conflict-${durable.id}"), projection.openConflictIds)
+    }
+
+    private suspend fun assertAccountMismatch(block: suspend () -> Unit) {
+        try {
+            block()
+            error("Expected account mismatch to fail closed.")
+        } catch (_: ActiveSyncRuntimeAccountMismatchException) {
+            // The runtime must surface the mismatch rather than expose local-only behavior.
+        }
     }
 
     private fun event(id: String, title: String) = EventImage(

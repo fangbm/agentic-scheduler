@@ -46,6 +46,8 @@ sealed interface LocalEnrollmentState {
 /** Application port for the non-secret local enrollment metadata. */
 interface LocalEnrollmentRepository {
     suspend fun state(accountId: AccountId): LocalEnrollmentState?
+    /** One durable snapshot, so another ACTIVE account cannot masquerade as local-only. */
+    suspend fun states(): List<LocalEnrollmentState>
     suspend fun savePending(value: LocalEnrollmentState.Pending)
     suspend fun saveActive(value: LocalEnrollmentState.Active)
 }

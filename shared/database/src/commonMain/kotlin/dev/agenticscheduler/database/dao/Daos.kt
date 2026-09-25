@@ -54,6 +54,7 @@ import kotlinx.coroutines.flow.Flow
     @Upsert suspend fun saveQuarantine(value: ProtocolQuarantineRecord)
     @Query("SELECT * FROM sync_conflict WHERE conflict_id = :conflictId") suspend fun conflict(conflictId: String): SyncConflictRecord?
     @Query("SELECT * FROM sync_conflict WHERE sync_space_id = :syncSpaceId ORDER BY conflict_id ASC") suspend fun conflicts(syncSpaceId: String): List<SyncConflictRecord>
+    @Query("SELECT * FROM sync_conflict WHERE sync_space_id = :syncSpaceId ORDER BY conflict_id ASC") fun observeConflicts(syncSpaceId: String): Flow<List<SyncConflictRecord>>
     @Upsert suspend fun saveConflict(value: SyncConflictRecord)
 }
 
@@ -73,5 +74,6 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao interface LocalPairingEnrollmentDao {
     @Query("SELECT * FROM local_pairing_enrollment WHERE account_id = :accountId") suspend fun state(accountId: String): LocalPairingEnrollmentRecord?
+    @Query("SELECT * FROM local_pairing_enrollment ORDER BY account_id ASC") suspend fun states(): List<LocalPairingEnrollmentRecord>
     @Upsert suspend fun save(value: LocalPairingEnrollmentRecord)
 }

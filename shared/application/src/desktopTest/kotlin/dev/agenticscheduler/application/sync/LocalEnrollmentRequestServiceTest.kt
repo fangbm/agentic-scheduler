@@ -49,12 +49,14 @@ class LocalEnrollmentRequestServiceTest {
     private class MemoryEnrollments : LocalEnrollmentRepository {
         private var value: LocalEnrollmentState? = null
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? = value?.takeIf { it.accountId == accountId }
+        override suspend fun states(): List<LocalEnrollmentState> = listOfNotNull(value)
         override suspend fun savePending(value: LocalEnrollmentState.Pending) { this.value = value }
         override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
     }
 
     private object FailingEnrollments : LocalEnrollmentRepository {
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? = null
+        override suspend fun states(): List<LocalEnrollmentState> = emptyList()
         override suspend fun savePending(value: LocalEnrollmentState.Pending): Nothing = error("Room unavailable")
         override suspend fun saveActive(value: LocalEnrollmentState.Active): Nothing = error("Not used")
     }

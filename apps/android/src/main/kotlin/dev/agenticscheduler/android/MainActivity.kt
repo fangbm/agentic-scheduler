@@ -157,6 +157,7 @@ class MainActivity : ComponentActivity() {
                         }
                         ActiveSyncRuntimeCreation.NoEnrollment -> d8StartupState.value = D8StartupState.Ready
                         ActiveSyncRuntimeCreation.EnrollmentNotActive,
+                        is ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch,
                         is ActiveSyncRuntimeCreation.MissingDeviceCredential,
                         -> d8StartupState.value = D8StartupState.Blocked
                     }
@@ -266,6 +267,13 @@ private fun AndroidScheduler(
     val focusRead by remember(reads) { reads.observeFocusBlocks() }.collectAsState(ConflictAwareRead.Projected(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList()))
     val taskValues = (taskRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
     val focusBlocks = (focusRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
+    val projectedSyncConflictRefs =
+        (taskRead as? ConflictAwareRead.Projected<*>)?.syncConflictRefs.orEmpty() +
+            (focusRead as? ConflictAwareRead.Projected<*>)?.syncConflictRefs.orEmpty()
+    val syncConflictCount = (projection.syncConflictRefs + projectedSyncConflictRefs)
+        .flatMap { it.conflictIds }
+        .distinct()
+        .size
     val dateItems = projection.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
@@ -291,7 +299,8 @@ private fun AndroidScheduler(
             }
         }
         item {
-            if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)")
+            if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} calendar overlap(s)")
+            if (syncConflictCount > 0) Text("$syncConflictCount sync conflict(s) require resolution")
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
             if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }

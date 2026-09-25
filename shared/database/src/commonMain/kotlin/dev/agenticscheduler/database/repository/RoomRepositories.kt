@@ -207,6 +207,11 @@ class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) 
 
     override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> =
         database.syncReceiveDao().conflicts(syncSpaceId.value).map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+
+    override fun observeConflicts(syncSpaceId: SyncSpaceId): Flow<List<SyncConflict>> =
+        database.syncReceiveDao().observeConflicts(syncSpaceId.value).map { records ->
+            records.map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+        }
 }
 
 class RoomSyncOutboundEnvelopeRepository(private val database: AgenticSchedulerDatabase) : SyncOutboundEnvelopeRepository {
@@ -404,6 +409,9 @@ class RoomSyncKeyMetadataRepository(private val database: AgenticSchedulerDataba
 class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDatabase) : LocalEnrollmentRepository {
     override suspend fun state(accountId: dev.agenticscheduler.sync.AccountId): LocalEnrollmentState? =
         database.localPairingEnrollmentDao().state(accountId.value)?.toLocalEnrollmentState()
+
+    override suspend fun states(): List<LocalEnrollmentState> =
+        database.localPairingEnrollmentDao().states().map(LocalPairingEnrollmentRecord::toLocalEnrollmentState)
 
     override suspend fun savePending(value: LocalEnrollmentState.Pending) {
         database.localPairingEnrollmentDao().save(value.toRecord())

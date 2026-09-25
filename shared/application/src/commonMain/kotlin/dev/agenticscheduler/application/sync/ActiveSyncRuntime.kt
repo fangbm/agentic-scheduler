@@ -22,8 +22,12 @@ import dev.agenticscheduler.application.persistence.TaskRepository
 import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.EntityMutation
+import dev.agenticscheduler.sync.SyncConflict
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -64,6 +68,11 @@ sealed interface ActiveSyncRuntimeCreation {
     data class Active(val runtime: ActiveSyncRuntime) : ActiveSyncRuntimeCreation
     data object NoEnrollment : ActiveSyncRuntimeCreation
     data object EnrollmentNotActive : ActiveSyncRuntimeCreation
+    /** A durable ACTIVE enrollment exists, but not for the explicitly configured account. */
+    data class ActiveEnrollmentAccountMismatch(
+        val configuredAccountId: AccountId,
+        val activeAccountIds: List<AccountId>,
+    ) : ActiveSyncRuntimeCreation
     /**
      * The durable enrollment is ACTIVE, so callers must keep its conflict-aware
      * read projection and write guard even though its credential is unavailable.
@@ -73,6 +82,11 @@ sealed interface ActiveSyncRuntimeCreation {
         val writePolicy: SyncConflictWritePolicy,
     ) : ActiveSyncRuntimeCreation
 }
+
+/** Shared read/write seams fail explicitly while runtime configuration disagrees with durable enrollment. */
+class ActiveSyncRuntimeAccountMismatchException : IllegalStateException(
+    "The configured account does not match the local ACTIVE sync enrollment.",
+)
 
 sealed interface ActiveSyncRuntimeCatchUpResult {
     data class Completed(
@@ -153,10 +167,27 @@ class ActiveSyncRuntimeFactory(
         configuration: ActiveSyncRuntimeConfiguration,
         onActiveEnrollment: suspend (ConflictAwareSourceFactQuery, SyncConflictWritePolicy) -> Unit = { _, _ -> },
     ): ActiveSyncRuntimeCreation {
-        val enrollment = dependencies.enrollments.state(configuration.accountId)
-            ?: return ActiveSyncRuntimeCreation.NoEnrollment
+        val enrollmentStates = dependencies.enrollments.states()
+        val enrollment = enrollmentStates.firstOrNull { it.accountId == configuration.accountId }
+        val activeEnrollments = enrollmentStates.filterIsInstance<LocalEnrollmentState.Active>()
+        val otherActiveEnrollments = activeEnrollments
+            .filter { it.accountId != configuration.accountId }
+            .sortedBy { it.accountId.value }
+        if (otherActiveEnrollments.isNotEmpty() && enrollment !is LocalEnrollmentState.Active) {
+            return ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch(
+                configuredAccountId = configuration.accountId,
+                activeAccountIds = otherActiveEnrollments.map(LocalEnrollmentState.Active::accountId),
+            )
+        }
+        if (enrollment == null) return ActiveSyncRuntimeCreation.NoEnrollment
         val active = enrollment as? LocalEnrollmentState.Active
             ?: return ActiveSyncRuntimeCreation.EnrollmentNotActive
+        if (active.accountId != configuration.accountId) {
+            return ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch(
+                configuredAccountId = configuration.accountId,
+                activeAccountIds = listOf(active.accountId),
+            )
+        }
         val activeSourceFacts = ActiveConflictAwareSourceFactQuery(
             ConflictAwareProjection(dependencies.receiveState),
             active.syncSpaceId,
@@ -236,6 +267,7 @@ class ActiveSyncRuntimeHost {
     private var active: RuntimeSlot? = null
     private var inactiveSourceFacts: ConflictAwareSourceFactQuery = NoActiveSyncSpaceSourceFactQuery
     private var inactiveWritePolicy: SyncConflictWritePolicy = NoActiveSyncSpaceWritePolicy
+    private var configuredAccountMismatch = false
 
     /** A lease keeps its transport alive while catch-up is outside the host lock. */
     private class RuntimeSlot(val runtime: ActiveSyncRuntime) {
@@ -249,15 +281,23 @@ class ActiveSyncRuntimeHost {
             sourceFactsSnapshot().project(durable)
 
         private suspend fun sourceFactsSnapshot(): ConflictAwareSourceFactQuery = mutex.withLock {
+            if (configuredAccountMismatch) throw ActiveSyncRuntimeAccountMismatchException()
             active?.runtime?.sourceFacts ?: inactiveSourceFacts
         }
 
         override suspend fun projectCollection(entityKind: EntityKind, durable: Collection<EntityMutation>) =
             sourceFactsSnapshot().projectCollection(entityKind, durable)
+
+        override fun observeConflicts(): Flow<List<SyncConflict>> = flow {
+            emitAll(sourceFactsSnapshot().observeConflicts())
+        }
     }
 
     val writePolicy: SyncConflictWritePolicy = SyncConflictWritePolicy { proposed ->
-        val policy = mutex.withLock { active?.runtime?.writePolicy ?: inactiveWritePolicy }
+        val policy = mutex.withLock {
+            if (configuredAccountMismatch) throw ActiveSyncRuntimeAccountMismatchException()
+            active?.runtime?.writePolicy ?: inactiveWritePolicy
+        }
         policy.blocks(proposed)
     }
 
@@ -281,16 +321,22 @@ class ActiveSyncRuntimeHost {
 
                 when (created) {
                     is ActiveSyncRuntimeCreation.Active -> {
+                        configuredAccountMismatch = false
                         inactiveSourceFacts = NoActiveSyncSpaceSourceFactQuery
                         inactiveWritePolicy = NoActiveSyncSpaceWritePolicy
                     }
                     is ActiveSyncRuntimeCreation.MissingDeviceCredential -> {
+                        configuredAccountMismatch = false
                         inactiveSourceFacts = created.sourceFacts
                         inactiveWritePolicy = created.writePolicy
                     }
                     ActiveSyncRuntimeCreation.NoEnrollment -> {
+                        configuredAccountMismatch = false
                         inactiveSourceFacts = NoActiveSyncSpaceSourceFactQuery
                         inactiveWritePolicy = NoActiveSyncSpaceWritePolicy
+                    }
+                    is ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch -> {
+                        configuredAccountMismatch = true
                     }
                     ActiveSyncRuntimeCreation.EnrollmentNotActive -> Unit
                 }

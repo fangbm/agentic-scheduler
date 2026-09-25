@@ -127,6 +127,7 @@ class PairingApprovalServiceTest {
     ) : LocalEnrollmentRepository {
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? =
             if (ignoreRequestedAccount || value.accountId == accountId) value else null
+        override suspend fun states(): List<LocalEnrollmentState> = listOf(value)
         override suspend fun savePending(value: LocalEnrollmentState.Pending) = error("Not used")
         override suspend fun saveActive(value: LocalEnrollmentState.Active) = error("Not used")
     }

@@ -120,6 +120,7 @@ class RecoveryEnrollmentServiceTest {
     private class Enrollments : LocalEnrollmentRepository {
         var value: LocalEnrollmentState? = null
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? = value?.takeIf { it.accountId == accountId }
+        override suspend fun states(): List<LocalEnrollmentState> = listOfNotNull(value)
         override suspend fun savePending(value: LocalEnrollmentState.Pending) { this.value = value }
         override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
     }
