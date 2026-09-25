@@ -265,6 +265,8 @@ Runtime compaction invocation now passes local mock success/failure checks;
 raw AgentMessages remain durable and only hot context selection changes.
 `task.list` and the three D7 history reads are also registered as read-only
 mock-tested Tools; no provider-origin read mutates Task or history state.
+`calendar.list` now reads an explicit-timezone projection through the same
+bounded registry, with a no-write local mock test.
 An oversized latest ToolResult is no longer silently dropped by context
 selection; the bounded run stops with retained raw history instead.
 

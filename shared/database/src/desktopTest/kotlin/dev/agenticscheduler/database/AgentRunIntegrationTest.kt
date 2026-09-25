@@ -5,6 +5,11 @@ import dev.agenticscheduler.agent.provider.*
 import dev.agenticscheduler.agent.runtime.*
 import dev.agenticscheduler.agent.tool.*
 import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.calendar.CalendarItem
+import dev.agenticscheduler.application.calendar.CalendarProjectionResult
+import dev.agenticscheduler.application.calendar.CalendarQueryService
+import dev.agenticscheduler.application.calendar.CalendarSourceRef
+import dev.agenticscheduler.application.calendar.CalendarViewport
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.history.AgentOriginWriteGate
 import dev.agenticscheduler.application.history.MutationCoordinator
@@ -19,6 +24,8 @@ import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.id.TaskId
+import dev.agenticscheduler.domain.id.EventId
+import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskEffort
 import dev.agenticscheduler.domain.task.TaskPriority
@@ -34,6 +41,9 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.collections.immutable.toImmutableList
+import kotlinx.datetime.LocalDate
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -359,6 +369,50 @@ class AgentRunIntegrationTest {
                 client.close()
                 database.close()
             }
+        }
+    }
+
+    @Test fun `calendar list requires explicit viewport and returns typed all-day item without writes`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("calendar-1", function = ProviderFunctionCall(AgentToolNames.CALENDAR_LIST,
+                "{\"startDate\":\"2026-09-25\",\"endDateExclusive\":\"2026-09-26\",\"displayTimeZone\":\"Asia/Shanghai\"}"))))),
+            reply(ProviderChatMessage("assistant", "One event.")),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val config = ProviderConfig(ProviderConfigId(id(130)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val calendar = object : CalendarQueryService {
+                override fun observe(viewport: CalendarViewport) = flowOf(CalendarProjectionResult(
+                    listOf(CalendarItem.AllDay(CalendarSourceRef.Event(EventId(id(131))), "Competition", AllDayRange(LocalDate(2026, 9, 25), LocalDate(2026, 9, 26)))).toImmutableList(),
+                    emptyList<dev.agenticscheduler.application.calendar.CalendarConflict>().toImmutableList(),
+                    emptyList<dev.agenticscheduler.application.calendar.CalendarProjectionIssue>().toImmutableList(),
+                ))
+            }
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val runtime = AgentRunService(state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 },
+                calendarList = CalendarListTool(calendar))
+            val threadId = runtime.createThread()
+            assertEquals("One event.", assertIs<AgentRunResult.Completed>(runtime.run(threadId, "What is on my calendar?")).assistantText)
+            val toolResult = state.toolResults(threadId).single()
+            assertEquals(AgentToolResultStatus.SUCCESS, toolResult.status)
+            assertTrue(toolResult.resultJson.contains("Competition"))
+            assertTrue(toolResult.resultJson.contains("ALL_DAY"))
+            assertTrue(history.timeline().isEmpty())
+        } finally {
+            client.close()
+            database.close()
         }
     }
 
