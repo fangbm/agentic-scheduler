@@ -539,6 +539,7 @@ private fun MutationOrigin.durableName(): String = when (this) {
     MutationOrigin.User -> "USER"
     MutationOrigin.Planner -> "PLANNER"
     MutationOrigin.System -> "SYSTEM"
+    is MutationOrigin.Agent -> "AGENT:$agentActionId"
     is MutationOrigin.ConflictResolution -> "CONFLICT_RESOLUTION:$conflictId"
     is MutationOrigin.Undo -> "UNDO:$originalMutationId"
 }

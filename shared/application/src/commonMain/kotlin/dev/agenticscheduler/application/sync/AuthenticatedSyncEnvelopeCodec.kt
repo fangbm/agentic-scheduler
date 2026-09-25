@@ -4,6 +4,8 @@ import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.EnvelopeDecodeResult
 import dev.agenticscheduler.sync.SyncPayloadV1
+import dev.agenticscheduler.sync.SyncPayloadV2
+import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncWireCodec
 
@@ -92,7 +94,15 @@ class AuthenticatedSyncEnvelopeCodec(
     private val encryptionKeys: CurrentEncryptionKeyProvider,
 ) {
     suspend fun encrypt(binding: SyncEnvelopeBinding, payload: SyncPayloadV1): EncryptSyncPayloadResult {
-        if (payload.operation.mutationId != binding.mutationId) {
+        return encryptEncoded(binding, payload.operation, SyncWireCodec.encodePayload(payload))
+    }
+
+    suspend fun encrypt(binding: SyncEnvelopeBinding, payload: SyncPayloadV2): EncryptSyncPayloadResult {
+        return encryptEncoded(binding, payload.operation, SyncWireCodec.encodePayload(payload))
+    }
+
+    private suspend fun encryptEncoded(binding: SyncEnvelopeBinding, operation: SyncOperation, encodedPayload: String): EncryptSyncPayloadResult {
+        if (operation.mutationId != binding.mutationId) {
             return EncryptSyncPayloadResult.InvalidPayload("Outer and inner MutationId differ.")
         }
         val key = when (val lookup = encryptionKeys.currentEncryptionKey(binding.syncSpaceId)) {
@@ -103,7 +113,7 @@ class AuthenticatedSyncEnvelopeCodec(
             CurrentEncryptionKeyLookup.Missing -> return EncryptSyncPayloadResult.MissingContentKey
         }
         val ciphertext = key.encryptToBase64Url(
-            plaintextUtf8 = SyncWireCodec.encodePayload(payload),
+            plaintextUtf8 = encodedPayload,
             associatedDataUtf8 = binding.authenticatedAssociatedData(),
         )
         return EncryptSyncPayloadResult.Encrypted(

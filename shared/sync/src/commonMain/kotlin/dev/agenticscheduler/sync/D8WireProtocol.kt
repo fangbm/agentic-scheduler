@@ -5,7 +5,6 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
@@ -51,6 +50,15 @@ data class SyncPayloadV1(
     val operation: SyncOperation,
 )
 
+/** D9-01 business mutation origin amendment; Agent conversation sync is D9-02. */
+@Serializable
+data class SyncPayloadV2(
+    val payloadVersion: Int = SyncWireCodec.AGENT_PAYLOAD_VERSION,
+    val operation: SyncOperation,
+)
+
+data class DecodedSyncPayload(val payloadVersion: Int, val operation: SyncOperation)
+
 sealed interface EnvelopeDecodeResult {
     data class Supported(val envelope: EncryptedEnvelopeV1) : EnvelopeDecodeResult
     data class UnsupportedVersion(val actual: Int?) : EnvelopeDecodeResult
@@ -58,7 +66,7 @@ sealed interface EnvelopeDecodeResult {
 }
 
 sealed interface PayloadDecodeResult {
-    data class Supported(val payload: SyncPayloadV1) : PayloadDecodeResult
+    data class Supported(val payload: DecodedSyncPayload) : PayloadDecodeResult
     data class UnsupportedVersion(val actual: Int?) : PayloadDecodeResult
     data class UnsupportedMutation(val discriminator: String?) : PayloadDecodeResult
     data class Invalid(val reason: String) : PayloadDecodeResult
@@ -72,6 +80,7 @@ sealed interface PayloadDecodeResult {
 object SyncWireCodec {
     const val ENVELOPE_VERSION: Int = 1
     const val PAYLOAD_VERSION: Int = 1
+    const val AGENT_PAYLOAD_VERSION: Int = 2
 
     private val json = Json {
         encodeDefaults = true
@@ -99,7 +108,14 @@ object SyncWireCodec {
 
     fun encodePayload(payload: SyncPayloadV1): String {
         require(payload.payloadVersion == PAYLOAD_VERSION) { "Only payload v$PAYLOAD_VERSION can be encoded." }
+        require(payload.operation.origin !is MutationOrigin.Agent) { "Agent-origin operations require payload v2." }
         return json.encodeToString(SyncPayloadV1.serializer(), payload)
+    }
+
+    fun encodePayload(payload: SyncPayloadV2): String {
+        require(payload.payloadVersion == AGENT_PAYLOAD_VERSION) { "Only Agent payload v$AGENT_PAYLOAD_VERSION can be encoded." }
+        require(payload.operation.origin is MutationOrigin.Agent) { "Payload v2 is reserved for Agent-origin business mutations." }
+        return json.encodeToString(SyncPayloadV2.serializer(), payload)
     }
 
     fun decodePayload(encoded: String): PayloadDecodeResult {
@@ -108,14 +124,23 @@ object SyncWireCodec {
             return PayloadDecodeResult.Invalid("Payload version must be an integer.")
         }
         val version = objectValue.int("payloadVersion")
-        if (version != PAYLOAD_VERSION) return PayloadDecodeResult.UnsupportedVersion(version)
+        if (version != PAYLOAD_VERSION && version != AGENT_PAYLOAD_VERSION) return PayloadDecodeResult.UnsupportedVersion(version)
         if (hasMalformedMutationDiscriminator(objectValue) || hasMalformedOriginDiscriminator(objectValue)) {
             return PayloadDecodeResult.Invalid("Payload discriminator must be a string.")
         }
-        unknownMutationDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation(it) }
-        unknownOriginDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation("origin:$it") }
         return try {
-            PayloadDecodeResult.Supported(json.decodeFromJsonElement(SyncPayloadV1.serializer(), objectValue))
+            unknownMutationDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation(it) }
+            unknownOriginDiscriminator(objectValue, version)?.let { return PayloadDecodeResult.UnsupportedMutation("origin:$it") }
+            val operation = when (version) {
+                PAYLOAD_VERSION -> json.decodeFromJsonElement(SyncPayloadV1.serializer(), objectValue).operation
+                AGENT_PAYLOAD_VERSION -> json.decodeFromJsonElement(SyncPayloadV2.serializer(), objectValue).operation
+                else -> error("Version was checked above.")
+            }
+            if (version == AGENT_PAYLOAD_VERSION && operation.origin !is MutationOrigin.Agent) {
+                PayloadDecodeResult.Invalid("Payload v2 requires Agent origin.")
+            } else {
+                PayloadDecodeResult.Supported(DecodedSyncPayload(version, operation))
+            }
         } catch (failure: SerializationException) {
             PayloadDecodeResult.Invalid(failure.message ?: "Payload cannot be decoded.")
         } catch (failure: IllegalArgumentException) {
@@ -163,11 +188,12 @@ object SyncWireCodec {
             .firstOrNull { it !in knownMutationDiscriminators }
     }
 
-    private fun unknownOriginDiscriminator(payload: JsonObject): String? {
+    private fun unknownOriginDiscriminator(payload: JsonObject, version: Int): String? {
         val operation = payload["operation"] as? JsonObject ?: return null
         val origin = operation["origin"] as? JsonObject ?: return null
         val discriminator = (origin["type"] as? JsonPrimitive)?.contentOrNull ?: return null
-        return discriminator.takeUnless(knownOriginDiscriminators::contains)
+        val known = if (version == AGENT_PAYLOAD_VERSION) knownOriginDiscriminators + "AGENT" else knownOriginDiscriminators
+        return discriminator.takeUnless(known::contains)
     }
 
     private val knownMutationDiscriminators = setOf(

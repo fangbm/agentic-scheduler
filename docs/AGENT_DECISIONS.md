@@ -419,11 +419,25 @@ A failed Tool remains failed in AgentAction even if later assistant prose claims
 
 D9 write origin extends D7 mutation origin with `AGENT(agentActionId)`.
 
+D9-01 Agent-origin **business mutations** use encrypted inner `SyncPayloadV2`.
+The outer D8 envelope remains v1. V1 continues to encode/decode non-Agent
+origins; V2 is reserved for `AGENT(agentActionId)`, and an older D8 client
+quarantines the whole unknown-version operation. This is not AgentThread or
+conversation synchronization; those operation kinds remain D9-02.
+
+An Agent write in an active SyncSpace requires a device-local, user-owned
+opt-in that confirms all enrolled devices are upgraded for payload v2. It is
+off by default and inaccessible to Agent Tools. Without it, synchronized
+Agent writes are unavailable even if Tool permission otherwise allows them.
+Local-only writes still obey normal Tool validation and permission rules.
+
 ---
 
 # AGT-013 — D9-02 synchronization amendment
 
-D9-02 extends D8 only after D9-01 local Agent behavior is stable.
+D9-02 extends D8 for Agent conversation/history operations only after D9-01
+local Agent behavior is stable. The Agent-origin business payload v2 above is
+the narrow D9-01 compatibility amendment.
 
 Synchronized Agent concepts:
 
