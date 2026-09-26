@@ -184,7 +184,7 @@ fun main() = application {
         }
     }, title = "Agentic Scheduler") {
         val windowInfo = LocalWindowInfo.current
-        LaunchedEffect(windowInfo.isWindowFocused) {
+        LaunchedEffect(windowInfo.isWindowFocused, d8SyncTrigger.value) {
             d8SyncTrigger.value?.setForeground(windowInfo.isWindowFocused)
         }
         val currentStartupState by startupState

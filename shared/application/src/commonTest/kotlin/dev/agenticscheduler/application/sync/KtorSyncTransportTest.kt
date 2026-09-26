@@ -175,11 +175,13 @@ class KtorSyncTransportTest {
     @Test
     fun `recovery enrollment classifies unauthorized proof and immutable identity conflict`() = runBlocking {
         var status = HttpStatusCode.OK
+        var errorCode = "RECOVERY_REQUEST_CONFLICT"
         val client = HttpClient(MockEngine) {
             engine {
                 addHandler {
                     respond(
-                        """{"accountId":"account","deviceId":"device"}""",
+                        if (status == HttpStatusCode.Conflict) """{"code":"$errorCode"}"""
+                        else """{"accountId":"account","deviceId":"device"}""",
                         status = status,
                         headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )
@@ -210,6 +212,11 @@ class KtorSyncTransportTest {
         status = HttpStatusCode.Conflict
         assertEquals(
             RecoveryEnrollmentRejection.RequestIdentityConflict,
+            assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
+        )
+        errorCode = "TARGET_DEVICE_EXISTS"
+        assertEquals(
+            RecoveryEnrollmentRejection.TargetDeviceExists,
             assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
         )
         client.close()

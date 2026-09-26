@@ -135,7 +135,10 @@ class RecoveryEnrollmentServiceTest {
         )
         assertEquals(1, invalidProof.transport.bootstrapCalls)
         assertEquals(1, invalidProof.transport.requests.size)
-        assertNull(invalidProof.enrollments.value)
+        assertIs<LocalEnrollmentState.Pending>(invalidProof.enrollments.value)
+        assertEquals(1, invalidProof.credentials.generated)
+        assertEquals(1, invalidProof.transport.enrollments)
+        assertEquals(emptySet(), invalidProof.ring.installedEpochs)
 
         val identityConflict = Fixture().also {
             it.transport.onEnrollment = { _, _ -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.RequestIdentityConflict) }
@@ -147,6 +150,17 @@ class RecoveryEnrollmentServiceTest {
         assertEquals(1, identityConflict.transport.bootstrapCalls)
         assertEquals(1, identityConflict.transport.requests.size)
         assertIs<LocalEnrollmentState.Pending>(identityConflict.enrollments.value)
+
+        val targetDeviceExists = Fixture().also {
+            it.transport.onEnrollment = { _, _ -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.TargetDeviceExists) }
+        }
+        assertEquals(
+            RecoveryEnrollmentServiceResult.TargetDeviceAlreadyExists,
+            targetDeviceExists.service.recover(account, secret, device, request),
+        )
+        assertEquals(1, targetDeviceExists.transport.bootstrapCalls)
+        assertEquals(1, targetDeviceExists.transport.requests.size)
+        assertIs<LocalEnrollmentState.Pending>(targetDeviceExists.enrollments.value)
         Unit
     }
 

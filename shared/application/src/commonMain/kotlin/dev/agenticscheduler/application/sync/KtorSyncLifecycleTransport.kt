@@ -74,6 +74,9 @@ data class ClientRecoveryEnrollmentRequest(
 @Serializable
 data class ClientRecoveryEnrollmentCreated(val accountId: String, val deviceId: String)
 
+@Serializable
+private data class ClientServerErrorResponse(val code: String)
+
 /** Frozen SYN-005C recovery endpoints. The bootstrap request is deliberately unauthenticated. */
 interface RecoveryEnrollmentTransport {
     suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse
@@ -229,7 +232,15 @@ class KtorSyncLifecycleTransport(
             HttpStatusCode.OK,
             -> Unit
             HttpStatusCode.Unauthorized -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.InvalidProof)
-            HttpStatusCode.Conflict -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.RequestIdentityConflict)
+            HttpStatusCode.Conflict -> {
+                val code = decode(response.bodyAsText(), ClientServerErrorResponse.serializer()).code
+                val rejection = when (code) {
+                    "RECOVERY_REQUEST_CONFLICT" -> RecoveryEnrollmentRejection.RequestIdentityConflict
+                    "TARGET_DEVICE_EXISTS" -> RecoveryEnrollmentRejection.TargetDeviceExists
+                    else -> throw SyncTransportException("HTTP_${response.status.value}:$code")
+                }
+                throw RecoveryEnrollmentRejected(rejection)
+            }
             else -> requireStatus(response, HttpStatusCode.Created)
         }
         return decode(response.bodyAsText(), ClientRecoveryEnrollmentCreated.serializer())
@@ -296,6 +307,7 @@ class KtorSyncLifecycleTransport(
 enum class RecoveryEnrollmentRejection {
     InvalidProof,
     RequestIdentityConflict,
+    TargetDeviceExists,
 }
 
 /** A definitive SYN-005D rejection. It must not be treated as a lost response and retried. */

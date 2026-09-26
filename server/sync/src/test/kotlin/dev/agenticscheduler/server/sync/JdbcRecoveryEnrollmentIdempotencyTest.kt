@@ -16,8 +16,7 @@ import kotlin.test.assertTrue
 class JdbcRecoveryEnrollmentIdempotencyTest {
     @Test
     fun `lost acknowledgment retry is proof gated and immutable identity is enforced`() {
-        withDatabase { dataSource, repository ->
-            val fixture = fixture(dataSource, "lost-ack")
+        withDatabase("lost-ack") { fixture, dataSource, repository ->
             val first = enrollment(fixture, proof(41), counter = 7, nextProof = proof(42))
             assertEquals(RecoveryEnrollmentResult.Created(fixture.accountId, fixture.deviceId), repository.enrollWithRecovery(first))
 
@@ -46,8 +45,7 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
 
     @Test
     fun `legacy completion without fingerprint fails closed after current proof validation`() {
-        withDatabase { dataSource, repository ->
-            val fixture = fixture(dataSource, "legacy", withDevice = true)
+        withDatabase("legacy", withDevice = true) { fixture, dataSource, repository ->
             dataSource.connection.use { connection ->
                 connection.prepareStatement(
                     "INSERT INTO recovery_enrollment_request(request_id, account_id, target_device_id) VALUES (?, ?, ?)",
@@ -99,15 +97,19 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
         }
     }
 
-    private fun withDatabase(block: (HikariDataSource, JdbcOpaqueSyncRepository) -> Unit) {
+    private fun withDatabase(
+        label: String,
+        withDevice: Boolean = false,
+        block: (Fixture, HikariDataSource, JdbcOpaqueSyncRepository) -> Unit,
+    ) {
         val jdbcUrl = System.getenv("SYNC_TEST_DATABASE_URL") ?: return
         val suffix = UUID.randomUUID().toString().replace("-", "")
-        val fixture = fixtureIds(suffix, "retry")
+        val fixture = fixtureIds(suffix, label)
         val source = dataSource(jdbcUrl)
         try {
             ServerSchemaMigrator(source).migrate()
-            seed(source, fixture)
-            block(source, JdbcOpaqueSyncRepository(source))
+            seed(source, fixture, withDevice)
+            block(fixture, source, JdbcOpaqueSyncRepository(source))
         } finally {
             cleanup(source, fixture)
             source.close()
@@ -129,13 +131,6 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
         val deviceId: String,
         val requestId: String,
     )
-
-    private fun fixture(dataSource: HikariDataSource, label: String, withDevice: Boolean = false): Fixture {
-        val suffix = UUID.randomUUID().toString().replace("-", "")
-        val value = fixtureIds(suffix, label)
-        seed(dataSource, value, withDevice)
-        return value
-    }
 
     private fun fixtureIds(suffix: String, label: String) = Fixture(
         suffix = suffix,

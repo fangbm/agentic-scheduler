@@ -22,6 +22,7 @@ sealed interface RecoveryEnrollmentServiceResult {
     data object RecoveryEnrollmentFailed : RecoveryEnrollmentServiceResult
     data object InvalidRecoveryProof : RecoveryEnrollmentServiceResult
     data object RecoveryRequestConflict : RecoveryEnrollmentServiceResult
+    data object TargetDeviceAlreadyExists : RecoveryEnrollmentServiceResult
     data object RecoveryEnrollmentIdentityMismatch : RecoveryEnrollmentServiceResult
     data object MissingDeviceCredential : RecoveryEnrollmentServiceResult
     data object AccountMasterKeyImportFailed : RecoveryEnrollmentServiceResult
@@ -154,6 +155,7 @@ class RecoveryEnrollmentService(
     private fun RecoveryEnrollmentRejected.toServiceResult(): RecoveryEnrollmentServiceResult = when (rejection) {
         RecoveryEnrollmentRejection.InvalidProof -> RecoveryEnrollmentServiceResult.InvalidRecoveryProof
         RecoveryEnrollmentRejection.RequestIdentityConflict -> RecoveryEnrollmentServiceResult.RecoveryRequestConflict
+        RecoveryEnrollmentRejection.TargetDeviceExists -> RecoveryEnrollmentServiceResult.TargetDeviceAlreadyExists
     }
 
     private fun decodeAndOpen(
