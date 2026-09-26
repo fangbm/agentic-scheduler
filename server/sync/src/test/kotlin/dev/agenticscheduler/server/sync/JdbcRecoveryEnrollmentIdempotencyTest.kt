@@ -18,12 +18,12 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
     fun `lost acknowledgment retry is proof gated and immutable identity is enforced`() {
         withDatabase { dataSource, repository ->
             val fixture = fixture(dataSource, "lost-ack")
-            val first = enrollment(fixture, proof(1), counter = 4, nextProof = proof(2))
+            val first = enrollment(fixture, proof(41), counter = 7, nextProof = proof(42))
             assertEquals(RecoveryEnrollmentResult.Created(fixture.accountId, fixture.deviceId), repository.enrollWithRecovery(first))
 
-            val retry = enrollment(fixture, proof(2), counter = 5, nextProof = proof(3))
+            val retry = enrollment(fixture, proof(42), counter = 8, nextProof = proof(43))
             assertEquals(RecoveryEnrollmentResult.Idempotent(fixture.accountId, fixture.deviceId), repository.enrollWithRecovery(retry))
-            assertProof(dataSource, fixture.accountId, proof(2), 5)
+            assertProof(dataSource, fixture.accountId, proof(42), 8)
             assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM recovery_enrollment_request WHERE request_id = ?", fixture.requestId))
             assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM device WHERE device_id = ?", fixture.deviceId))
             assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM sync_space_membership WHERE sync_space_id = ?", fixture.spaceId))
@@ -39,7 +39,7 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
                 RecoveryEnrollmentResult.InvalidProof,
                 repository.enrollWithRecovery(retry.copy(proofBase64Url = encode(proof(99)))),
             )
-            assertProof(dataSource, fixture.accountId, proof(2), 5)
+            assertProof(dataSource, fixture.accountId, proof(42), 8)
             assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM device WHERE account_id = ?", fixture.accountId))
         }
     }
