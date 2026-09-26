@@ -11,9 +11,11 @@ import dev.agenticscheduler.sync.RotationWireCodec
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncSpaceKeyPackageV1
 import dev.agenticscheduler.sync.encodeCanonicalBase64Url
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 
 class RotationKeyPackageTest {
@@ -112,6 +114,21 @@ class RotationKeyPackageTest {
         assertIs<RotationKeyPackageApplyResult.Applied>(completed.outcomes.single().result)
         assertEquals(8L, ring.installedEpoch)
         assertEquals(SecretReference("secure://amk/new"), (enrollments.value as LocalEnrollmentState.Active).accountMasterKeyReference)
+    }
+
+    @Test
+    fun `rotation package fetch propagates coroutine cancellation`() = runBlocking {
+        val cancellation = CancellationException("sync cancelled")
+        val result = RotationPackageCatchUpService(
+            transport = object : RotationPackageTransport {
+                override suspend fun rotationPackages(): List<ClientRotationPackageResponse> {
+                    throw cancellation
+                }
+            },
+            recipient = error("recipient must not be called when fetch is cancelled"),
+        )
+
+        assertEquals(cancellation, assertFailsWith<CancellationException> { result.catchUp() })
     }
 
     private fun service(

@@ -557,6 +557,79 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
+    @Test fun `Room active enrollment identity is immutable while AMK reference can rotate`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val account = dev.agenticscheduler.sync.AccountId("acct-immutable")
+        val active = dev.agenticscheduler.application.sync.LocalEnrollmentState.Active(
+            accountId = account,
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-original"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-original"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private/original"),
+            syncSpaceId = SyncSpaceId("personal-original"),
+            accountMasterKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://amk/1"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://credential/original"),
+        )
+        enrollments.saveActive(active)
+
+        val rotated = active.copy(
+            accountMasterKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://amk/2"),
+        )
+        enrollments.saveActive(rotated)
+        assertEquals(rotated, enrollments.state(account))
+
+        val changedIdentities = listOf(
+            active.copy(deviceId = dev.agenticscheduler.sync.DeviceId("device-replaced")),
+            active.copy(enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-replaced")),
+            active.copy(hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8")),
+            active.copy(hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private/replaced")),
+            active.copy(syncSpaceId = SyncSpaceId("personal-replaced")),
+            active.copy(deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://credential/replaced")),
+        )
+        changedIdentities.forEach { changed ->
+            val failure = try {
+                enrollments.saveActive(changed)
+                null
+            } catch (error: IllegalStateException) {
+                error
+            }
+            assertNotNull(failure)
+            assertEquals(rotated, enrollments.state(account))
+        }
+        database.close()
+    }
+
+    @Test fun `Room allows pending enrollment activation with its staged device identity`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val account = dev.agenticscheduler.sync.AccountId("acct-pending-activation")
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-staged"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-staged"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pairing-private/staged"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://credential/staged"),
+        )
+        enrollments.savePending(pending)
+
+        val active = dev.agenticscheduler.application.sync.LocalEnrollmentState.Active(
+            accountId = pending.accountId,
+            deviceId = pending.deviceId,
+            enrollmentRequestId = pending.enrollmentRequestId,
+            hpkePublicKey = pending.hpkePublicKey,
+            hpkePrivateKeyReference = pending.hpkePrivateKeyReference,
+            syncSpaceId = SyncSpaceId("personal-activated"),
+            accountMasterKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://amk/activated"),
+            deviceCredentialReference = requireNotNull(pending.deviceCredentialReference),
+        )
+        enrollments.saveActive(active)
+
+        assertEquals(active, enrollments.state(account))
+        database.close()
+    }
+
     @Test fun `Room pending enrollment transaction rejects a second account while another is active`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val enrollments = RoomLocalEnrollmentRepository(database)
