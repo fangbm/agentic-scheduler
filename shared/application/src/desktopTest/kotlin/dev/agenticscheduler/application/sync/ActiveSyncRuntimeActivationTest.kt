@@ -77,6 +77,25 @@ class ActiveSyncRuntimeActivationTest {
                 )
                 assertConflictProjection(activeAccountRuntime.sourceFacts, conflicted)
 
+                val missingConfigurationRuntime = RoomD8RuntimeComposition(
+                    database,
+                    store,
+                    TinkPairingHpke(),
+                    productionUuidV7Generator(),
+                    MutationWallClock { 1L },
+                )
+                localRuntime = missingConfigurationRuntime
+                assertIs<ActiveSyncRuntimeCreation.ActiveEnrollmentOffline>(
+                    missingConfigurationRuntime.activateWithoutConfiguration(),
+                )
+                assertEquals(
+                    listOf("title"),
+                    missingConfigurationRuntime.writePolicy.blocks(
+                        listOf(EventPut(conflicted, conflicted.copy(title = "offline edit"))),
+                    ).single().blockedGroups,
+                )
+                assertConflictProjection(missingConfigurationRuntime.sourceFacts, conflicted)
+
                 // A separate local-only composition remains local without clearing
                 // the configured account's durable conflict boundary.
                 val localOnlyRuntime = RoomD8RuntimeComposition(
@@ -112,6 +131,31 @@ class ActiveSyncRuntimeActivationTest {
             } finally {
                 localRuntime?.deactivate()
                 runtime?.deactivate()
+                databaseFile.delete()
+            }
+        }
+    }
+
+    @Test
+    fun `missing configuration permits local-only startup only when no active enrollment exists`() {
+        runBlocking<Unit> {
+            val databaseFile = File.createTempFile("agentic-d8-no-enrollment-", ".db")
+            val database = openDesktopDatabase(databaseFile.absolutePath)
+            val runtime = RoomD8RuntimeComposition(
+                database,
+                DesktopPlatformSecureStore(MemoryBackend(), TinkPairingHpke()),
+                TinkPairingHpke(),
+                productionUuidV7Generator(),
+                MutationWallClock { 1L },
+            )
+            try {
+                assertIs<ActiveSyncRuntimeCreation.NoEnrollment>(runtime.activateWithoutConfiguration())
+                assertEquals(
+                    emptyList(),
+                    runtime.writePolicy.blocks(listOf(EventPut(null, event("local-event", "local")))),
+                )
+            } finally {
+                runtime.deactivate()
                 databaseFile.delete()
             }
         }

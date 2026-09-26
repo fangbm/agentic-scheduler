@@ -63,6 +63,10 @@ class RoomD8RuntimeComposition(
     suspend fun activate(configuration: ActiveSyncRuntimeConfiguration): ActiveSyncRuntimeCreation =
         host.activate(factory, configuration)
 
+    /** Inspect Room enrollment before permitting a no-configuration local-only startup. */
+    suspend fun activateWithoutConfiguration(): ActiveSyncRuntimeCreation =
+        host.activateWithoutConfiguration(factory)
+
     suspend fun catchUp(fetchLimit: Int = 100): ActiveSyncRuntimeCatchUpResult? = host.catchUp(fetchLimit)
 
     /**

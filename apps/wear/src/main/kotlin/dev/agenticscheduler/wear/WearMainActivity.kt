@@ -82,13 +82,13 @@ class WearMainActivity : ComponentActivity() {
             d8StartupState.value = D8StartupState.Blocked
             null
         }
-        if (d8StartupState.value != D8StartupState.Blocked && configuration == null) {
-            d8StartupState.value = D8StartupState.Ready
-        } else if (configuration != null) {
+        if (d8StartupState.value != D8StartupState.Blocked) {
             d8StartupState.value = D8StartupState.Activating
             d8Scope.launch {
                 try {
-                    when (d8Runtime.activate(configuration)) {
+                    val creation = configuration?.let { d8Runtime.activate(it) }
+                        ?: d8Runtime.activateWithoutConfiguration()
+                    when (creation) {
                         is ActiveSyncRuntimeCreation.Active -> {
                             val trigger = d8Runtime.newCatchUpTrigger(
                                 d8Scope,
@@ -99,7 +99,9 @@ class WearMainActivity : ComponentActivity() {
                             registerNetworkRetry(trigger)
                             d8StartupState.value = D8StartupState.Ready
                         }
+                        is ActiveSyncRuntimeCreation.ActiveEnrollmentOffline -> d8StartupState.value = D8StartupState.Ready
                         ActiveSyncRuntimeCreation.NoEnrollment -> d8StartupState.value = D8StartupState.Ready
+                        is ActiveSyncRuntimeCreation.MultipleActiveEnrollments -> d8StartupState.value = D8StartupState.Blocked
                         ActiveSyncRuntimeCreation.EnrollmentNotActive,
                         is ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch,
                         is ActiveSyncRuntimeCreation.MissingDeviceCredential,

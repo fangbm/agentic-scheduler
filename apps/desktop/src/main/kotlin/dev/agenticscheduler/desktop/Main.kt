@@ -103,7 +103,6 @@ fun main() = application {
     val startupConfiguration = remember { runCatching { desktopD8RuntimeConfigurationOrNull() } }
     val initialStartupState = when {
         startupConfiguration.isFailure -> D8StartupState.Blocked
-        startupConfiguration.getOrNull() == null -> D8StartupState.Ready
         else -> D8StartupState.Activating
     }
     val startupState = remember { mutableStateOf(initialStartupState) }
@@ -133,12 +132,10 @@ fun main() = application {
             startupState.value = D8StartupState.Blocked
             return@LaunchedEffect
         }
-        if (configuration == null) {
-            startupState.value = D8StartupState.Ready
-            return@LaunchedEffect
-        }
         try {
-            when (d8Runtime.activate(configuration)) {
+            val creation = configuration?.let { d8Runtime.activate(it) }
+                ?: d8Runtime.activateWithoutConfiguration()
+            when (creation) {
                 is ActiveSyncRuntimeCreation.Active -> {
                     val trigger = d8Runtime.newCatchUpTrigger(
                         d8Scope,
@@ -148,7 +145,9 @@ fun main() = application {
                     trigger.start()
                     startupState.value = D8StartupState.Ready
                 }
+                is ActiveSyncRuntimeCreation.ActiveEnrollmentOffline -> startupState.value = D8StartupState.Ready
                 ActiveSyncRuntimeCreation.NoEnrollment -> startupState.value = D8StartupState.Ready
+                is ActiveSyncRuntimeCreation.MultipleActiveEnrollments -> startupState.value = D8StartupState.Blocked
                 ActiveSyncRuntimeCreation.EnrollmentNotActive,
                 is ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch,
                 is ActiveSyncRuntimeCreation.MissingDeviceCredential,

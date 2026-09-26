@@ -68,6 +68,13 @@ sealed interface ActiveSyncRuntimeCreation {
     data class Active(val runtime: ActiveSyncRuntime) : ActiveSyncRuntimeCreation
     data object NoEnrollment : ActiveSyncRuntimeCreation
     data object EnrollmentNotActive : ActiveSyncRuntimeCreation
+    /** Sync configuration is absent, but the one ACTIVE local replica keeps its offline conflict boundary. */
+    data class ActiveEnrollmentOffline(
+        val sourceFacts: ConflictAwareSourceFactQuery,
+        val writePolicy: SyncConflictWritePolicy,
+    ) : ActiveSyncRuntimeCreation
+    /** Without configuration, more than one ACTIVE account cannot be selected safely. */
+    data class MultipleActiveEnrollments(val activeAccountIds: List<AccountId>) : ActiveSyncRuntimeCreation
     /** A durable ACTIVE enrollment exists, but not for the explicitly configured account. */
     data class ActiveEnrollmentAccountMismatch(
         val configuredAccountId: AccountId,
@@ -163,6 +170,26 @@ class ActiveSyncRuntimeFactory(
     private val dependencies: ActiveSyncRuntimeDependencies,
     private val transportFactory: ActiveSyncRuntimeTransportFactory = KtorActiveSyncRuntimeTransportFactory,
 ) {
+    suspend fun createWithoutConfiguration(
+        onActiveEnrollment: suspend (ConflictAwareSourceFactQuery, SyncConflictWritePolicy) -> Unit = { _, _ -> },
+    ): ActiveSyncRuntimeCreation {
+        val activeEnrollments = dependencies.enrollments.states()
+            .filterIsInstance<LocalEnrollmentState.Active>()
+            .sortedBy { it.accountId.value }
+        if (activeEnrollments.isEmpty()) return ActiveSyncRuntimeCreation.NoEnrollment
+        if (activeEnrollments.size > 1) {
+            return ActiveSyncRuntimeCreation.MultipleActiveEnrollments(activeEnrollments.map { it.accountId })
+        }
+        val active = activeEnrollments.single()
+        val sourceFacts = ActiveConflictAwareSourceFactQuery(
+            ConflictAwareProjection(dependencies.receiveState),
+            active.syncSpaceId,
+        )
+        val writePolicy = SyncConflictWriteGuard(dependencies.receiveState, active.syncSpaceId)
+        onActiveEnrollment(sourceFacts, writePolicy)
+        return ActiveSyncRuntimeCreation.ActiveEnrollmentOffline(sourceFacts, writePolicy)
+    }
+
     suspend fun create(
         configuration: ActiveSyncRuntimeConfiguration,
         onActiveEnrollment: suspend (ConflictAwareSourceFactQuery, SyncConflictWritePolicy) -> Unit = { _, _ -> },
@@ -170,6 +197,12 @@ class ActiveSyncRuntimeFactory(
         val enrollmentStates = dependencies.enrollments.states()
         val enrollment = enrollmentStates.firstOrNull { it.accountId == configuration.accountId }
         val activeEnrollments = enrollmentStates.filterIsInstance<LocalEnrollmentState.Active>()
+            .sortedBy { it.accountId.value }
+        if (activeEnrollments.size > 1) {
+            return ActiveSyncRuntimeCreation.MultipleActiveEnrollments(
+                activeEnrollments.map(LocalEnrollmentState.Active::accountId),
+            )
+        }
         val otherActiveEnrollments = activeEnrollments
             .filter { it.accountId != configuration.accountId }
             .sortedBy { it.accountId.value }
@@ -330,6 +363,14 @@ class ActiveSyncRuntimeHost {
                         inactiveSourceFacts = created.sourceFacts
                         inactiveWritePolicy = created.writePolicy
                     }
+                    is ActiveSyncRuntimeCreation.ActiveEnrollmentOffline -> {
+                        configuredAccountMismatch = false
+                        inactiveSourceFacts = created.sourceFacts
+                        inactiveWritePolicy = created.writePolicy
+                    }
+                    is ActiveSyncRuntimeCreation.MultipleActiveEnrollments -> {
+                        configuredAccountMismatch = true
+                    }
                     ActiveSyncRuntimeCreation.NoEnrollment -> {
                         configuredAccountMismatch = false
                         inactiveSourceFacts = NoActiveSyncSpaceSourceFactQuery
@@ -344,6 +385,41 @@ class ActiveSyncRuntimeHost {
                 if (previous != null) {
                     closeRetired = retireLocked(previous)
                 }
+            }
+            closeRetired?.close()
+            created
+        }
+    }
+
+    suspend fun activateWithoutConfiguration(factory: ActiveSyncRuntimeFactory): ActiveSyncRuntimeCreation {
+        return activationMutex.withLock {
+            val created = factory.createWithoutConfiguration { activeSources, activePolicy ->
+                mutex.withLock {
+                    inactiveSourceFacts = activeSources
+                    inactiveWritePolicy = activePolicy
+                }
+            }
+            var closeRetired: ActiveSyncRuntime? = null
+            mutex.withLock {
+                val previous = active
+                active = null
+                when (created) {
+                    ActiveSyncRuntimeCreation.NoEnrollment -> {
+                        configuredAccountMismatch = false
+                        inactiveSourceFacts = NoActiveSyncSpaceSourceFactQuery
+                        inactiveWritePolicy = NoActiveSyncSpaceWritePolicy
+                    }
+                    is ActiveSyncRuntimeCreation.ActiveEnrollmentOffline -> {
+                        configuredAccountMismatch = false
+                        inactiveSourceFacts = created.sourceFacts
+                        inactiveWritePolicy = created.writePolicy
+                    }
+                    is ActiveSyncRuntimeCreation.MultipleActiveEnrollments -> {
+                        configuredAccountMismatch = true
+                    }
+                    else -> error("Unexpected result from unconfigured D8 runtime inspection.")
+                }
+                if (previous != null) closeRetired = retireLocked(previous)
             }
             closeRetired?.close()
             created

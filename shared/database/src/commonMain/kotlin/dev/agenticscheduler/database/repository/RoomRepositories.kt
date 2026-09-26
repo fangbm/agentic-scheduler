@@ -418,7 +418,19 @@ class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDataba
     }
 
     override suspend fun saveActive(value: LocalEnrollmentState.Active) {
-        database.localPairingEnrollmentDao().save(value.toRecord())
+        database.withWriteTransaction {
+            val conflictingAccounts = database.localPairingEnrollmentDao().states()
+                .asSequence()
+                .filter { it.status == "ACTIVE" && it.accountId != value.accountId.value }
+                .map { it.accountId }
+                .sorted()
+                .toList()
+            check(conflictingAccounts.isEmpty()) {
+                "A local installation can have only one ACTIVE Personal SyncSpace; existing ACTIVE accounts: " +
+                    conflictingAccounts.joinToString(", ")
+            }
+            database.localPairingEnrollmentDao().save(value.toRecord())
+        }
     }
 }
 
