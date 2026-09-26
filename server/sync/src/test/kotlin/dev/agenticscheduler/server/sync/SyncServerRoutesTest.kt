@@ -117,6 +117,21 @@ class SyncServerRoutesTest {
         assertEquals(HttpStatusCode.Created, response.status)
     }
 
+    @Test
+    fun `lifecycle request bodies are bounded before recovery state is read`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig().copy(maxRequestBodyBytes = 64)) }
+
+        val response = client.put("/v1/recovery/proof") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"proofHashBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","counter":0}""" + " ".repeat(80))
+        }
+
+        assertEquals(HttpStatusCode.PayloadTooLarge, response.status)
+        assertEquals(null, repository.registeredRecoveryProof())
+    }
+
 
     @Test
     fun `active device directory is authenticated deterministic and fails closed when incomplete`() = testApplication {
@@ -345,6 +360,8 @@ class SyncServerRoutesTest {
             AtomicRevocationResult.Applied
 
         override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = recoveryBytes
+
+        fun registeredRecoveryProof(): RecoveryProofRegistrationRequest? = recoveryProof
 
     }
 }

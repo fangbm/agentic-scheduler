@@ -544,11 +544,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection AtomicRevocationResult.SelfRevocationDenied
                 }
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection AtomicRevocationResult.NotFound
                 }
-                lockAccount(connection, actor.accountId)
                 val envelope = decodeCanonical(request.recoveryEnvelopeBase64Url, null)
                 if (envelope.isEmpty() || request.packages.isEmpty()) {
                     connection.rollback()
