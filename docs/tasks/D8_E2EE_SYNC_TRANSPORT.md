@@ -469,3 +469,26 @@ complete SyncSpace key ring may advance, and they are published atomically.
 Same-epoch Idempotent/Repaired replay MUST preserve the existing AMK reference. A rollback or
 integrity mismatch is rejected. Pairing `requestId` / PENDING admission semantics MUST NOT be
 reused for rotation.
+
+---
+
+## D8-02 follow-up — Frozen recovery replay and idle catch-up decisions
+
+OD-048 / SYN-005D and OD-049 / SYN-012A are now **decided**, not
+implementation-complete:
+
+- A recovery `requestId` binds immutable account/device/HPKE/credential-hash
+  identity. An authenticated, identical retry succeeds without advancing proof;
+  a changed-identity retry conflicts; a stale/invalid proof is unauthorized.
+  Lost-response clients keep the same PENDING identity and refresh bootstrap.
+  Implement a numbered PostgreSQL fingerprint migration and proof-gated
+  account-locked idempotency path, including lost-ack, collision, and race tests.
+- While ACTIVE and foregrounded, Desktop/Android catch up every 60 seconds and
+  Wear every 180 seconds (approximately ±10% jitter); lifecycle/local-write/
+  network events remain immediate. All triggers share a single-flight worker
+  and preserve rotation-before-envelope ordering. Background wake timing is
+  out of scope for v1; non-retryable auth/integrity failures cannot spin.
+
+These are implementation/acceptance items for D8 production closure, not grounds
+to label the current implementation FINAL PASS. See the authoritative contracts
+in `docs/SYNC_SECURITY_DECISIONS.md`.
