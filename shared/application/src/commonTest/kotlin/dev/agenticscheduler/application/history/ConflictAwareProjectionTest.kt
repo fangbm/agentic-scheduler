@@ -113,6 +113,38 @@ class ConflictAwareProjectionTest {
         assertEquals(configured, projected.configuration)
     }
 
+    @Test fun `PlanningProfile name projection also preserves a later Unconfigured mode`() = kotlinx.coroutines.runBlocking {
+        val profileId = id(74)
+        val configured = PlanningProfileConfigurationImage.Configured(
+            "Asia/Shanghai", emptyList(), "PT30M", "PT1H", "PT2H", AllDayEventPolicyImage.NON_BLOCKING,
+        )
+        val candidate = PlanningProfileImage(profileId, "Provisional", configured)
+        val durable = PlanningProfileImage(profileId, "Local", PlanningProfileConfigurationImage.Unconfigured)
+        val conflict = profileConflict(profileId, durable, candidate, listOf("name"), 70)
+
+        val result = assertIs<ConflictProjection.Projected>(ConflictAwareProjection(MemoryReceive(listOf(conflict))).project(
+            SyncSpaceId("personal-space"), EntityKind.PLANNING_PROFILE, profileId, PlanningProfilePut(null, durable),
+        ))
+        val projected = assertIs<PlanningProfilePut>(result.mutation).after
+        assertEquals("Provisional", projected.name)
+        assertEquals(PlanningProfileConfigurationImage.Unconfigured, projected.configuration)
+    }
+
+    @Test fun `PlanningProfile configured field without a compatible mode is unprojectable`() = kotlinx.coroutines.runBlocking {
+        val profileId = id(84)
+        val candidate = PlanningProfileImage(profileId, "Study", PlanningProfileConfigurationImage.Configured(
+            "Asia/Shanghai", emptyList(), "PT30M", "PT1H", "PT2H", AllDayEventPolicyImage.NON_BLOCKING,
+        ))
+        val durable = PlanningProfileImage(profileId, "Study", PlanningProfileConfigurationImage.Unconfigured)
+        val conflict = profileConflict(profileId, durable, candidate, listOf("configuration.timeZone"), 80)
+
+        val result = ConflictAwareProjection(MemoryReceive(listOf(conflict))).project(
+            SyncSpaceId("personal-space"), EntityKind.PLANNING_PROFILE, profileId, PlanningProfilePut(null, durable),
+        )
+        assertIs<ConflictProjection.Unprojectable>(result)
+        Unit
+    }
+
     @Test fun `FocusBlock put delete projection is deterministic from either durable branch`() = kotlinx.coroutines.runBlocking {
         val block = FocusBlockImage(id(50), id(51), ZonedTimeRangeImage("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", "UTC"), FlexibilityImage.SOFT, PinStateImage.UNPINNED)
         val putWins = focusConflict(block, putMutationId = id(52), deleteMutationId = id(53))
@@ -140,6 +172,20 @@ class ConflictAwareProjectionTest {
         val delete = SyncOperation(deleteMutationId, DvvSnapshot(emptyList(), DotSnapshot(id(57), 1)), HlcSnapshot(1, 0, id(57)), MutationOrigin.User, listOf(FocusBlockDelete(block)))
         val participants = listOf(put, delete).sortedBy(SyncOperation::mutationId).map { SyncConflictParticipant(MutationId(it.mutationId), it.dvv, LocalJournalCodec.encode(it)) }
         return SyncConflict("focus-${putMutationId}-${deleteMutationId}", SyncSpaceId("personal-space"), listOf(SyncConflictEntityRef(EntityKind.FOCUS_BLOCK, block.id, listOf("existence"))), participants, participants.first().mutationId, SyncConflictKind.SEMANTIC, commonCausalContextOf(participants), SyncConflictStatus.OPEN)
+    }
+
+    private fun profileConflict(profileId: String, durable: PlanningProfileImage, candidate: PlanningProfileImage, groups: List<String>, seed: Int): SyncConflict {
+        val local = SyncOperation(id(seed + 1), DvvSnapshot(emptyList(), DotSnapshot(id(seed + 2), 1)), HlcSnapshot(1, 0, id(seed + 2)), MutationOrigin.User, listOf(PlanningProfilePut(null, durable)))
+        val remote = SyncOperation(id(seed), DvvSnapshot(emptyList(), DotSnapshot(id(seed + 3), 1)), HlcSnapshot(2, 0, id(seed + 3)), MutationOrigin.User, listOf(PlanningProfilePut(null, candidate)))
+        val participants = listOf(local, remote).sortedBy(SyncOperation::mutationId).map {
+            SyncConflictParticipant(MutationId(it.mutationId), it.dvv, LocalJournalCodec.encode(it))
+        }
+        return SyncConflict(
+            "profile-$profileId", SyncSpaceId("personal-space"),
+            listOf(SyncConflictEntityRef(EntityKind.PLANNING_PROFILE, profileId, groups)),
+            participants, MutationId(remote.mutationId), SyncConflictKind.SEMANTIC,
+            commonCausalContextOf(participants), SyncConflictStatus.OPEN,
+        )
     }
 
     private fun id(number: Int) = "00000000-0000-7000-8000-0000000000${number.toString().padStart(2, '0')}"
