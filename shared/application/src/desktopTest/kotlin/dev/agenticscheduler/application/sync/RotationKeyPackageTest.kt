@@ -125,7 +125,14 @@ class RotationKeyPackageTest {
                     throw cancellation
                 }
             },
-            recipient = error("recipient must not be called when fetch is cancelled"),
+            recipient = service(
+                MemoryEnrollments(active),
+                AccountStore(null),
+                MemoryRing(
+                    SyncSpaceKeyState(space, 7),
+                    InstallSyncKeyPackageResult.Advanced(SyncKeyPackageAdoption(setOf(8), setOf(7))),
+                ),
+            ),
         )
 
         assertEquals(cancellation, assertFailsWith<CancellationException> { result.catchUp() })
