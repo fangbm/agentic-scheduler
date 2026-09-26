@@ -85,6 +85,16 @@ class KtorSyncTransport(
 
 class SyncTransportException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
+internal fun SyncTransportException.asUploadFailure(): SyncUploadResult {
+    val code = message ?: "UNKNOWN_TRANSPORT_FAILURE"
+    val status = code.removePrefix("HTTP_").toIntOrNull()
+    return if (status == 408 || status == 429 || status != null && status >= 500) {
+        SyncUploadResult.RetryableFailure(code)
+    } else {
+        SyncUploadResult.NonRetryableFailure(code)
+    }
+}
+
 internal fun encodePathSegment(value: String): String = buildString {
     value.encodeToByteArray().forEach { byte ->
         val number = byte.toInt() and 0xff

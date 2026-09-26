@@ -77,7 +77,14 @@ class SyncTransportWorker(
                 }
             }
             if (!stored.uploaded) {
-                when (val result = transport.upload(stored.envelope)) {
+                val uploadResult = try {
+                    transport.upload(stored.envelope)
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (failure: SyncTransportException) {
+                    failure.asUploadFailure()
+                }
+                when (val result = uploadResult) {
                     is SyncUploadResult.Stored, is SyncUploadResult.Idempotent -> {
                         outbound.markUploaded(syncSpaceId, operation.mutationId)
                         uploaded++
@@ -92,7 +99,13 @@ class SyncTransportWorker(
         var applied = 0
         var cursor = receive.serverCursor(syncSpaceId)
         while (true) {
-            val batch = transport.fetch(syncSpaceId, cursor, fetchLimit)
+            val batch = try {
+                transport.fetch(syncSpaceId, cursor, fetchLimit)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (failure: SyncTransportException) {
+                return SyncTransportRunResult(uploaded, fetched, applied, failure.asUploadFailure())
+            }
             if (batch.isEmpty()) break
             batch.forEach { remote ->
                 val result = receiveGateway.receive(

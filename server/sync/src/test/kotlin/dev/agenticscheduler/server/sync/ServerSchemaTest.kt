@@ -37,5 +37,8 @@ class ServerSchemaTest {
         val deviceHpkeSql = javaClass.classLoader.getResourceAsStream(migrations[7].resource)!!.bufferedReader().use { it.readText() }
         assertTrue(deviceHpkeSql.contains("hpke_public_key"))
         assertTrue(deviceHpkeSql.contains("octet_length"))
+        val recoveryIdentitySql = javaClass.classLoader.getResourceAsStream(migrations[8].resource)!!.bufferedReader().use { it.readText() }
+        assertTrue(recoveryIdentitySql.contains("request_fingerprint"))
+        assertTrue(recoveryIdentitySql.contains("octet_length"))
     }
 }
