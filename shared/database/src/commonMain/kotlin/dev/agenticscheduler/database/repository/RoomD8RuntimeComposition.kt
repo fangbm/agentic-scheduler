@@ -76,12 +76,16 @@ class RoomD8RuntimeComposition(
     fun newCatchUpTrigger(
         scope: CoroutineScope,
         fetchLimit: Int = 100,
+        pollingIntervalMillis: Long? = null,
         onUnexpectedFailure: () -> Unit = {},
+        onNonRetryableFailure: (String) -> Unit = {},
     ): ActiveSyncCatchUpTrigger = ActiveSyncCatchUpTrigger(
         scope = scope,
         committedOutboundMutationRevision = database.mutationJournalDao().observeOutboundMutationRevision(),
         catchUp = { catchUp(fetchLimit) },
         onUnexpectedFailure = onUnexpectedFailure,
+        onNonRetryableFailure = onNonRetryableFailure,
+        pollingIntervalMillis = pollingIntervalMillis,
     )
 
     suspend fun deactivate() = host.deactivate()

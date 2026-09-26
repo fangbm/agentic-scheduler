@@ -15,6 +15,7 @@ import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertFailsWith
 
 class ActiveSyncRuntimeActivationTest {
     @Test
@@ -117,8 +118,10 @@ class ActiveSyncRuntimeActivationTest {
                 assertAccountMismatch { localOnlyRuntime.sourceFacts.project(EventPut(null, conflicted)) }
 
                 val replacementCredential = store.generate()
-                enrollmentRepository.saveActive(enrollment.copy(deviceCredentialReference = replacementCredential.reference))
-                assertIs<ActiveSyncRuntimeCreation.Active>(
+                assertFailsWith<IllegalStateException> {
+                    enrollmentRepository.saveActive(enrollment.copy(deviceCredentialReference = replacementCredential.reference))
+                }
+                assertIs<ActiveSyncRuntimeCreation.MissingDeviceCredential>(
                     activeAccountRuntime.activate(ActiveSyncRuntimeConfiguration(account, "https://sync.example")),
                 )
                 activeAccountRuntime.deactivate()

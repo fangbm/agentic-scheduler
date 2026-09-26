@@ -15,6 +15,7 @@ object ServerMigrationCatalog {
         ServerMigration(6, "db/migration/V6__recovery_proof.sql"),
         ServerMigration(7, "db/migration/V7__atomic_key_rotation.sql"),
         ServerMigration(8, "db/migration/V8__device_hpke_identity.sql"),
+        ServerMigration(9, "db/migration/V9__recovery_enrollment_fingerprint.sql"),
     )
 }
 

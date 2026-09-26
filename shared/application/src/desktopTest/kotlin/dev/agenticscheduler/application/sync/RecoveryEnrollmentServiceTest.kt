@@ -86,6 +86,71 @@ class RecoveryEnrollmentServiceTest {
     }
 
     @Test
+    fun `lost enrollment response refreshes proof and retries the same durable pending identity`() = runBlocking {
+        val fixture = Fixture()
+        fixture.transport.bootstrapResponses += listOf(
+            ClientRecoveryBootstrapResponse(5, envelopeBase64Url()),
+            ClientRecoveryBootstrapResponse(6, envelopeBase64Url()),
+        )
+        fixture.transport.onEnrollment = { call, _ ->
+            if (call == 1) {
+                // Model a committed request whose response was lost. The next bootstrap observes
+                // the advanced proof counter.
+                throw SyncTransportException("CONNECTION_LOST_AFTER_COMMIT")
+            }
+            ClientRecoveryEnrollmentCreated(account.value, device.value)
+        }
+
+        val result = fixture.service.recover(account, secret, device, request)
+
+        assertIs<RecoveryEnrollmentServiceResult.Activated>(result)
+        val active = (fixture.enrollments.value as LocalEnrollmentState.Active)
+        assertEquals(1, fixture.privateKeys.generated)
+        assertEquals(1, fixture.credentials.generated)
+        assertEquals(fixture.transport.requests.first().hpkePublicKeyBase64Url, active.hpkePublicKey.value)
+        assertEquals(2, fixture.transport.bootstrapCalls)
+        assertEquals(2, fixture.transport.requests.size)
+        val first = fixture.transport.requests[0]
+        val retry = fixture.transport.requests[1]
+        assertEquals(first.accountId, retry.accountId)
+        assertEquals(first.requestId, retry.requestId)
+        assertEquals(first.targetDeviceId, retry.targetDeviceId)
+        assertEquals(first.hpkePublicKeyBase64Url, retry.hpkePublicKeyBase64Url)
+        assertEquals(first.credentialHashBase64Url, retry.credentialHashBase64Url)
+        assertEquals(5L, first.counter)
+        assertEquals(6L, retry.counter)
+        assertEquals(RecoveryRegistrationProof.calculate(secret, account.value, 5), first.proofBase64Url)
+        assertEquals(RecoveryRegistrationProof.calculate(secret, account.value, 6), retry.proofBase64Url)
+        assertEquals(RecoveryRegistrationProof.hash(RecoveryRegistrationProof.calculate(secret, account.value, 7)), retry.nextProofHashBase64Url)
+    }
+
+    @Test
+    fun `invalid recovery proof and request identity conflict are returned without retry`() = runBlocking {
+        val invalidProof = Fixture().also {
+            it.transport.onEnrollment = { _, _ -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.InvalidProof) }
+        }
+        assertEquals(
+            RecoveryEnrollmentServiceResult.InvalidRecoveryProof,
+            invalidProof.service.recover(account, secret, device, request),
+        )
+        assertEquals(1, invalidProof.transport.bootstrapCalls)
+        assertEquals(1, invalidProof.transport.requests.size)
+        assertNull(invalidProof.enrollments.value)
+
+        val identityConflict = Fixture().also {
+            it.transport.onEnrollment = { _, _ -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.RequestIdentityConflict) }
+        }
+        assertEquals(
+            RecoveryEnrollmentServiceResult.RecoveryRequestConflict,
+            identityConflict.service.recover(account, secret, device, request),
+        )
+        assertEquals(1, identityConflict.transport.bootstrapCalls)
+        assertEquals(1, identityConflict.transport.requests.size)
+        assertIs<LocalEnrollmentState.Pending>(identityConflict.enrollments.value)
+        Unit
+    }
+
+    @Test
     fun `recovery rejects an existing pending account after another account became active`() = runBlocking {
         val fixture = Fixture()
         val pending = LocalEnrollmentState.Pending(
@@ -183,12 +248,21 @@ class RecoveryEnrollmentServiceTest {
     private class Transport(private val envelope: String) : RecoveryEnrollmentTransport {
         var request: ClientRecoveryEnrollmentRequest? = null
         var enrollments = 0
-        override suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse =
-            ClientRecoveryBootstrapResponse(counter = 5, recoveryEnvelopeBase64Url = envelope)
+        val requests = mutableListOf<ClientRecoveryEnrollmentRequest>()
+        val bootstrapResponses = mutableListOf<ClientRecoveryBootstrapResponse>()
+        var bootstrapCalls = 0
+        var onEnrollment: suspend (call: Int, request: ClientRecoveryEnrollmentRequest) -> ClientRecoveryEnrollmentCreated =
+            { _, value -> ClientRecoveryEnrollmentCreated(value.accountId, value.targetDeviceId) }
+        override suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse {
+            bootstrapCalls++
+            if (bootstrapResponses.isNotEmpty()) return bootstrapResponses.removeAt(0)
+            return ClientRecoveryBootstrapResponse(counter = 5, recoveryEnvelopeBase64Url = envelope)
+        }
         override suspend fun enrollWithRecovery(request: ClientRecoveryEnrollmentRequest): ClientRecoveryEnrollmentCreated {
             this.request = request
+            requests += request
             enrollments++
-            return ClientRecoveryEnrollmentCreated(request.accountId, request.targetDeviceId)
+            return onEnrollment(enrollments, request)
         }
     }
 

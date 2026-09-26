@@ -63,6 +63,7 @@ class WearMainActivity : ComponentActivity() {
     private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
+    @Volatile private var d8IsForeground = false
     private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
     private val calendarQueryService: ConflictAwareSourceFactReadService by lazy {
         ConflictAwareSourceFactReadService(
@@ -92,10 +93,13 @@ class WearMainActivity : ComponentActivity() {
                         is ActiveSyncRuntimeCreation.Active -> {
                             val trigger = d8Runtime.newCatchUpTrigger(
                                 d8Scope,
-                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; retry remains scheduled.") },
+                                pollingIntervalMillis = ActiveSyncCatchUpTrigger.WEAR_POLL_INTERVAL_MILLIS,
+                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; transient retry remains scheduled.") },
+                                onNonRetryableFailure = { reason -> android.util.Log.e("D8Sync", "Automatic sync stopped: $reason. Check account credentials or sync integrity before retrying.") },
                             )
                             d8SyncTrigger = trigger
                             trigger.start()
+                            trigger.setForeground(d8IsForeground)
                             registerNetworkRetry(trigger)
                             d8StartupState.value = D8StartupState.Ready
                         }
@@ -128,7 +132,14 @@ class WearMainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        d8SyncTrigger?.requestCatchUp()
+        d8IsForeground = true
+        d8SyncTrigger?.setForeground(true)
+    }
+
+    override fun onStop() {
+        d8IsForeground = false
+        d8SyncTrigger?.setForeground(false)
+        super.onStop()
     }
 
     override fun onDestroy() {

@@ -172,7 +172,9 @@ sealed interface RecoveryProofRegistrationResult {
 
 sealed interface RecoveryEnrollmentResult {
     data class Created(val accountId: String, val deviceId: String) : RecoveryEnrollmentResult
+    data class Idempotent(val accountId: String, val deviceId: String) : RecoveryEnrollmentResult
     data object InvalidProof : RecoveryEnrollmentResult
+    data object RequestIdentityConflict : RecoveryEnrollmentResult
     data object TargetDeviceAlreadyExists : RecoveryEnrollmentResult
     data object UnknownAccount : RecoveryEnrollmentResult
 }

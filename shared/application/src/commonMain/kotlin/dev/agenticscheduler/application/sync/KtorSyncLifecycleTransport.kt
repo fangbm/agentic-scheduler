@@ -221,7 +221,17 @@ class KtorSyncLifecycleTransport(
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(ClientRecoveryEnrollmentRequest.serializer(), request))
         }
-        requireStatus(response, HttpStatusCode.Created)
+        when (response.status) {
+            // SYN-005D: a first successful enrollment is Created, while a
+            // completed request with the same immutable identity is an
+            // idempotent success and is returned as OK.
+            HttpStatusCode.Created,
+            HttpStatusCode.OK,
+            -> Unit
+            HttpStatusCode.Unauthorized -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.InvalidProof)
+            HttpStatusCode.Conflict -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.RequestIdentityConflict)
+            else -> requireStatus(response, HttpStatusCode.Created)
+        }
         return decode(response.bodyAsText(), ClientRecoveryEnrollmentCreated.serializer())
     }
 
@@ -282,3 +292,11 @@ class KtorSyncLifecycleTransport(
         throw SyncTransportException("MALFORMED_SERVER_RESPONSE", failure)
     }
 }
+
+enum class RecoveryEnrollmentRejection {
+    InvalidProof,
+    RequestIdentityConflict,
+}
+
+/** A definitive SYN-005D rejection. It must not be treated as a lost response and retried. */
+class RecoveryEnrollmentRejected(val rejection: RecoveryEnrollmentRejection) : RuntimeException(rejection.name)
