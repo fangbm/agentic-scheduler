@@ -43,6 +43,10 @@ class ActiveSyncSingleLocalAccountTest {
                     )
                     assertEquals(expectedAccounts, result.activeAccountIds)
                 }
+                val withoutConfiguration = assertIs<ActiveSyncRuntimeCreation.MultipleActiveEnrollments>(
+                    runtime.activateWithoutConfiguration(),
+                )
+                assertEquals(expectedAccounts, withoutConfiguration.activeAccountIds)
             } finally {
                 databaseFile.delete()
             }
