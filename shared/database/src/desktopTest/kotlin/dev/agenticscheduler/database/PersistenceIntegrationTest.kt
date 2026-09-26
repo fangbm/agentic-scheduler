@@ -596,6 +596,105 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
+    @Test fun `Room pending enrollment cannot roll an active account back to pending`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val account = dev.agenticscheduler.sync.AccountId("acct-active")
+        val active = dev.agenticscheduler.application.sync.LocalEnrollmentState.Active(
+            accountId = account,
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-active"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-active"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://active-private"),
+            syncSpaceId = SyncSpaceId("personal-active"),
+            accountMasterKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://active-amk"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://active-credential"),
+        )
+        enrollments.saveActive(active)
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = active.deviceId,
+            enrollmentRequestId = active.enrollmentRequestId,
+            hpkePublicKey = active.hpkePublicKey,
+            hpkePrivateKeyReference = active.hpkePrivateKeyReference,
+            deviceCredentialReference = active.deviceCredentialReference,
+        )
+
+        val failure = try {
+            enrollments.savePending(pending)
+            null
+        } catch (error: IllegalStateException) {
+            error
+        }
+
+        assertNotNull(failure)
+        assertEquals(active, enrollments.state(account))
+        database.close()
+    }
+
+    @Test fun `Room pending enrollment cannot replace another pending request for the same account`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val account = dev.agenticscheduler.sync.AccountId("acct-pending")
+        val first = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-first"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-first"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://first-private"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://first-credential"),
+        )
+        enrollments.savePending(first)
+        val replacement = first.copy(
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-second"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-second"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://second-private"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://second-credential"),
+        )
+
+        val failure = try {
+            enrollments.savePending(replacement)
+            null
+        } catch (error: IllegalStateException) {
+            error
+        }
+
+        assertNotNull(failure)
+        assertEquals(first, enrollments.state(account))
+
+        val sameRequestWithChangedIdentity = first.copy(
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://rotated-private"),
+        )
+        val identityFailure = try {
+            enrollments.savePending(sameRequestWithChangedIdentity)
+            null
+        } catch (error: IllegalStateException) {
+            error
+        }
+        assertNotNull(identityFailure)
+        assertEquals(first, enrollments.state(account))
+        database.close()
+    }
+
+    @Test fun `Room pending enrollment save is idempotent for the same immutable request`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            accountId = dev.agenticscheduler.sync.AccountId("acct-pending"),
+            deviceId = dev.agenticscheduler.sync.DeviceId("device-pending"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("request-pending"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pending-private"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://pending-credential"),
+        )
+        enrollments.savePending(pending)
+
+        enrollments.savePending(pending)
+
+        assertEquals(pending, enrollments.state(pending.accountId))
+        database.close()
+    }
+
     @Test fun `pairing active write failure rolls back the Room key ring and leaves pending enrollment`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val local = RoomLocalEnrollmentRepository(database)

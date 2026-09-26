@@ -79,6 +79,69 @@ class LocalEnrollmentRequestServiceTest {
         assertNull(enrollments.state(account))
     }
 
+    @Test
+    fun `another active account rejects reuse of an existing pending enrollment`() = runBlocking {
+        val activeAccount = AccountId("acct-active")
+        val pending = LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = device,
+            enrollmentRequestId = request,
+            hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = privateRef,
+            deviceCredentialReference = credentialRef,
+        )
+        val enrollments = MemoryEnrollments().apply {
+            savePending(pending)
+            saveActive(
+                LocalEnrollmentState.Active(
+                    accountId = activeAccount,
+                    deviceId = DeviceId("active-device"),
+                    enrollmentRequestId = EnrollmentRequestId("active-request"),
+                    hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                    hpkePrivateKeyReference = SecretReference("secure://active-private"),
+                    syncSpaceId = SyncSpaceId("personal-active"),
+                    accountMasterKeyReference = SecretReference("secure://active-amk"),
+                    deviceCredentialReference = SecretReference("secure://active-credential"),
+                ),
+            )
+        }
+        val privateKeys = MemoryPrivateKeys(privateRef)
+        val credentials = MemoryCredentials(credentialRef)
+        val service = LocalEnrollmentRequestService(enrollments, privateKeys, credentials)
+
+        val result = assertIs<StartLocalEnrollmentResult.RejectedActiveAccount>(
+            service.startPending(account, device, request),
+        )
+
+        assertEquals(listOf(activeAccount), result.activeAccountIds)
+        assertEquals(pending, enrollments.state(account))
+        assertEquals(0, privateKeys.generationCount)
+        assertEquals(0, credentials.generationCount)
+        assertEquals(1, enrollments.pendingWriteCount)
+    }
+
+    @Test
+    fun `existing pending enrollment is revalidated through durable save before reuse`() = runBlocking {
+        val pending = LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = device,
+            enrollmentRequestId = request,
+            hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = privateRef,
+            deviceCredentialReference = credentialRef,
+        )
+        val enrollments = MemoryEnrollments().apply { savePending(pending) }
+        val privateKeys = MemoryPrivateKeys(privateRef)
+        val credentials = MemoryCredentials(credentialRef)
+        val service = LocalEnrollmentRequestService(enrollments, privateKeys, credentials)
+
+        assertEquals(StartLocalEnrollmentResult.Existing(pending), service.startPending(account, device, request))
+
+        assertEquals(2, enrollments.pendingWriteCount)
+        assertEquals(0, privateKeys.generationCount)
+        assertEquals(0, credentials.generationCount)
+    }
+
     private class MemoryEnrollments : LocalEnrollmentRepository {
         private val values = mutableMapOf<AccountId, LocalEnrollmentState>()
         var pendingWriteCount = 0

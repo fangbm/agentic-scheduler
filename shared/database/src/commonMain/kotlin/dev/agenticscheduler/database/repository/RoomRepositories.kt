@@ -415,7 +415,8 @@ class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDataba
 
     override suspend fun savePending(value: LocalEnrollmentState.Pending) {
         database.withWriteTransaction {
-            val conflictingAccounts = database.localPairingEnrollmentDao().states()
+            val currentStates = database.localPairingEnrollmentDao().states()
+            val conflictingAccounts = currentStates
                 .asSequence()
                 .filter { it.status == "ACTIVE" && it.accountId != value.accountId.value }
                 .map { it.accountId }
@@ -425,7 +426,24 @@ class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDataba
                 "A local installation can have only one ACTIVE Personal SyncSpace; existing ACTIVE accounts: " +
                     conflictingAccounts.joinToString(", ")
             }
-            database.localPairingEnrollmentDao().save(value.toRecord())
+
+            val currentAccountState = currentStates.singleOrNull { it.accountId == value.accountId.value }
+            check(currentAccountState?.status != "ACTIVE") {
+                "An ACTIVE local enrollment cannot transition back to PENDING."
+            }
+
+            val pendingRecord = value.toRecord()
+            if (currentAccountState != null) {
+                check(currentAccountState.enrollmentRequestId == value.enrollmentRequestId.value) {
+                    "A different enrollment request cannot replace an existing PENDING enrollment."
+                }
+                check(currentAccountState == pendingRecord) {
+                    "An existing PENDING enrollment request is immutable."
+                }
+                return@withWriteTransaction
+            }
+
+            database.localPairingEnrollmentDao().save(pendingRecord)
         }
     }
 

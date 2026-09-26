@@ -85,10 +85,12 @@ class LocalEnrollmentRequestService(
         deviceId: DeviceId,
         enrollmentRequestId: EnrollmentRequestId,
     ): StartLocalEnrollmentResult {
-        val existing = enrollments.state(accountId)
-        if (existing != null) return StartLocalEnrollmentResult.Existing(existing)
-
-        val conflictingActiveAccounts = enrollments.states()
+        // Use the repository's one-snapshot API so an existing PENDING row cannot
+        // short-circuit the single-active-account check after another account has
+        // become ACTIVE.
+        val states = enrollments.states()
+        val existing = states.firstOrNull { it.accountId == accountId }
+        val conflictingActiveAccounts = states
             .asSequence()
             .filterIsInstance<LocalEnrollmentState.Active>()
             .map(LocalEnrollmentState.Active::accountId)
@@ -98,6 +100,16 @@ class LocalEnrollmentRequestService(
             .toList()
         if (conflictingActiveAccounts.isNotEmpty()) {
             return StartLocalEnrollmentResult.RejectedActiveAccount(conflictingActiveAccounts)
+        }
+        // Preserve the established idempotent result for a same-account ACTIVE row.
+        if (existing is LocalEnrollmentState.Active) {
+            return StartLocalEnrollmentResult.Existing(existing)
+        }
+        if (existing is LocalEnrollmentState.Pending) {
+            // Revalidate the existing request at the durable transaction boundary;
+            // another activation may have raced the snapshot read above.
+            enrollments.savePending(existing)
+            return StartLocalEnrollmentResult.Existing(existing)
         }
 
         val generated = privateKeys.generatePairingDeviceKey()
