@@ -20,6 +20,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
+import androidx.compose.ui.platform.LocalWindowInfo
 import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
@@ -139,7 +140,9 @@ fun main() = application {
                 is ActiveSyncRuntimeCreation.Active -> {
                     val trigger = d8Runtime.newCatchUpTrigger(
                         d8Scope,
-                        onUnexpectedFailure = { System.err.println("D8 catch-up failed unexpectedly; retry remains scheduled.") },
+                        pollingIntervalMillis = ActiveSyncCatchUpTrigger.DESKTOP_ANDROID_POLL_INTERVAL_MILLIS,
+                        onUnexpectedFailure = { System.err.println("D8 catch-up failed unexpectedly; transient retry remains scheduled.") },
+                        onNonRetryableFailure = { reason -> System.err.println("Automatic sync stopped: $reason. Check account credentials or sync integrity before retrying.") },
                     )
                     d8SyncTrigger.value = trigger
                     trigger.start()
@@ -180,6 +183,10 @@ fun main() = application {
             }
         }
     }, title = "Agentic Scheduler") {
+        val windowInfo = LocalWindowInfo.current
+        LaunchedEffect(windowInfo.isWindowFocused) {
+            d8SyncTrigger.value?.setForeground(windowInfo.isWindowFocused)
+        }
         val currentStartupState by startupState
         MaterialTheme {
             Surface {

@@ -8,6 +8,7 @@ import dev.agenticscheduler.sync.RecoveryEnvelopePlaintextV1
 import dev.agenticscheduler.sync.RecoveryWireCodec
 import dev.agenticscheduler.sync.RecoveryWireDecodeResult
 import dev.agenticscheduler.sync.decodeCanonicalBase64Url
+import kotlinx.coroutines.CancellationException
 
 sealed interface RecoveryEnrollmentServiceResult {
     data class Activated(val state: LocalEnrollmentState.Active) : RecoveryEnrollmentServiceResult
@@ -19,6 +20,8 @@ sealed interface RecoveryEnrollmentServiceResult {
     data object EnvelopeBindingMismatch : RecoveryEnrollmentServiceResult
     data object InvalidBootstrapCounter : RecoveryEnrollmentServiceResult
     data object RecoveryEnrollmentFailed : RecoveryEnrollmentServiceResult
+    data object InvalidRecoveryProof : RecoveryEnrollmentServiceResult
+    data object RecoveryRequestConflict : RecoveryEnrollmentServiceResult
     data object RecoveryEnrollmentIdentityMismatch : RecoveryEnrollmentServiceResult
     data object MissingDeviceCredential : RecoveryEnrollmentServiceResult
     data object AccountMasterKeyImportFailed : RecoveryEnrollmentServiceResult
@@ -50,15 +53,17 @@ class RecoveryEnrollmentService(
         deviceId: DeviceId,
         enrollmentRequestId: EnrollmentRequestId,
     ): RecoveryEnrollmentServiceResult {
-        val bootstrap = try {
+        var bootstrap = try {
             transport.recoveryBootstrap(accountId.value)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Throwable) {
             return RecoveryEnrollmentServiceResult.BootstrapFailed
         }
         if (bootstrap.counter < 0 || bootstrap.counter == Long.MAX_VALUE) {
             return RecoveryEnrollmentServiceResult.InvalidBootstrapCounter
         }
-        val plaintext = when (val opened = decodeAndOpen(accountId, recoverySecret, bootstrap.recoveryEnvelopeBase64Url)) {
+        var plaintext = when (val opened = decodeAndOpen(accountId, recoverySecret, bootstrap.recoveryEnvelopeBase64Url)) {
             is OpenedEnvelope.Decrypted -> opened.plaintext
             is OpenedEnvelope.Failed -> return opened.result
         }
@@ -81,28 +86,74 @@ class RecoveryEnrollmentService(
             ?: return RecoveryEnrollmentServiceResult.MissingDeviceCredential
         val credential = credentials.load(credentialReference)
             ?: return RecoveryEnrollmentServiceResult.MissingDeviceCredential
-        val proof = RecoveryRegistrationProof.calculate(recoverySecret, accountId.value, bootstrap.counter)
-        val nextProof = RecoveryRegistrationProof.calculate(recoverySecret, accountId.value, bootstrap.counter + 1)
+        val credentialHash = DeviceCredentialHashing.sha256Base64Url(credential)
+        val firstRequest = enrollmentRequest(accountId, enrollmentRequestId, deviceId, pending, credentialHash, recoverySecret, bootstrap)
         val enrollment = try {
-            transport.enrollWithRecovery(
-                ClientRecoveryEnrollmentRequest(
-                    accountId = accountId.value,
-                    requestId = enrollmentRequestId.value,
-                    targetDeviceId = deviceId.value,
-                    hpkePublicKeyBase64Url = pending.hpkePublicKey.value,
-                    credentialHashBase64Url = DeviceCredentialHashing.sha256Base64Url(credential),
-                    proofBase64Url = proof,
-                    counter = bootstrap.counter,
-                    nextProofHashBase64Url = RecoveryRegistrationProof.hash(nextProof),
-                ),
-            )
+            transport.enrollWithRecovery(firstRequest)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (rejected: RecoveryEnrollmentRejected) {
+            return rejected.toServiceResult()
         } catch (_: Throwable) {
-            return RecoveryEnrollmentServiceResult.RecoveryEnrollmentFailed
+            // The server may have committed before the response was lost. Keep the durable PENDING
+            // identity and credential, refresh the current proof counter, and retry that identity.
+            bootstrap = try {
+                transport.recoveryBootstrap(accountId.value)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                return RecoveryEnrollmentServiceResult.RecoveryEnrollmentFailed
+            }
+            if (bootstrap.counter < 0 || bootstrap.counter == Long.MAX_VALUE) {
+                return RecoveryEnrollmentServiceResult.InvalidBootstrapCounter
+            }
+            plaintext = when (val opened = decodeAndOpen(accountId, recoverySecret, bootstrap.recoveryEnvelopeBase64Url)) {
+                is OpenedEnvelope.Decrypted -> opened.plaintext
+                is OpenedEnvelope.Failed -> return opened.result
+            }
+            val retryRequest = enrollmentRequest(accountId, enrollmentRequestId, deviceId, pending, credentialHash, recoverySecret, bootstrap)
+            try {
+                transport.enrollWithRecovery(retryRequest)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (rejected: RecoveryEnrollmentRejected) {
+                return rejected.toServiceResult()
+            } catch (_: Throwable) {
+                return RecoveryEnrollmentServiceResult.RecoveryEnrollmentFailed
+            }
         }
         if (enrollment.accountId != accountId.value || enrollment.deviceId != deviceId.value) {
             return RecoveryEnrollmentServiceResult.RecoveryEnrollmentIdentityMismatch
         }
         return installAndActivate(pending, plaintext, credentialReference)
+    }
+
+    private fun enrollmentRequest(
+        accountId: AccountId,
+        enrollmentRequestId: EnrollmentRequestId,
+        deviceId: DeviceId,
+        pending: LocalEnrollmentState.Pending,
+        credentialHash: String,
+        recoverySecret: RecoverySecret,
+        bootstrap: ClientRecoveryBootstrapResponse,
+    ): ClientRecoveryEnrollmentRequest {
+        val proof = RecoveryRegistrationProof.calculate(recoverySecret, accountId.value, bootstrap.counter)
+        val nextProof = RecoveryRegistrationProof.calculate(recoverySecret, accountId.value, bootstrap.counter + 1)
+        return ClientRecoveryEnrollmentRequest(
+            accountId = accountId.value,
+            requestId = enrollmentRequestId.value,
+            targetDeviceId = deviceId.value,
+            hpkePublicKeyBase64Url = pending.hpkePublicKey.value,
+            credentialHashBase64Url = credentialHash,
+            proofBase64Url = proof,
+            counter = bootstrap.counter,
+            nextProofHashBase64Url = RecoveryRegistrationProof.hash(nextProof),
+        )
+    }
+
+    private fun RecoveryEnrollmentRejected.toServiceResult(): RecoveryEnrollmentServiceResult = when (rejection) {
+        RecoveryEnrollmentRejection.InvalidProof -> RecoveryEnrollmentServiceResult.InvalidRecoveryProof
+        RecoveryEnrollmentRejection.RequestIdentityConflict -> RecoveryEnrollmentServiceResult.RecoveryRequestConflict
     }
 
     private fun decodeAndOpen(

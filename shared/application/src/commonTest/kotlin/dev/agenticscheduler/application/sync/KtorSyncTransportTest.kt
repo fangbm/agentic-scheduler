@@ -173,6 +173,49 @@ class KtorSyncTransportTest {
     }
 
     @Test
+    fun `recovery enrollment classifies unauthorized proof and immutable identity conflict`() = runBlocking {
+        var status = HttpStatusCode.OK
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond(
+                        """{\"accountId\":\"account\",\"deviceId\":\"device\"}""",
+                        status = status,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { null })
+        val request = ClientRecoveryEnrollmentRequest(
+            accountId = "account",
+            requestId = "request",
+            targetDeviceId = "device",
+            hpkePublicKeyBase64Url = "AQI",
+            credentialHashBase64Url = "AwQ",
+            proofBase64Url = "BQY",
+            counter = 1,
+            nextProofHashBase64Url = "Bwg",
+        )
+
+        assertEquals(
+            ClientRecoveryEnrollmentCreated("account", "device"),
+            lifecycle.enrollWithRecovery(request),
+        )
+        status = HttpStatusCode.Unauthorized
+        assertEquals(
+            RecoveryEnrollmentRejection.InvalidProof,
+            assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
+        )
+        status = HttpStatusCode.Conflict
+        assertEquals(
+            RecoveryEnrollmentRejection.RequestIdentityConflict,
+            assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
+        )
+        client.close()
+    }
+
+    @Test
     fun `bootstrap returns first credential without adding authorization`() = runBlocking {
         var authorization: String? = null
         val client = HttpClient(MockEngine) {
