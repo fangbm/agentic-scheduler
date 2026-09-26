@@ -196,7 +196,9 @@ private fun overlayConflictedGroups(current: EntityMutation?, candidate: EntityM
             effort = if ("effort" in groups) candidate.after.effort else current.after.effort,
             deadline = if ("deadline" in groups) candidate.after.deadline else current.after.deadline,
         )))
-        current is PlanningProfilePut && candidate is PlanningProfilePut -> OverlayResult.Value(current.copy(after = overlayProfile(current.after, candidate.after, groups)))
+        current is PlanningProfilePut && candidate is PlanningProfilePut ->
+            overlayProfile(current.after, candidate.after, groups)?.let { OverlayResult.Value(current.copy(after = it)) }
+                ?: OverlayResult.Invalid
         current is FocusBlockPut && candidate is FocusBlockDelete -> if (groups == setOf("existence")) OverlayResult.Value(null) else OverlayResult.Invalid
         current is FocusBlockPut && candidate is FocusBlockPut -> OverlayResult.Value(current.copy(after = current.after.copy(
             taskId = if ("taskId" in groups) candidate.after.taskId else current.after.taskId,
@@ -215,27 +217,33 @@ private fun overlayConflictedGroups(current: EntityMutation?, candidate: EntityM
     }
 }
 
-private fun overlayProfile(current: PlanningProfileImage, candidate: PlanningProfileImage, groups: Set<String>): PlanningProfileImage {
+private fun overlayProfile(current: PlanningProfileImage, candidate: PlanningProfileImage, groups: Set<String>): PlanningProfileImage? {
+    val projectedName = if ("name" in groups) candidate.name else current.name
     // A mode conflict can be recorded for a concurrent configuration transition
     // even when both current and provisional images are Configured. In that
     // case the mode is already the same; replacing the whole configuration
     // would discard compatible groups accepted after the candidate was made.
     if ("configuration.mode" in groups && current.configuration::class != candidate.configuration::class) return current.copy(
-        name = if ("name" in groups) candidate.name else current.name,
+        name = projectedName,
         configuration = candidate.configuration,
     )
-    if (current.configuration is PlanningProfileConfigurationImage.Unconfigured &&
-        candidate.configuration is PlanningProfileConfigurationImage.Unconfigured
-    ) return current.copy(name = if ("name" in groups) candidate.name else current.name)
-    val currentConfigured = current.configuration as? PlanningProfileConfigurationImage.Configured ?: return current
-    val candidateConfigured = candidate.configuration as? PlanningProfileConfigurationImage.Configured ?: return current
+    val currentConfigured = current.configuration as? PlanningProfileConfigurationImage.Configured
+    val candidateConfigured = candidate.configuration as? PlanningProfileConfigurationImage.Configured
+    if (currentConfigured == null || candidateConfigured == null) {
+        // Name is independent of configuration mode. A configured field cannot
+        // be overlaid here without also changing an unlisted mode or inventing
+        // the missing configured values.
+        return if (groups.none { it.startsWith("configuration.") && it != "configuration.mode" }) {
+            current.copy(name = projectedName)
+        } else null
+    }
     val currentByDay = currentConfigured.weeklyAvailability.groupBy { it.dayOfWeek }
     val candidateByDay = candidateConfigured.weeklyAvailability.groupBy { it.dayOfWeek }
     val availability = (currentByDay.keys + candidateByDay.keys).sortedBy { it.ordinal }.flatMap { day ->
         if ("configuration.weeklyAvailability.$day" in groups) candidateByDay[day].orEmpty() else currentByDay[day].orEmpty()
     }
     return current.copy(
-        name = if ("name" in groups) candidate.name else current.name,
+        name = projectedName,
         configuration = currentConfigured.copy(
             timeZone = if ("configuration.timeZone" in groups) candidateConfigured.timeZone else currentConfigured.timeZone,
             weeklyAvailability = availability,

@@ -6,10 +6,60 @@ import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
+import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class JdbcRevocationConcurrencyTest {
+    @Test
+    fun `revoked device cannot overwrite recovery envelope after rotation obtains account lock`() {
+        val jdbcUrl = System.getenv("SYNC_TEST_DATABASE_URL") ?: return
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val accountId = "d8-revoke-race-$suffix"
+        val spaceId = "d8-revoke-race-space-$suffix"
+        val deviceA = "d8-revoke-race-a-$suffix"
+        val deviceB = "d8-revoke-race-b-$suffix"
+        val deviceC = "d8-revoke-race-c-$suffix"
+        val rotationId = "d8-revoke-race-rotation-a-$suffix"
+        val triggerName = "d8_pause_rotation_$suffix"
+        val functionName = "d8_pause_rotation_fn_$suffix"
+        val dataSource = HikariDataSource(HikariConfig().apply {
+            this.jdbcUrl = jdbcUrl
+            username = System.getenv("SYNC_TEST_DATABASE_USER") ?: "agentic"
+            password = System.getenv("SYNC_TEST_DATABASE_PASSWORD") ?: "agentic-test"
+            maximumPoolSize = 4
+            connectionInitSql = "SET application_name = 'd8-revoke-race-test'"
+        })
+        val executor = Executors.newFixedThreadPool(2)
+        val repository = JdbcOpaqueSyncRepository(dataSource)
+        try {
+            ServerSchemaMigrator(dataSource).migrate()
+            seedAccount(dataSource, accountId, spaceId, deviceA, deviceB, deviceC)
+            installRotationPause(dataSource, accountId, triggerName, functionName)
+
+            val rotation = executor.submit<AtomicRevocationResult> {
+                repository.revokeAndRotate(
+                    AuthenticatedDevice(accountId, deviceA), deviceB,
+                    rotation(rotationId, deviceA, deviceC),
+                )
+            }
+            awaitRotationInsertSleep(dataSource)
+
+            val staleWriter = executor.submit<Boolean> {
+                repository.saveRecoveryEnvelope(AuthenticatedDevice(accountId, deviceB), byteArrayOf(9, 9))
+            }
+            awaitAccountLockWait(dataSource)
+
+            assertEquals(AtomicRevocationResult.Applied, rotation.get(10, TimeUnit.SECONDS))
+            assertEquals(false, staleWriter.get(10, TimeUnit.SECONDS))
+            assertContentEquals(byteArrayOf(1, 2), repository.fetchRecoveryEnvelope(AuthenticatedDevice(accountId, deviceA)))
+        } finally {
+            executor.shutdownNow()
+            cleanup(dataSource, accountId, spaceId, deviceA, deviceB, deviceC, triggerName, functionName)
+            dataSource.close()
+        }
+    }
+
     @Test
     fun `actor revoked while waiting for account lock cannot revoke another device`() {
         val jdbcUrl = System.getenv("SYNC_TEST_DATABASE_URL") ?: return
@@ -35,19 +85,7 @@ class JdbcRevocationConcurrencyTest {
         try {
             ServerSchemaMigrator(dataSource).migrate()
             seedAccount(dataSource, accountId, spaceId, deviceA, deviceB, deviceC)
-            dataSource.connection.use { connection ->
-                connection.createStatement().use { statement ->
-                    statement.execute(
-                        "CREATE FUNCTION $functionName() RETURNS trigger LANGUAGE plpgsql AS " +
-                            "\$\$ BEGIN IF NEW.account_id = '$accountId' THEN PERFORM pg_sleep(4); END IF; " +
-                            "RETURN NEW; END \$\$",
-                    )
-                    statement.execute(
-                        "CREATE TRIGGER $triggerName BEFORE INSERT ON sync_key_rotation " +
-                            "FOR EACH ROW EXECUTE FUNCTION $functionName()",
-                    )
-                }
-            }
+            installRotationPause(dataSource, accountId, triggerName, functionName)
 
             val first = executor.submit<AtomicRevocationResult> {
                 repository.revokeAndRotate(
@@ -125,6 +163,22 @@ class JdbcRevocationConcurrencyTest {
             } catch (failure: Throwable) {
                 connection.rollback()
                 throw failure
+            }
+        }
+    }
+
+    private fun installRotationPause(dataSource: HikariDataSource, accountId: String, triggerName: String, functionName: String) {
+        dataSource.connection.use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute(
+                    "CREATE FUNCTION $functionName() RETURNS trigger LANGUAGE plpgsql AS " +
+                        "\$\$ BEGIN IF NEW.account_id = '$accountId' THEN PERFORM pg_sleep(4); END IF; " +
+                        "RETURN NEW; END \$\$",
+                )
+                statement.execute(
+                    "CREATE TRIGGER $triggerName BEFORE INSERT ON sync_key_rotation " +
+                        "FOR EACH ROW EXECUTE FUNCTION $functionName()",
+                )
             }
         }
     }
