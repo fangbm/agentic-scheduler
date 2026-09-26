@@ -2,6 +2,10 @@ package dev.agenticscheduler.server.sync
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import dev.agenticscheduler.sync.DeviceId
+import dev.agenticscheduler.sync.EncryptedEnvelopeV1
+import dev.agenticscheduler.sync.SyncSpaceId
+import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -11,6 +15,68 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class JdbcRevocationConcurrencyTest {
+    @Test
+    fun `revoked device cannot approve enrollment after rotation obtains account lock`() {
+        verifyRevokedWriter(
+            prepare = { race ->
+                val request = EnrollmentRequestWire(
+                    race.accountId, "d8-enrollment-${race.suffix}", "d8-target-${race.suffix}",
+                    encodedBytes(5), encodedBytes(6),
+                )
+                assertTrue(race.repository.registerEnrollment(request, 3600) is EnrollmentRegistrationResult.Created)
+            },
+            write = { race ->
+                race.repository.approveEnrollment(
+                    AuthenticatedDevice(race.accountId, race.deviceB),
+                    "d8-enrollment-${race.suffix}", byteArrayOf(7),
+                )
+            },
+            verify = { race, result ->
+                assertEquals(EnrollmentApprovalResult.NotFound, result)
+                assertEquals(0L, countRows(race.dataSource, "SELECT count(*) FROM device WHERE device_id = ?", "d8-target-${race.suffix}"))
+                assertEquals(0L, countRows(race.dataSource, "SELECT count(*) FROM device_key_package WHERE request_id = ?", "d8-enrollment-${race.suffix}"))
+            },
+        )
+    }
+
+    @Test
+    fun `revoked device cannot register recovery proof after rotation obtains account lock`() {
+        verifyRevokedWriter(
+            write = { race ->
+                race.repository.registerRecoveryProof(
+                    AuthenticatedDevice(race.accountId, race.deviceB),
+                    RecoveryProofRegistrationRequest(encodedBytes(7), 0),
+                )
+            },
+            verify = { race, result ->
+                assertEquals(RecoveryProofRegistrationResult.NotFound, result)
+                assertEquals(0L, countRows(race.dataSource, "SELECT count(*) FROM recovery_proof WHERE account_id = ?", race.accountId))
+            },
+        )
+    }
+
+    @Test
+    fun `revoked device cannot upload after rotation obtains account lock`() {
+        verifyRevokedWriter(
+            write = { race ->
+                race.repository.upload(
+                    AuthenticatedDevice(race.accountId, race.deviceB), race.spaceId,
+                    EncryptedEnvelopeV1(
+                        syncSpaceId = SyncSpaceId(race.spaceId),
+                        mutationId = "d8-upload-${race.suffix}",
+                        senderDeviceId = DeviceId(race.deviceB),
+                        keyEpoch = 0,
+                        ciphertextBase64Url = "AQI",
+                    ), byteArrayOf(1, 2),
+                )
+            },
+            verify = { race, result ->
+                assertEquals(UploadOutcome.NotFound, result)
+                assertEquals(0L, countRows(race.dataSource, "SELECT count(*) FROM encrypted_operation_envelope WHERE sync_space_id = ?", race.spaceId))
+            },
+        )
+    }
+
     @Test
     fun `revoked device cannot overwrite recovery envelope after rotation obtains account lock`() {
         val jdbcUrl = System.getenv("SYNC_TEST_DATABASE_URL") ?: return
@@ -167,6 +233,77 @@ class JdbcRevocationConcurrencyTest {
         }
     }
 
+    private data class RaceContext(
+        val suffix: String,
+        val accountId: String,
+        val spaceId: String,
+        val deviceA: String,
+        val deviceB: String,
+        val deviceC: String,
+        val dataSource: HikariDataSource,
+        val repository: JdbcOpaqueSyncRepository,
+    )
+
+    private fun <T> verifyRevokedWriter(
+        prepare: (RaceContext) -> Unit = {},
+        write: (RaceContext) -> T,
+        verify: (RaceContext, T) -> Unit,
+    ) {
+        val jdbcUrl = System.getenv("SYNC_TEST_DATABASE_URL") ?: return
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val accountId = "d8-revoke-race-$suffix"
+        val spaceId = "d8-revoke-race-space-$suffix"
+        val deviceA = "d8-revoke-race-a-$suffix"
+        val deviceB = "d8-revoke-race-b-$suffix"
+        val deviceC = "d8-revoke-race-c-$suffix"
+        val triggerName = "d8_pause_rotation_$suffix"
+        val functionName = "d8_pause_rotation_fn_$suffix"
+        val dataSource = HikariDataSource(HikariConfig().apply {
+            this.jdbcUrl = jdbcUrl
+            username = System.getenv("SYNC_TEST_DATABASE_USER") ?: "agentic"
+            password = System.getenv("SYNC_TEST_DATABASE_PASSWORD") ?: "agentic-test"
+            maximumPoolSize = 4
+            connectionInitSql = "SET application_name = 'd8-revoke-race-test'"
+        })
+        val executor = Executors.newFixedThreadPool(2)
+        val race = RaceContext(suffix, accountId, spaceId, deviceA, deviceB, deviceC, dataSource, JdbcOpaqueSyncRepository(dataSource))
+        try {
+            ServerSchemaMigrator(dataSource).migrate()
+            seedAccount(dataSource, accountId, spaceId, deviceA, deviceB, deviceC)
+            prepare(race)
+            installRotationPause(dataSource, accountId, triggerName, functionName)
+
+            val rotation = executor.submit<AtomicRevocationResult> {
+                race.repository.revokeAndRotate(
+                    AuthenticatedDevice(accountId, deviceA), deviceB,
+                    rotation("d8-revoke-race-rotation-a-$suffix", deviceA, deviceC),
+                )
+            }
+            awaitRotationInsertSleep(dataSource)
+            val staleWriter = executor.submit<T> { write(race) }
+            awaitAccountLockWait(dataSource)
+
+            assertEquals(AtomicRevocationResult.Applied, rotation.get(10, TimeUnit.SECONDS))
+            verify(race, staleWriter.get(10, TimeUnit.SECONDS))
+        } finally {
+            executor.shutdownNow()
+            cleanup(dataSource, accountId, spaceId, deviceA, deviceB, deviceC, triggerName, functionName)
+            dataSource.close()
+        }
+    }
+
+    private fun encodedBytes(value: Byte) = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { value })
+
+    private fun countRows(dataSource: HikariDataSource, query: String, id: String): Long = dataSource.connection.use { connection ->
+        connection.prepareStatement(query).use { statement ->
+            statement.setString(1, id)
+            statement.executeQuery().use { result ->
+                assertTrue(result.next())
+                result.getLong(1)
+            }
+        }
+    }
+
     private fun installRotationPause(dataSource: HikariDataSource, accountId: String, triggerName: String, functionName: String) {
         dataSource.connection.use { connection ->
             connection.createStatement().use { statement ->
@@ -230,14 +367,33 @@ class JdbcRevocationConcurrencyTest {
                     statement.execute("DROP FUNCTION IF EXISTS $functionName()")
                 }
                 connection.prepareStatement(
-                    "DELETE FROM sync_key_rotation_package WHERE rotation_id IN (?, ?)",
+                    "DELETE FROM sync_key_rotation_package WHERE rotation_id IN (SELECT rotation_id FROM sync_key_rotation WHERE account_id = ?)",
                 ).use { statement ->
-                    statement.setString(1, "d8-revoke-race-rotation-a-${accountId.removePrefix("d8-revoke-race-")}")
-                    statement.setString(2, "d8-revoke-race-rotation-b-${accountId.removePrefix("d8-revoke-race-")}")
+                    statement.setString(1, accountId)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement("DELETE FROM sync_key_rotation WHERE account_id = ?").use { statement ->
                     statement.setString(1, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("DELETE FROM device_key_package WHERE request_id IN (SELECT request_id FROM device_enrollment_request WHERE account_id = ?)").use { statement ->
+                    statement.setString(1, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("DELETE FROM device_enrollment_request WHERE account_id = ?").use { statement ->
+                    statement.setString(1, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("DELETE FROM recovery_enrollment_request WHERE account_id = ?").use { statement ->
+                    statement.setString(1, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("DELETE FROM recovery_proof WHERE account_id = ?").use { statement ->
+                    statement.setString(1, accountId)
+                    statement.executeUpdate()
+                }
+                connection.prepareStatement("DELETE FROM encrypted_operation_envelope WHERE sync_space_id = ?").use { statement ->
+                    statement.setString(1, spaceId)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement("DELETE FROM sync_space_membership WHERE sync_space_id = ?").use { statement ->
@@ -252,10 +408,8 @@ class JdbcRevocationConcurrencyTest {
                     statement.setString(1, accountId)
                     statement.executeUpdate()
                 }
-                connection.prepareStatement("DELETE FROM device WHERE device_id IN (?, ?, ?)").use { statement ->
-                    statement.setString(1, deviceA)
-                    statement.setString(2, deviceB)
-                    statement.setString(3, deviceC)
+                connection.prepareStatement("DELETE FROM device WHERE account_id = ?").use { statement ->
+                    statement.setString(1, accountId)
                     statement.executeUpdate()
                 }
                 connection.prepareStatement("DELETE FROM account WHERE account_id = ?").use { statement ->
