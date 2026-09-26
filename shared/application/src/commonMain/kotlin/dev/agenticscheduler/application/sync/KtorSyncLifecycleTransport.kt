@@ -258,11 +258,6 @@ class KtorSyncLifecycleTransport(
         )
     }
 
-    suspend fun revokeDevice(deviceId: String) {
-        val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke") { authorization() }
-        requireStatus(response, HttpStatusCode.OK)
-    }
-
     override suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
         val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke-and-rotate") {
             authorization()

@@ -21,14 +21,7 @@ import javax.crypto.spec.GCMParameterSpec
 class AndroidKeystoreSecureStore(
     context: Context,
     private val pairingHpke: TinkPairingHpke = TinkPairingHpke(),
-) : PlatformSecretStore,
-    PlatformKeyMaterialStore,
-    PlatformDeviceCredentialStore,
-    PlatformPairingPrivateKeyStore,
-    PlatformPairingKeyMaterialExporter,
-    PlatformAccountMasterKeyStore,
-    PlatformAccountMasterKeyGenerator,
-    PlatformContentKeyGenerator {
+) : PlatformD8SecureStore {
     private val applicationContext = context.applicationContext
     private val preferences = applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 

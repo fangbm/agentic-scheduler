@@ -136,6 +136,21 @@ interface PlatformSecretStore {
 }
 
 /**
+ * The single platform-secure-store capability required by a production D8
+ * runtime. Implementations retain every secret locally and expose only opaque
+ * references to Room/application code.
+ */
+interface PlatformD8SecureStore :
+    PlatformSecretStore,
+    PlatformKeyMaterialStore,
+    PlatformDeviceCredentialStore,
+    PlatformPairingPrivateKeyStore,
+    PlatformPairingKeyMaterialExporter,
+    PlatformAccountMasterKeyStore,
+    PlatformAccountMasterKeyGenerator,
+    PlatformContentKeyGenerator
+
+/**
  * A platform key store cannot satisfy a write/delete request. Callers must
  * surface this as a retryable secure-store problem; they must not fall back to
  * plaintext persistence or publish a reference that was never stored.

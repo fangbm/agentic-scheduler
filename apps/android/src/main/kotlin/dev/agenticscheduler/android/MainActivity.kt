@@ -1,6 +1,8 @@
 package dev.agenticscheduler.android
 
 import android.os.Bundle
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
@@ -40,8 +42,6 @@ import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.ConflictAwareRead
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
-import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
-import dev.agenticscheduler.application.history.NoActiveSyncSpaceSourceFactQuery
 import dev.agenticscheduler.application.planner.DogfoodPlannerService
 import dev.agenticscheduler.application.planner.PlanBranch
 import dev.agenticscheduler.application.planner.PlanBranchApplyResult
@@ -52,6 +52,7 @@ import dev.agenticscheduler.database.repository.RoomAcademicRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
+import dev.agenticscheduler.database.repository.RoomD8RuntimeComposition
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
 import dev.agenticscheduler.domain.event.Event
@@ -72,11 +73,22 @@ import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.time.FloatingTimeRange
 import dev.agenticscheduler.domain.time.ZonedTimeRange
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
+import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
+import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
+import dev.agenticscheduler.application.sync.AndroidKeystoreSecureStore
+import dev.agenticscheduler.application.sync.TinkPairingHpke
+import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlanningHorizon
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -89,6 +101,7 @@ import kotlin.time.Clock
 import kotlin.time.Duration
 
 class MainActivity : ComponentActivity() {
+    private val d8StartupState = mutableStateOf(D8StartupState.Activating)
     private val database by lazy { openAndroidDatabase(this) }
     private val events by lazy { RoomEventRepository(database) }
     private val tasks by lazy { RoomTaskRepository(database) }
@@ -97,22 +110,141 @@ class MainActivity : ComponentActivity() {
     private val academics by lazy { RoomAcademicRepository(database) }
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
     private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
-    private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, NoActiveSyncSpaceSourceFactQuery) }
-    private val eventEditor by lazy { EventEditingService(events, ids, mutations, NoActiveSyncSpaceWritePolicy) }
-    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, NoActiveSyncSpaceWritePolicy) }
-    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = NoActiveSyncSpaceWritePolicy, sourceFacts = NoActiveSyncSpaceSourceFactQuery) }
-    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, NoActiveSyncSpaceWritePolicy) }
+    private val d8RuntimeLazy = lazy {
+        RoomD8RuntimeComposition(
+            database,
+            AndroidKeystoreSecureStore(this),
+            TinkPairingHpke(),
+            ids,
+            MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+        )
+    }
+    private val d8Runtime by d8RuntimeLazy
+    private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
+    private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
+    private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts) }
+    private val eventEditor by lazy { EventEditingService(events, ids, mutations, d8Runtime.writePolicy) }
+    private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy) }
+    private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = d8Runtime.writePolicy, sourceFacts = d8Runtime.sourceFacts) }
+    private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val configuration = try {
+            d8RuntimeConfigurationOrNull()
+        } catch (_: Throwable) {
+            d8StartupState.value = D8StartupState.Blocked
+            null
+        }
+        if (d8StartupState.value != D8StartupState.Blocked) {
+            d8StartupState.value = D8StartupState.Activating
+            d8Scope.launch {
+                try {
+                    val creation = configuration?.let { d8Runtime.activate(it) }
+                        ?: d8Runtime.activateWithoutConfiguration()
+                    when (creation) {
+                        is ActiveSyncRuntimeCreation.Active -> {
+                            val trigger = d8Runtime.newCatchUpTrigger(
+                                d8Scope,
+                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; retry remains scheduled.") },
+                            )
+                            d8SyncTrigger = trigger
+                            trigger.start()
+                            registerNetworkRetry(trigger)
+                            d8StartupState.value = D8StartupState.Ready
+                        }
+                        is ActiveSyncRuntimeCreation.ActiveEnrollmentOffline -> d8StartupState.value = D8StartupState.Ready
+                        ActiveSyncRuntimeCreation.NoEnrollment -> d8StartupState.value = D8StartupState.Ready
+                        is ActiveSyncRuntimeCreation.MultipleActiveEnrollments -> d8StartupState.value = D8StartupState.Blocked
+                        ActiveSyncRuntimeCreation.EnrollmentNotActive,
+                        is ActiveSyncRuntimeCreation.ActiveEnrollmentAccountMismatch,
+                        is ActiveSyncRuntimeCreation.MissingDeviceCredential,
+                        -> d8StartupState.value = D8StartupState.Blocked
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    d8StartupState.value = D8StartupState.Blocked
+                }
+            }
+        }
         setContent {
+            val startupState by d8StartupState
             MaterialTheme {
                 Surface {
-                    AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                    when (startupState) {
+                        D8StartupState.Ready -> AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                        D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
+                        D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
+                    }
                 }
             }
         }
     }
+
+    override fun onStart() {
+        super.onStart()
+        d8SyncTrigger?.requestCatchUp()
+    }
+
+    override fun onDestroy() {
+        d8NetworkCallback?.let { callback ->
+            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback) }
+        }
+        d8NetworkCallback = null
+        d8SyncTrigger?.close()
+        d8SyncTrigger = null
+        d8Scope.cancel()
+        if (d8RuntimeLazy.isInitialized()) {
+            d8ShutdownScope.launch {
+                try {
+                    d8Runtime.deactivate()
+                } finally {
+                    d8ShutdownScope.cancel()
+                }
+            }
+        }
+        super.onDestroy()
+    }
+
+    private fun registerNetworkRetry(trigger: ActiveSyncCatchUpTrigger) {
+        val connectivity = getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                trigger.requestCatchUp()
+            }
+        }
+        connectivity.registerDefaultNetworkCallback(callback)
+        d8NetworkCallback = callback
+    }
+
+    /**
+     * Deployment configuration is intentionally explicit. D10 may provide UI
+     * for it; D8 accepts only app-owned manifest metadata and never guesses an
+     * endpoint or account.
+     */
+    private fun d8RuntimeConfigurationOrNull(): ActiveSyncRuntimeConfiguration? {
+        val metadata = packageManager.getApplicationInfo(packageName, android.content.pm.PackageManager.GET_META_DATA).metaData
+        val baseUrl = metadata?.getString(D8_SYNC_BASE_URL)?.trim().orEmpty()
+        val accountId = metadata?.getString(D8_SYNC_ACCOUNT_ID)?.trim().orEmpty()
+        if (baseUrl.isEmpty() && accountId.isEmpty()) return null
+        require(baseUrl.isNotEmpty() && accountId.isNotEmpty()) { "D8 sync manifest configuration requires both base URL and account ID." }
+        return ActiveSyncRuntimeConfiguration(AccountId(accountId), baseUrl)
+    }
+
+    private companion object {
+        const val D8_SYNC_BASE_URL = "dev.agenticscheduler.sync.BASE_URL"
+        const val D8_SYNC_ACCOUNT_ID = "dev.agenticscheduler.sync.ACCOUNT_ID"
+    }
+}
+
+private enum class D8StartupState { Activating, Ready, Blocked }
+
+@Composable
+private fun D8StartupStatus(message: String) {
+    Column { Text(message) }
 }
 
 @Composable
@@ -137,6 +269,13 @@ private fun AndroidScheduler(
     val focusRead by remember(reads) { reads.observeFocusBlocks() }.collectAsState(ConflictAwareRead.Projected(emptyList<dev.agenticscheduler.domain.task.FocusBlock>().toImmutableList()))
     val taskValues = (taskRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
     val focusBlocks = (focusRead as? ConflictAwareRead.Projected)?.value.orEmpty().toImmutableList()
+    val projectedSyncConflictRefs =
+        (taskRead as? ConflictAwareRead.Projected<*>)?.syncConflictRefs.orEmpty() +
+            (focusRead as? ConflictAwareRead.Projected<*>)?.syncConflictRefs.orEmpty()
+    val syncConflictCount = (projection.syncConflictRefs + projectedSyncConflictRefs)
+        .flatMap { it.conflictIds }
+        .distinct()
+        .size
     val dateItems = projection.items.filter { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
@@ -162,7 +301,8 @@ private fun AndroidScheduler(
             }
         }
         item {
-            if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} conflict(s)")
+            if (projection.conflicts.isNotEmpty()) Text("${projection.conflicts.size} calendar overlap(s)")
+            if (syncConflictCount > 0) Text("$syncConflictCount sync conflict(s) require resolution")
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
             if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }

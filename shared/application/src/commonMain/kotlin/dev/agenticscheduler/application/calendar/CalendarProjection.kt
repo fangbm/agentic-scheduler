@@ -3,6 +3,7 @@ package dev.agenticscheduler.application.calendar
 import dev.agenticscheduler.application.persistence.AcademicRepository
 import dev.agenticscheduler.application.persistence.EventRepository
 import dev.agenticscheduler.application.persistence.TaskRepository
+import dev.agenticscheduler.application.history.SyncConflictProjectionRef
 import dev.agenticscheduler.domain.academic.*
 import dev.agenticscheduler.domain.id.CourseId
 import dev.agenticscheduler.domain.id.ExamId
@@ -62,6 +63,8 @@ data class CalendarProjectionResult(
     val items: ImmutableList<CalendarItem>,
     val conflicts: ImmutableList<CalendarConflict>,
     val issues: ImmutableList<CalendarProjectionIssue>,
+    /** D8 semantic conflict markers, separate from scheduling overlap conflicts. */
+    val syncConflictRefs: List<SyncConflictProjectionRef> = emptyList(),
 )
 
 interface CalendarQueryService { fun observe(viewport: CalendarViewport): Flow<CalendarProjectionResult> }

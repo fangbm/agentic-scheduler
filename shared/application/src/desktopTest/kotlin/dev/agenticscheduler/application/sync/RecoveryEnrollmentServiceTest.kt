@@ -85,15 +85,51 @@ class RecoveryEnrollmentServiceTest {
         assertEquals(2, fixture.transport.enrollments)
     }
 
+    @Test
+    fun `recovery rejects an existing pending account after another account became active`() = runBlocking {
+        val fixture = Fixture()
+        val pending = LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = device,
+            enrollmentRequestId = request,
+            hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = SecretReference("secure://pairing/recovery-existing"),
+            deviceCredentialReference = SecretReference("secure://credential/recovery-existing"),
+        )
+        fixture.enrollments.value = pending
+        fixture.enrollments.otherStates += LocalEnrollmentState.Active(
+            accountId = AccountId("other-active-account"),
+            deviceId = DeviceId("other-device"),
+            enrollmentRequestId = EnrollmentRequestId("other-request"),
+            hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = SecretReference("secure://pairing/other"),
+            syncSpaceId = SyncSpaceId("other-space"),
+            accountMasterKeyReference = SecretReference("secure://amk/other"),
+            deviceCredentialReference = SecretReference("secure://credential/other"),
+        )
+
+        assertEquals(
+            RecoveryEnrollmentServiceResult.ActiveAccountConflict(listOf(AccountId("other-active-account"))),
+            fixture.service.recover(account, secret, device, request),
+        )
+
+        assertEquals(pending, fixture.enrollments.value)
+        assertEquals(0, fixture.privateKeys.generated)
+        assertEquals(0, fixture.credentials.generated)
+        assertEquals(0, fixture.transport.enrollments)
+        assertNull(fixture.transport.request)
+    }
+
     private inner class Fixture(accountImport: SecretReference? = SecretReference("secure://amk/1")) {
         val enrollments = Enrollments()
         val credentials = Credentials()
+        val privateKeys = PrivateKeys()
         val accounts = Accounts(accountImport)
         val ring = Ring()
         val transport = Transport(envelopeBase64Url())
         val service = RecoveryEnrollmentService(
             transport = transport,
-            pendingEnrollment = LocalEnrollmentRequestService(enrollments, PrivateKeys, credentials),
+            pendingEnrollment = LocalEnrollmentRequestService(enrollments, privateKeys, credentials),
             enrollments = enrollments,
             credentials = credentials,
             accountMasterKeys = accounts,
@@ -119,7 +155,9 @@ class RecoveryEnrollmentServiceTest {
 
     private class Enrollments : LocalEnrollmentRepository {
         var value: LocalEnrollmentState? = null
+        val otherStates = mutableListOf<LocalEnrollmentState>()
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? = value?.takeIf { it.accountId == accountId }
+        override suspend fun states(): List<LocalEnrollmentState> = listOfNotNull(value) + otherStates
         override suspend fun savePending(value: LocalEnrollmentState.Pending) { this.value = value }
         override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
     }
@@ -154,11 +192,12 @@ class RecoveryEnrollmentServiceTest {
         }
     }
 
-    private object PrivateKeys : PlatformPairingPrivateKeyStore {
+    private class PrivateKeys : PlatformPairingPrivateKeyStore {
+        var generated = 0
         override suspend fun generatePairingDeviceKey() = PersistedPairingDeviceKey(
             HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
             SecretReference("secure://pairing-private/recovery"),
-        )
+        ).also { generated++ }
         override suspend fun privateKey(reference: SecretReference): PairingPrivateKeyMaterial? = null
         override suspend fun delete(reference: SecretReference) = Unit
     }

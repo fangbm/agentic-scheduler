@@ -5,9 +5,9 @@ import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonPrimitive
 
 /** D8's typed routing identity. It is metadata, never a Domain field. */
 @JvmInline
@@ -104,14 +104,22 @@ object SyncWireCodec {
 
     fun decodePayload(encoded: String): PayloadDecodeResult {
         val objectValue = parseObject(encoded) ?: return PayloadDecodeResult.Invalid("Payload is not a JSON object.")
+        if (objectValue.hasMalformedInteger("payloadVersion")) {
+            return PayloadDecodeResult.Invalid("Payload version must be an integer.")
+        }
         val version = objectValue.int("payloadVersion")
         if (version != PAYLOAD_VERSION) return PayloadDecodeResult.UnsupportedVersion(version)
+        if (hasMalformedMutationDiscriminator(objectValue) || hasMalformedOriginDiscriminator(objectValue)) {
+            return PayloadDecodeResult.Invalid("Payload discriminator must be a string.")
+        }
         unknownMutationDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation(it) }
         unknownOriginDiscriminator(objectValue)?.let { return PayloadDecodeResult.UnsupportedMutation("origin:$it") }
         return try {
             PayloadDecodeResult.Supported(json.decodeFromJsonElement(SyncPayloadV1.serializer(), objectValue))
         } catch (failure: SerializationException) {
             PayloadDecodeResult.Invalid(failure.message ?: "Payload cannot be decoded.")
+        } catch (failure: IllegalArgumentException) {
+            PayloadDecodeResult.Invalid(failure.message ?: "Payload violates its wire contract.")
         }
     }
 
@@ -121,20 +129,44 @@ object SyncWireCodec {
         null
     }
 
-    private fun JsonObject.int(name: String): Int? = this[name]?.jsonPrimitive?.intOrNull
+    private fun JsonObject.int(name: String): Int? = (this[name] as? JsonPrimitive)?.intOrNull
+
+    private fun JsonObject.hasMalformedInteger(name: String): Boolean {
+        val value = this[name] ?: return false
+        val primitive = value as? JsonPrimitive ?: return true
+        return primitive.isString || primitive.intOrNull == null
+    }
+
+    private fun hasMalformedMutationDiscriminator(payload: JsonObject): Boolean {
+        val operation = payload["operation"] as? JsonObject ?: return false
+        val mutations = operation["orderedMutations"] as? JsonArray ?: return false
+        return mutations.any { mutation ->
+            val type = (mutation as? JsonObject)?.get("type") ?: return@any false
+            val primitive = type as? JsonPrimitive
+            primitive == null || !primitive.isString
+        }
+    }
+
+    private fun hasMalformedOriginDiscriminator(payload: JsonObject): Boolean {
+        val operation = payload["operation"] as? JsonObject ?: return false
+        val origin = operation["origin"] as? JsonObject ?: return false
+        val type = origin["type"] ?: return false
+        val primitive = type as? JsonPrimitive
+        return primitive == null || !primitive.isString
+    }
 
     private fun unknownMutationDiscriminator(payload: JsonObject): String? {
         val operation = payload["operation"] as? JsonObject ?: return null
         val mutations = operation["orderedMutations"] as? JsonArray ?: return null
         return mutations.asSequence()
-            .mapNotNull { (it as? JsonObject)?.get("type")?.jsonPrimitive?.contentOrNull }
+            .mapNotNull { ((it as? JsonObject)?.get("type") as? JsonPrimitive)?.contentOrNull }
             .firstOrNull { it !in knownMutationDiscriminators }
     }
 
     private fun unknownOriginDiscriminator(payload: JsonObject): String? {
         val operation = payload["operation"] as? JsonObject ?: return null
         val origin = operation["origin"] as? JsonObject ?: return null
-        val discriminator = origin["type"]?.jsonPrimitive?.contentOrNull ?: return null
+        val discriminator = (origin["type"] as? JsonPrimitive)?.contentOrNull ?: return null
         return discriminator.takeUnless(knownOriginDiscriminators::contains)
     }
 

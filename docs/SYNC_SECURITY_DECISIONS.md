@@ -195,6 +195,30 @@ A malicious server can always withhold newer data from a newly recovered device;
 
 ---
 
+# SYN-005D — Recovery enrollment request identity / OD-048
+
+D8 v1 uses **proof-gated immutable-identity idempotency** for `POST /v1/recovery/enroll`. A successful `requestId` is permanently bound to the canonical tuple:
+
+```text
+(accountId, requestId, targetDeviceId, decoded 32-byte HPKE public key,
+ decoded 32-byte SHA-256 DeviceCredential hash)
+```
+
+Persist a version/domain-separated SHA-256 fingerprint of this length-prefixed tuple in the durable `recovery_enrollment_request` record. The current proof, counter, and next-proof hash are deliberately **not** part of this immutable identity: a lost response must be recoverable using a newly bootstrapped counter. No plaintext secret or raw credential is persisted.
+
+For **every** attempt, acquire the account lock and validate the supplied proof against the account's *current* stored proof hash and counter **before** disclosing completion status. Under that same lock:
+
+- A completed `requestId` with an identical constant-time-compared fingerprint returns idempotent success, without inserting another device, changing keys/membership, or advancing the proof.
+- A completed `requestId` with a different fingerprint returns `409 RECOVERY_REQUEST_CONFLICT`; never overwrite the enrolled identity or advance the proof.
+- An invalid/stale proof returns `401 INVALID_RECOVERY_PROOF` and reveals no completion result.
+- A new `requestId` follows ordinary proof verification and atomically creates the device, membership, completion fingerprint, and next proof hash/counter.
+
+After a lost response, the client retains the *same durable PENDING device identity and credential*, re-fetches recovery bootstrap, reconstructs a valid proof from the refreshed counter, and retries the original `requestId`. Blind replay of the old proof is not a guaranteed idempotent success. A prior completion record that cannot be safely backfilled to the full immutable fingerprint fails closed and requires a fresh request ID; never infer identity from only account/device IDs.
+
+Required gates: numbered PostgreSQL migration and replay; same-identity retry after lost acknowledgment (no second proof advance); changed HPKE public key/credential hash with the same ID rejected; invalid proof on an existing ID rejected; concurrent same-ID attempts serialized by the account lock; end-to-end fresh-device recovery still passes.
+
+---
+
 # SYN-006 — Device crypto identity / pairing / OD-041
 
 Every device creates a Tink HPKE key pair for receiving device-specific key packages.
@@ -858,6 +882,26 @@ same (spaceId, mutationId) + different envelope             -> integrity conflic
 Clients may receive duplicates and out-of-order operations. The SyncEngine deduplicates by MutationId and uses DVV after decrypt.
 
 Network failure never rolls back a committed local D7 mutation.
+
+---
+
+## SYN-012A — Foreground idle catch-up policy / OD-049
+
+D8 v1 closes the foreground-idle remote-update gap with a **bounded periodic HTTPS fetch**; WebSocket, push, and server long-poll are not required. While an ACTIVE, configured runtime is in the foreground, schedule successful idle catch-up at:
+
+```text
+Desktop   60 seconds
+Android   60 seconds
+Wear OS  180 seconds
+```
+
+Apply independent approximately ±10% jitter to each period to avoid synchronized load. The platform's foreground-active definition controls the timer; suspend periodic polling when backgrounded, and immediately catch up again on foreground return. D8 v1 makes **no background delivery-latency guarantee**.
+
+App/runtime startup, committed outbound local mutation, foreground entry, and network-restoration signals still request immediate catch-up. Merge overlapping signals with a conflated/single-flight worker (no parallel catch-ups, no overlapping periodic requests). Every cycle first fetches/applies rotation packages, then uploads pending encrypted operations and fetches ordinary envelopes until the server page is exhausted. Remote-only receives must not themselves schedule recursive outbound work.
+
+Reuse bounded exponential backoff for transient transport failures (initial 1 second, cap 60 seconds); an immediate network/foreground signal may interrupt backoff. Authentication failure, verified integrity error, and other explicitly non-retryable failures stop automatic retries and surface actionable runtime status instead of retrying forever. A later credential/runtime recovery or explicit user retry may restart work.
+
+Required tests: foreground idle catches a remote-only edit without any local commit; platform-specific polling cadence and jitter bounds; immediate event-triggered catch-up; single-flight/coalescing; no background fixed-frequency claim; rotation-before-envelope ordering; transient backoff and fail-closed non-retryable errors.
 
 ---
 

@@ -17,7 +17,6 @@ import io.ktor.server.plugins.ContentTransformationException
 import io.ktor.server.plugins.statuspages.StatusPages
 import io.ktor.server.plugins.statuspages.exception
 import io.ktor.server.request.header
-import io.ktor.server.request.receive
 import io.ktor.server.request.receiveChannel
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
@@ -25,6 +24,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.readRemaining
+import kotlinx.serialization.KSerializer
 import kotlinx.io.readByteArray
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
@@ -73,17 +73,13 @@ fun Application.syncServerModule(
             }
             val bootstrap = repository as? ServerBootstrapRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("BOOTSTRAP_UNAVAILABLE"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val request = call.receive<InvitationCreateRequest>()
+            val request = call.receiveBoundedJson(InvitationCreateRequest.serializer(), config.maxRequestBodyBytes)
             call.respond(HttpStatusCode.Created, bootstrap.createInvitation(request.accountId, request.syncSpaceId, config.invitationTtlSeconds))
         }
         post("/v1/bootstrap") {
             val bootstrap = repository as? ServerBootstrapRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("BOOTSTRAP_UNAVAILABLE"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val request = call.receive<BootstrapRequest>()
+            val request = call.receiveBoundedJson(BootstrapRequest.serializer(), config.maxRequestBodyBytes)
             try {
                 decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
             } catch (_: IllegalArgumentException) {
@@ -98,9 +94,7 @@ fun Application.syncServerModule(
         post("/v1/enrollments") {
             val enrollment = repository as? ServerEnrollmentRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("ENROLLMENT_UNAVAILABLE"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val request = call.receive<EnrollmentRequestWire>()
+            val request = call.receiveBoundedJson(EnrollmentRequestWire.serializer(), config.maxRequestBodyBytes)
             try {
                 decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
                 decodeCanonicalBase64(request.credentialHashBase64Url, 32, 32)
@@ -133,9 +127,7 @@ fun Application.syncServerModule(
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
             val requestId = call.parameters["requestId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_REQUEST"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val packageRequest = call.receive<KeyPackageUploadRequest>()
+            val packageRequest = call.receiveBoundedJson(KeyPackageUploadRequest.serializer(), config.maxRequestBodyBytes)
             val packageBytes = try {
                 decodeCanonicalBase64(packageRequest.packageBase64Url, null, config.maxCiphertextBytes)
             } catch (_: IllegalArgumentException) {
@@ -167,9 +159,7 @@ fun Application.syncServerModule(
                 ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
             val actor = repository.authenticate(credential)
                 ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val encoded = call.receive<OpaqueBlobRequest>().blobBase64Url
+            val encoded = call.receiveBoundedJson(OpaqueBlobRequest.serializer(), config.maxRequestBodyBytes).blobBase64Url
             val bytes = try {
                 decodeCanonicalBase64(encoded, null, config.maxCiphertextBytes)
             } catch (_: IllegalArgumentException) {
@@ -187,7 +177,7 @@ fun Application.syncServerModule(
                 ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
             val actor = repository.authenticate(credential)
                 ?: return@put call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val request = call.receive<RecoveryProofRegistrationRequest>()
+            val request = call.receiveBoundedJson(RecoveryProofRegistrationRequest.serializer(), config.maxRequestBodyBytes)
             try {
                 decodeCanonicalBase64(request.proofHashBase64Url, 32, 32)
                 require(request.counter >= 0)
@@ -204,9 +194,7 @@ fun Application.syncServerModule(
         post("/v1/recovery/bootstrap") {
             val security = repository as? ServerSecurityLifecycleRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val request = call.receive<RecoveryBootstrapRequest>()
+            val request = call.receiveBoundedJson(RecoveryBootstrapRequest.serializer(), config.maxRequestBodyBytes)
             if (request.accountId.isBlank() || request.accountId.length > 128) {
                 return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_ACCOUNT"))
             }
@@ -223,7 +211,7 @@ fun Application.syncServerModule(
         post("/v1/recovery/enroll") {
             val security = repository as? ServerSecurityLifecycleRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_UNAVAILABLE"))
-            val request = call.receive<RecoveryEnrollmentRequestWire>()
+            val request = call.receiveBoundedJson(RecoveryEnrollmentRequestWire.serializer(), config.maxRequestBodyBytes)
             try {
                 decodeCanonicalBase64(request.hpkePublicKeyBase64Url, 32, 32)
                 decodeCanonicalBase64(request.credentialHashBase64Url, 32, 32)
@@ -285,22 +273,6 @@ fun Application.syncServerModule(
                 },
             )
         }
-        post("/v1/devices/{deviceId}/revoke") {
-            val lifecycle = repository as? ServerSecurityLifecycleRepository
-                ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
-            val credential = call.bearerCredential()
-                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val actor = repository.authenticate(credential)
-                ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val target = call.parameters["deviceId"]
-                ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_DEVICE"))
-            when (lifecycle.revokeDevice(actor, target)) {
-                DeviceRevocationResult.Revoked -> call.respond(HttpStatusCode.OK, ServerErrorResponse("REVOKED"))
-                DeviceRevocationResult.NotFound -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
-                DeviceRevocationResult.AlreadyRevoked -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("ALREADY_REVOKED"))
-                DeviceRevocationResult.SelfRevocationDenied -> call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("SELF_REVOCATION_DENIED"))
-            }
-        }
         post("/v1/devices/{deviceId}/revoke-and-rotate") {
             val lifecycle = repository as? ServerSecurityLifecycleRepository
                 ?: return@post call.respond(HttpStatusCode.ServiceUnavailable, ServerErrorResponse("SECURITY_LIFECYCLE_UNAVAILABLE"))
@@ -310,9 +282,7 @@ fun Application.syncServerModule(
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
             val target = call.parameters["deviceId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_DEVICE"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
-            val request = call.receive<AtomicRevocationRequest>()
+            val request = call.receiveBoundedJson(AtomicRevocationRequest.serializer(), config.maxRequestBodyBytes)
             try {
                 decodeCanonicalBase64(request.recoveryEnvelopeBase64Url, null, config.maxCiphertextBytes)
                 require(request.rotationId.isNotBlank() && request.packages.isNotEmpty())
@@ -338,11 +308,9 @@ fun Application.syncServerModule(
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
             val actor = repository.authenticate(credential)
                 ?: return@post call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("UNAUTHORIZED"))
-            val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
-            if (contentLength != null && contentLength > config.maxRequestBodyBytes) throw RequestTooLarge()
             val spaceId = call.parameters["spaceId"]
                 ?: return@post call.respond(HttpStatusCode.BadRequest, ServerErrorResponse("INVALID_SPACE"))
-            val envelope = call.receiveBoundedEnvelope(config.maxRequestBodyBytes)
+            val envelope = call.receiveBoundedJson(EncryptedEnvelopeV1.serializer(), config.maxRequestBodyBytes)
             val validated = validateEnvelope(spaceId, envelope, config.maxCiphertextBytes)
             if (validated !is EnvelopeValidationResult.Valid) {
                 val code = (validated as EnvelopeValidationResult.Invalid).code
@@ -403,15 +371,20 @@ class RequestTooLarge : RuntimeException()
 
 private val serverJson = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
-private suspend fun io.ktor.server.application.ApplicationCall.receiveBoundedEnvelope(maxBytes: Long): EncryptedEnvelopeV1 {
+private suspend fun <T> io.ktor.server.application.ApplicationCall.receiveBoundedJson(
+    serializer: KSerializer<T>,
+    maxBytes: Long,
+): T {
+    val contentLength = request.headers[HttpHeaders.ContentLength]?.toLongOrNull()
+    if (contentLength != null && contentLength > maxBytes) throw RequestTooLarge()
     val bytes = receiveChannel().readRemaining(maxBytes + 1).readByteArray()
     if (bytes.size.toLong() > maxBytes) throw RequestTooLarge()
     return try {
-        serverJson.decodeFromString(EncryptedEnvelopeV1.serializer(), bytes.decodeToString())
+        serverJson.decodeFromString(serializer, bytes.decodeToString())
     } catch (failure: SerializationException) {
-        throw BadRequestException("Malformed envelope", failure)
+        throw BadRequestException("Malformed request", failure)
     } catch (failure: IllegalArgumentException) {
-        throw BadRequestException("Invalid envelope", failure)
+        throw BadRequestException("Invalid request", failure)
     }
 }
 

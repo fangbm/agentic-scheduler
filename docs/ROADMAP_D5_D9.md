@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10 + Post-project Hackathon
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 complete; D9 specs frozen and ready; D10 planned; post-project DGX Spark hackathon fork planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 protocol/platform acceptance complete but production runtime closure reopened; D9 core work paused before production integration; D10 planned; post-project DGX Spark hackathon fork planned
 > Date: 2026-09-20
 
 ---
@@ -18,9 +18,9 @@ D6.5   Prototype Integration / Dogfood Gate    IMPLEMENTED / DESKTOP VERIFIED / 
  ↓
 D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
-D8     E2EE Multi-device Sync + Thin Server    COMPLETE — SYN-019 ACCEPTANCE + FOUR-PLATFORM CI PASSED
+D8     E2EE Multi-device Sync + Thin Server    REOPENED — PRODUCTION RUNTIME CLOSURE
  ↓
-D9-01  Agent Runtime + Typed Tools             SPEC FROZEN — READY
+D9-01  Agent Runtime + Typed Tools             CORE-ONLY / PAUSED BEFORE PRODUCTION INTEGRATION
 D9-02  Agent history sync amendment            AFTER D9-01
 D9-03  Wear Agent/provider provisioning        AFTER D9-01
  ↓
@@ -185,7 +185,7 @@ D8-00 protocol/security decisions  FROZEN
 D8-01 client SyncEngine/merge      COMPLETE
 D8-02 E2EE/key lifecycle           COMPLETE
 D8-03 thin server/Wear transport   COMPLETE
-D8 completion gate                 COMPLETE / SYN-019 + FOUR-PLATFORM CI PASSED
+D8 completion gate                 REOPENED / PRODUCTION RUNTIME CLOSURE
 ```
 
 Frozen baseline includes:

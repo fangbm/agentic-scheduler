@@ -202,6 +202,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
             try {
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.NotFound
@@ -236,7 +237,6 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.MissingCredentialHash
                 }
-                lockAccount(connection, request.accountId)
                 val targetExists = connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ?").use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.executeQuery().use(ResultSet::next)
@@ -306,6 +306,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
             try {
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection RecoveryProofRegistrationResult.NotFound
@@ -544,11 +545,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection AtomicRevocationResult.SelfRevocationDenied
                 }
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection AtomicRevocationResult.NotFound
                 }
-                lockAccount(connection, actor.accountId)
                 val envelope = decodeCanonical(request.recoveryEnvelopeBase64Url, null)
                 if (envelope.isEmpty() || request.packages.isEmpty()) {
                     connection.rollback()
@@ -652,16 +653,29 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
 
     override fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean =
         dataSource.connection.use connection@{ connection ->
-            if (!activeAccountDevice(connection, actor)) return@connection false
-            connection.prepareStatement(
-                "INSERT INTO recovery_envelope(account_id, envelope_bytes) VALUES (?, ?) " +
-                    "ON CONFLICT (account_id) DO UPDATE SET envelope_bytes = EXCLUDED.envelope_bytes, updated_at = CURRENT_TIMESTAMP",
-            ).use { statement ->
-                statement.setString(1, actor.accountId)
-                statement.setBytes(2, envelopeBytes)
-                statement.executeUpdate()
+            connection.autoCommit = false
+            try {
+                lockAccount(connection, actor.accountId)
+                if (!activeAccountDevice(connection, actor)) {
+                    connection.rollback()
+                    return@connection false
+                }
+                connection.prepareStatement(
+                    "INSERT INTO recovery_envelope(account_id, envelope_bytes) VALUES (?, ?) " +
+                        "ON CONFLICT (account_id) DO UPDATE SET envelope_bytes = EXCLUDED.envelope_bytes, updated_at = CURRENT_TIMESTAMP",
+                ).use { statement ->
+                    statement.setString(1, actor.accountId)
+                    statement.setBytes(2, envelopeBytes)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                true
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
             }
-            true
         }
 
     override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = dataSource.connection.use { connection ->
@@ -671,43 +685,6 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             statement.executeQuery().use { rs -> if (rs.next()) rs.getBytes(1) else null }
         }
     }
-
-    override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult =
-        dataSource.connection.use connection@{ connection ->
-            connection.autoCommit = false
-            try {
-                val result = when {
-                    targetDeviceId == actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
-                    !activeAccountDevice(connection, actor) -> DeviceRevocationResult.NotFound
-                    else -> {
-                        val state = connection.prepareStatement("SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE").use { statement ->
-                            statement.setString(1, targetDeviceId)
-                            statement.setString(2, actor.accountId)
-                            statement.executeQuery().use { rs -> if (!rs.next()) null else rs.getTimestamp("revoked_at") != null }
-                        }
-                        when {
-                            state == null -> DeviceRevocationResult.NotFound
-                            state -> DeviceRevocationResult.AlreadyRevoked
-                            else -> {
-                                connection.prepareStatement("UPDATE device SET revoked_at = CURRENT_TIMESTAMP WHERE device_id = ? AND account_id = ?").use { statement ->
-                                    statement.setString(1, targetDeviceId)
-                                    statement.setString(2, actor.accountId)
-                                    statement.executeUpdate()
-                                }
-                                DeviceRevocationResult.Revoked
-                            }
-                        }
-                    }
-                }
-                connection.commit()
-                result
-            } catch (failure: Throwable) {
-                connection.rollback()
-                throw failure
-            } finally {
-                connection.autoCommit = true
-            }
-        }
 
     override fun authenticate(credential: String): AuthenticatedDevice? {
         val hash = credentialHashOrNull(credential) ?: return null
@@ -731,7 +708,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     ): UploadOutcome = dataSource.connection.use connection@{ connection ->
         connection.autoCommit = false
         try {
-            if (!isMember(connection, actor, spaceId)) return@connection UploadOutcome.NotFound
+            lockAccount(connection, actor.accountId)
+            if (!isMember(connection, actor, spaceId)) {
+                connection.rollback()
+                return@connection UploadOutcome.NotFound
+            }
             val existing = findEnvelope(connection, spaceId, envelope.mutationId)
             if (existing != null) {
                 connection.commit()
@@ -748,7 +729,10 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 statement.executeQuery().use { rs ->
                     if (!rs.next()) null else rs.getLong(1) + 1
                 }
-            } ?: return@connection UploadOutcome.NotFound
+            } ?: run {
+                connection.rollback()
+                return@connection UploadOutcome.NotFound
+            }
             connection.prepareStatement("UPDATE sync_space SET next_cursor = ? WHERE sync_space_id = ?").use { statement ->
                 statement.setLong(1, nextCursor)
                 statement.setString(2, spaceId)

@@ -24,6 +24,7 @@ sealed interface RecoveryEnrollmentServiceResult {
     data object AccountMasterKeyImportFailed : RecoveryEnrollmentServiceResult
     data class KeyPackageRejected(val result: InstallSyncKeyPackageResult) : RecoveryEnrollmentServiceResult
     data object ActivationFailed : RecoveryEnrollmentServiceResult
+    data class ActiveAccountConflict(val activeAccountIds: List<AccountId>) : RecoveryEnrollmentServiceResult
 }
 
 /**
@@ -64,6 +65,8 @@ class RecoveryEnrollmentService(
 
         val pending = when (val local = pendingEnrollment.startPending(accountId, deviceId, enrollmentRequestId)) {
             is StartLocalEnrollmentResult.Created -> local.pending
+            is StartLocalEnrollmentResult.RejectedActiveAccount ->
+                return RecoveryEnrollmentServiceResult.ActiveAccountConflict(local.activeAccountIds)
             is StartLocalEnrollmentResult.Existing -> when (val state = local.state) {
                 is LocalEnrollmentState.Active -> return RecoveryEnrollmentServiceResult.Existing(state)
                 is LocalEnrollmentState.Pending -> {

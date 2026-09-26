@@ -13,6 +13,7 @@ import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncSpaceKeyPackageV1
 import dev.agenticscheduler.sync.decodeCanonicalBase64Url
 import dev.agenticscheduler.sync.encodeCanonicalBase64Url
+import kotlinx.coroutines.CancellationException
 
 data class RotationKeyPackageBuildRequest(
     val accountId: AccountId,
@@ -425,6 +426,8 @@ class RotationPackageCatchUpService(
     suspend fun catchUp(): RotationPackageCatchUpResult {
         val remote = try {
             transport.rotationPackages()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (_: Throwable) {
             return RotationPackageCatchUpResult.FetchFailed
         }

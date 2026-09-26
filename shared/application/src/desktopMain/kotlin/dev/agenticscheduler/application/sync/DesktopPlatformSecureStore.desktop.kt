@@ -16,14 +16,7 @@ class DesktopPlatformSecureStore private constructor(
     private val backend: DesktopSecureBackend,
     private val pairingHpke: TinkPairingHpke,
     @Suppress("UNUSED_PARAMETER") private val constructorMarker: Unit,
-) : PlatformSecretStore,
-    PlatformKeyMaterialStore,
-    PlatformDeviceCredentialStore,
-    PlatformPairingPrivateKeyStore,
-    PlatformPairingKeyMaterialExporter,
-    PlatformAccountMasterKeyStore,
-    PlatformAccountMasterKeyGenerator,
-    PlatformContentKeyGenerator {
+) : PlatformD8SecureStore {
     constructor(pairingHpke: TinkPairingHpke = TinkPairingHpke()) : this(DesktopSecureBackend.system(), pairingHpke, Unit)
 
     internal constructor(backend: DesktopSecureBackend, pairingHpke: TinkPairingHpke) : this(backend, pairingHpke, Unit)
