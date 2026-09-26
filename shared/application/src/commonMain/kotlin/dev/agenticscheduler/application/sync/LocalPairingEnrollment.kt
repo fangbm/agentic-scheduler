@@ -70,6 +70,8 @@ sealed interface StartLocalEnrollmentResult {
         val credentialHashBase64Url: String,
     ) : StartLocalEnrollmentResult
     data class Existing(val state: LocalEnrollmentState) : StartLocalEnrollmentResult
+    /** Another account already owns this installation's single D8 v1 Personal space. */
+    data class RejectedActiveAccount(val activeAccountIds: List<AccountId>) : StartLocalEnrollmentResult
 }
 
 /** Creates a restart-safe local PENDING identity before its public request is relayed. */
@@ -85,6 +87,18 @@ class LocalEnrollmentRequestService(
     ): StartLocalEnrollmentResult {
         val existing = enrollments.state(accountId)
         if (existing != null) return StartLocalEnrollmentResult.Existing(existing)
+
+        val conflictingActiveAccounts = enrollments.states()
+            .asSequence()
+            .filterIsInstance<LocalEnrollmentState.Active>()
+            .map(LocalEnrollmentState.Active::accountId)
+            .filter { it != accountId }
+            .distinct()
+            .sortedBy(AccountId::value)
+            .toList()
+        if (conflictingActiveAccounts.isNotEmpty()) {
+            return StartLocalEnrollmentResult.RejectedActiveAccount(conflictingActiveAccounts)
+        }
 
         val generated = privateKeys.generatePairingDeviceKey()
         val credential = try {

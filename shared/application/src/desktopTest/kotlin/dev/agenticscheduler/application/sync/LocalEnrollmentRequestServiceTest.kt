@@ -4,6 +4,7 @@ import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.EnrollmentRequestId
 import dev.agenticscheduler.sync.HpkePublicKeyBase64Url
+import dev.agenticscheduler.sync.SyncSpaceId
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -46,12 +47,46 @@ class LocalEnrollmentRequestServiceTest {
         assertEquals(listOf(credentialRef), credentials.deleted)
     }
 
+    @Test
+    fun `another active account rejects pending before generating secure material or writing enrollment`() = runBlocking {
+        val activeAccount = AccountId("acct-active")
+        val enrollments = MemoryEnrollments().apply {
+            saveActive(
+                LocalEnrollmentState.Active(
+                    accountId = activeAccount,
+                    deviceId = DeviceId("active-device"),
+                    enrollmentRequestId = EnrollmentRequestId("active-request"),
+                    hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                    hpkePrivateKeyReference = SecretReference("secure://active-private"),
+                    syncSpaceId = SyncSpaceId("personal-active"),
+                    accountMasterKeyReference = SecretReference("secure://active-amk"),
+                    deviceCredentialReference = SecretReference("secure://active-credential"),
+                ),
+            )
+        }
+        val privateKeys = MemoryPrivateKeys(privateRef)
+        val credentials = MemoryCredentials(credentialRef)
+        val service = LocalEnrollmentRequestService(enrollments, privateKeys, credentials)
+
+        val result = assertIs<StartLocalEnrollmentResult.RejectedActiveAccount>(
+            service.startPending(account, device, request),
+        )
+
+        assertEquals(listOf(activeAccount), result.activeAccountIds)
+        assertEquals(0, privateKeys.generationCount)
+        assertEquals(0, credentials.generationCount)
+        assertEquals(0, enrollments.pendingWriteCount)
+        assertNull(enrollments.state(account))
+    }
+
     private class MemoryEnrollments : LocalEnrollmentRepository {
-        private var value: LocalEnrollmentState? = null
-        override suspend fun state(accountId: AccountId): LocalEnrollmentState? = value?.takeIf { it.accountId == accountId }
-        override suspend fun states(): List<LocalEnrollmentState> = listOfNotNull(value)
-        override suspend fun savePending(value: LocalEnrollmentState.Pending) { this.value = value }
-        override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
+        private val values = mutableMapOf<AccountId, LocalEnrollmentState>()
+        var pendingWriteCount = 0
+            private set
+        override suspend fun state(accountId: AccountId): LocalEnrollmentState? = values[accountId]
+        override suspend fun states(): List<LocalEnrollmentState> = values.values.toList()
+        override suspend fun savePending(value: LocalEnrollmentState.Pending) { pendingWriteCount++; values[value.accountId] = value }
+        override suspend fun saveActive(value: LocalEnrollmentState.Active) { values[value.accountId] = value }
     }
 
     private object FailingEnrollments : LocalEnrollmentRepository {
@@ -66,12 +101,16 @@ class LocalEnrollmentRequestServiceTest {
     ) : PlatformPairingPrivateKeyStore {
         val private = object : PairingPrivateKeyMaterial {}
         val deleted = mutableListOf<SecretReference>()
+        var generationCount = 0
+            private set
         private var present = true
-        override suspend fun generatePairingDeviceKey(): PersistedPairingDeviceKey =
-            PersistedPairingDeviceKey(
+        override suspend fun generatePairingDeviceKey(): PersistedPairingDeviceKey {
+            generationCount++
+            return PersistedPairingDeviceKey(
                 HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
                 reference,
             )
+        }
         override suspend fun privateKey(reference: SecretReference): PairingPrivateKeyMaterial? = private.takeIf { present && reference == this.reference }
         override suspend fun delete(reference: SecretReference) {
             deleted += reference
@@ -82,7 +121,12 @@ class LocalEnrollmentRequestServiceTest {
     private class MemoryCredentials(private val reference: SecretReference) : PlatformDeviceCredentialStore {
         val hash = "credential-hash"
         val deleted = mutableListOf<SecretReference>()
-        override suspend fun generate() = GeneratedDeviceCredential(reference, hash)
+        var generationCount = 0
+            private set
+        override suspend fun generate(): GeneratedDeviceCredential {
+            generationCount++
+            return GeneratedDeviceCredential(reference, hash)
+        }
         override suspend fun store(value: DeviceCredential) = reference
         override suspend fun load(reference: SecretReference): DeviceCredential? = null
         override suspend fun delete(reference: SecretReference) { deleted += reference }

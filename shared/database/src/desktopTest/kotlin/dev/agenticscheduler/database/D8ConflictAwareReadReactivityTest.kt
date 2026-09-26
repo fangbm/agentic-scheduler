@@ -110,15 +110,15 @@ class D8ConflictAwareReadReactivityTest {
         val other = provisional.copy(title = "Other candidate")
         val first = SyncOperation(
             "00000000-0000-7000-8000-000000000010",
-            DvvSnapshot(emptyList(), DotSnapshot("replica-a", 1)),
-            HlcSnapshot(1, 0, "replica-a"),
+            DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1)),
+            HlcSnapshot(1, 0, "00000000-0000-7000-8000-000000000001"),
             MutationOrigin.User,
             listOf(EventPut(null, provisional)),
         )
         val second = SyncOperation(
             "00000000-0000-7000-8000-000000000020",
-            DvvSnapshot(emptyList(), DotSnapshot("replica-z", 1)),
-            HlcSnapshot(2, 0, "replica-z"),
+            DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000002", 1)),
+            HlcSnapshot(2, 0, "00000000-0000-7000-8000-000000000002"),
             MutationOrigin.User,
             listOf(EventPut(null, other)),
         )

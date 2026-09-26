@@ -556,6 +556,45 @@ class PersistenceIntegrationTest {
         database.close()
     }
 
+    @Test fun `Room pending enrollment transaction rejects a second account while another is active`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val enrollments = RoomLocalEnrollmentRepository(database)
+        val activeAccount = dev.agenticscheduler.sync.AccountId("acct-active")
+        enrollments.saveActive(
+            dev.agenticscheduler.application.sync.LocalEnrollmentState.Active(
+                accountId = activeAccount,
+                deviceId = dev.agenticscheduler.sync.DeviceId("active-device"),
+                enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("active-request"),
+                hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+                hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://active-private"),
+                syncSpaceId = SyncSpaceId("personal-active"),
+                accountMasterKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://active-amk"),
+                deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://active-credential"),
+            ),
+        )
+        val pendingAccount = dev.agenticscheduler.sync.AccountId("acct-pending")
+        val pending = dev.agenticscheduler.application.sync.LocalEnrollmentState.Pending(
+            accountId = pendingAccount,
+            deviceId = dev.agenticscheduler.sync.DeviceId("pending-device"),
+            enrollmentRequestId = dev.agenticscheduler.sync.EnrollmentRequestId("pending-request"),
+            hpkePublicKey = dev.agenticscheduler.sync.HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = dev.agenticscheduler.application.sync.SecretReference("secure://pending-private"),
+            deviceCredentialReference = dev.agenticscheduler.application.sync.SecretReference("secure://pending-credential"),
+        )
+
+        val failure = try {
+            enrollments.savePending(pending)
+            null
+        } catch (error: IllegalStateException) {
+            error
+        }
+        assertNotNull(failure)
+
+        assertEquals(null, enrollments.state(pendingAccount))
+        assertEquals(activeAccount, enrollments.states().single().accountId)
+        database.close()
+    }
+
     @Test fun `pairing active write failure rolls back the Room key ring and leaves pending enrollment`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
         val local = RoomLocalEnrollmentRepository(database)
