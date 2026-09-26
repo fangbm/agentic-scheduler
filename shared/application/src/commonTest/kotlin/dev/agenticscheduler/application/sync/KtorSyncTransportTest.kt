@@ -179,7 +179,7 @@ class KtorSyncTransportTest {
             engine {
                 addHandler {
                     respond(
-                        """{\"accountId\":\"account\",\"deviceId\":\"device\"}""",
+                        """{"accountId":"account","deviceId":"device"}""",
                         status = status,
                         headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
                     )

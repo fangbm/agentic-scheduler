@@ -147,6 +147,7 @@ class RecoveryEnrollmentServiceTest {
         assertEquals(1, identityConflict.transport.bootstrapCalls)
         assertEquals(1, identityConflict.transport.requests.size)
         assertIs<LocalEnrollmentState.Pending>(identityConflict.enrollments.value)
+        Unit
     }
 
     @Test

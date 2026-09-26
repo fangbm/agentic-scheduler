@@ -108,7 +108,9 @@ class ActiveSyncCatchUpTriggerTest {
         var count = 0
         val trigger = ActiveSyncCatchUpTrigger(
             scope = scope,
-            committedOutboundMutationRevision = emptyFlow(),
+            // Model the startup subscription so the worker is active before
+            // the terminal result and later foreground/poll signals arrive.
+            committedOutboundMutationRevision = flowOf(0L),
             catchUp = {
                 count += 1
                 calls.send(count)
