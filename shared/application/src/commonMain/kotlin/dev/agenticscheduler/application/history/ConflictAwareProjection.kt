@@ -216,10 +216,17 @@ private fun overlayConflictedGroups(current: EntityMutation?, candidate: EntityM
 }
 
 private fun overlayProfile(current: PlanningProfileImage, candidate: PlanningProfileImage, groups: Set<String>): PlanningProfileImage {
-    if ("configuration.mode" in groups) return current.copy(
+    // A mode conflict can be recorded for a concurrent configuration transition
+    // even when both current and provisional images are Configured. In that
+    // case the mode is already the same; replacing the whole configuration
+    // would discard compatible groups accepted after the candidate was made.
+    if ("configuration.mode" in groups && current.configuration::class != candidate.configuration::class) return current.copy(
         name = if ("name" in groups) candidate.name else current.name,
         configuration = candidate.configuration,
     )
+    if (current.configuration is PlanningProfileConfigurationImage.Unconfigured &&
+        candidate.configuration is PlanningProfileConfigurationImage.Unconfigured
+    ) return current.copy(name = if ("name" in groups) candidate.name else current.name)
     val currentConfigured = current.configuration as? PlanningProfileConfigurationImage.Configured ?: return current
     val candidateConfigured = candidate.configuration as? PlanningProfileConfigurationImage.Configured ?: return current
     val currentByDay = currentConfigured.weeklyAvailability.groupBy { it.dayOfWeek }

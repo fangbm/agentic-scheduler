@@ -57,6 +57,35 @@ class ConflictAwareProjectionTest {
         Unit
     }
 
+    @Test fun `PlanningProfile mode conflict preserves accepted disjoint configuration groups`() = kotlinx.coroutines.runBlocking {
+        val profileId = id(43)
+        val candidateConfiguration = PlanningProfileConfigurationImage.Configured(
+            "Asia/Shanghai", emptyList(), "PT30M", "PT1H", "PT2H", AllDayEventPolicyImage.NON_BLOCKING,
+        )
+        val durableConfiguration = candidateConfiguration.copy(
+            timeZone = "UTC",
+            weeklyAvailability = listOf(CanonicalAvailabilityWindowImage(DayOfWeekImage.MONDAY, "09:00", "12:00")),
+        )
+        val candidate = PlanningProfileImage(profileId, "Study", candidateConfiguration)
+        val durable = candidate.copy(configuration = durableConfiguration)
+        val local = SyncOperation(id(44), DvvSnapshot(emptyList(), DotSnapshot(id(45), 1)), HlcSnapshot(1, 0, id(45)), MutationOrigin.User, listOf(PlanningProfilePut(null, durable)))
+        val remote = SyncOperation(id(42), DvvSnapshot(emptyList(), DotSnapshot(id(47), 1)), HlcSnapshot(2, 0, id(47)), MutationOrigin.User, listOf(PlanningProfilePut(null, candidate)))
+        val participants = listOf(local, remote).sortedBy(SyncOperation::mutationId).map {
+            SyncConflictParticipant(MutationId(it.mutationId), it.dvv, LocalJournalCodec.encode(it))
+        }
+        val conflict = SyncConflict(
+            "profile-$profileId", SyncSpaceId("personal-space"),
+            listOf(SyncConflictEntityRef(EntityKind.PLANNING_PROFILE, profileId, listOf("configuration.mode"))),
+            participants, MutationId(remote.mutationId), SyncConflictKind.SEMANTIC,
+            commonCausalContextOf(participants), SyncConflictStatus.OPEN,
+        )
+
+        val result = assertIs<ConflictProjection.Projected>(ConflictAwareProjection(MemoryReceive(listOf(conflict))).project(
+            SyncSpaceId("personal-space"), EntityKind.PLANNING_PROFILE, profileId, PlanningProfilePut(null, durable),
+        ))
+        assertEquals(durableConfiguration, assertIs<PlanningProfilePut>(result.mutation).after.configuration)
+    }
+
     @Test fun `FocusBlock put delete projection is deterministic from either durable branch`() = kotlinx.coroutines.runBlocking {
         val block = FocusBlockImage(id(50), id(51), ZonedTimeRangeImage("2026-01-01T09:00:00Z", "2026-01-01T10:00:00Z", "UTC"), FlexibilityImage.SOFT, PinStateImage.UNPINNED)
         val putWins = focusConflict(block, putMutationId = id(52), deleteMutationId = id(53))
