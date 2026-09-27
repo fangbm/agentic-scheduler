@@ -688,7 +688,13 @@ Unknown future schema versions are not opened by guessing compatibility.
 
 # PD-014 — Local-at-rest security boundary
 
-`OD-012 — Local database encryption at rest` remains unresolved by D4.
+`OD-012 — Local database encryption at rest` was investigated after D8. Its
+current status is `BLOCKED_BY_PLATFORM_COMPATIBILITY`: no production-supported
+Room 3/KMP `SQLiteDriver` integration for encrypted SQLite has been verified
+for Android/Wear plus Windows/Linux Desktop. See
+`docs/OD-012_LOCAL_DATABASE_ENCRYPTION.md` for the executable POC and required
+resolution paths. It remains unresolved for a production release and outside
+the D4 implementation gate.
 
 Therefore D4 explicitly does **not** authorize:
 
@@ -743,6 +749,9 @@ OD-010 — Concrete Room/KMP database configuration
 OD-011 — Application/repository port placement
 ```
 
-`OD-012 — Local database encryption at rest` remains `PENDING` and is explicitly outside the D4 implementation gate.
+`OD-012 — Local database encryption at rest` remains blocked for production
+implementation and is explicitly outside the D4 implementation gate; its
+current evidence and resolution requirements are recorded in
+`docs/OD-012_LOCAL_DATABASE_ENCRYPTION.md`.
 
 Once this decision document and the D4 Task Spec are approved, coding agents may implement D4 without independently revisiting Room-vs-SQLite-family choice, repository placement, database schema shape, mapping conventions, or migration baseline.
