@@ -265,6 +265,7 @@ class MainActivity : ComponentActivity() {
                             agentState,
                             agentRun,
                             secureStore,
+                            localEnrollments,
                             ids,
                             syncStoppedReason = syncStoppedReason,
                             onRetrySync = {
@@ -361,6 +362,7 @@ private fun AndroidScheduler(
     agentState: AgentStateRepository,
     agentRun: AgentRunService,
     secureStore: PlatformSecretStore,
+    enrollments: LocalEnrollmentRepository,
     ids: dev.agenticscheduler.application.id.UuidV7Generator,
     syncStoppedReason: String?,
     onRetrySync: () -> Unit,
