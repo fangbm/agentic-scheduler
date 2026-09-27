@@ -28,9 +28,9 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
             assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM sync_space_membership WHERE sync_space_id = ?", fixture.spaceId))
             assertEquals(32, bytes(dataSource, "SELECT request_fingerprint FROM recovery_enrollment_request WHERE request_id = ?", fixture.requestId)!!.size)
 
-            val changedKey = retry.copy(hpkePublicKeyBase64Url = encode(bytesOf(31)))
+            val changedKey = retry.copy(hpkePublicKeyBase64Url = encode(identityBytes(fixture, "changed-hpke")))
             assertEquals(RecoveryEnrollmentResult.RequestIdentityConflict, repository.enrollWithRecovery(changedKey))
-            val changedCredential = retry.copy(credentialHashBase64Url = encode(bytesOf(32)))
+            val changedCredential = retry.copy(credentialHashBase64Url = encode(identityBytes(fixture, "changed-credential")))
             assertEquals(RecoveryEnrollmentResult.RequestIdentityConflict, repository.enrollWithRecovery(changedCredential))
             val changedTarget = retry.copy(targetDeviceId = "recovery-target-changed-${fixture.suffix}")
             assertEquals(RecoveryEnrollmentResult.RequestIdentityConflict, repository.enrollWithRecovery(changedTarget))
@@ -228,8 +228,8 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
         accountId = fixture.accountId,
         requestId = fixture.requestId,
         targetDeviceId = fixture.deviceId,
-        hpkePublicKeyBase64Url = encode(bytesOf(11)),
-        credentialHashBase64Url = encode(bytesOf(12)),
+        hpkePublicKeyBase64Url = encode(identityBytes(fixture, "hpke")),
+        credentialHashBase64Url = encode(identityBytes(fixture, "credential")),
         proofBase64Url = encode(currentProof),
         counter = counter,
         nextProofHashBase64Url = encode(sha256(nextProof)),
@@ -313,6 +313,8 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
 
     private fun proof(value: Int) = ByteArray(32) { value.toByte() }
     private fun bytesOf(value: Int) = ByteArray(32) { (value + it).toByte() }
+    private fun identityBytes(fixture: Fixture, purpose: String) =
+        sha256("${fixture.suffix}:$purpose".toByteArray(Charsets.UTF_8))
     private fun sha256(value: ByteArray) = MessageDigest.getInstance("SHA-256").digest(value)
     private fun encode(value: ByteArray) = Base64.getUrlEncoder().withoutPadding().encodeToString(value)
 }
