@@ -91,7 +91,7 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
                     actor = AuthenticatedDevice(fixture.accountId, actorDeviceId),
                     targetDeviceId = fixture.deviceId,
                     request = AtomicRevocationRequest(
-                        rotationId = "d8-recovery-revoke-rotation-${fixture.suffix}",
+                        rotationId = fixture.rotationId,
                         recoveryEnvelopeBase64Url = encode(bytesOf(82)),
                         packages = listOf(RotationPackageUpload(actorDeviceId, encode(bytesOf(83)))),
                     ),
@@ -138,8 +138,11 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
             assertEquals(1, count(source, "SELECT COUNT(*) FROM device WHERE device_id = ?", fixture.deviceId))
         } finally {
             executor.shutdownNow()
-            cleanup(source, fixture, trigger, function)
-            source.close()
+            try {
+                cleanup(source, fixture, trigger, function)
+            } finally {
+                source.close()
+            }
         }
     }
 
@@ -157,8 +160,11 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
             seed(source, fixture, withDevice)
             block(fixture, source, JdbcOpaqueSyncRepository(source))
         } finally {
-            cleanup(source, fixture)
-            source.close()
+            try {
+                cleanup(source, fixture)
+            } finally {
+                source.close()
+            }
         }
     }
 
@@ -176,6 +182,7 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
         val spaceId: String,
         val deviceId: String,
         val requestId: String,
+        val rotationId: String,
     )
 
     private fun fixtureIds(suffix: String, label: String) = Fixture(
@@ -184,6 +191,7 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
         spaceId = "d8-recovery-$label-space-$suffix",
         deviceId = "d8-recovery-$label-target-$suffix",
         requestId = "d8-recovery-$label-request-$suffix",
+        rotationId = "d8-recovery-revoke-rotation-$suffix",
     )
 
     private fun seed(dataSource: HikariDataSource, fixture: Fixture, withDevice: Boolean = false) {
@@ -297,17 +305,26 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
     }
 
     private fun cleanup(dataSource: HikariDataSource, fixture: Fixture, trigger: String? = null, function: String? = null) {
-        runCatching {
-            dataSource.connection.use { connection ->
-                if (trigger != null) connection.createStatement().use { it.execute("DROP TRIGGER IF EXISTS $trigger ON recovery_enrollment_request") }
-                if (function != null) connection.createStatement().use { it.execute("DROP FUNCTION IF EXISTS $function()") }
-                connection.prepareStatement("DELETE FROM recovery_enrollment_request WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
-                connection.prepareStatement("DELETE FROM sync_space_membership WHERE sync_space_id = ?").use { it.setString(1, fixture.spaceId); it.executeUpdate() }
-                connection.prepareStatement("DELETE FROM recovery_proof WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
-                connection.prepareStatement("DELETE FROM sync_space WHERE sync_space_id = ?").use { it.setString(1, fixture.spaceId); it.executeUpdate() }
-                connection.prepareStatement("DELETE FROM device WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
-                connection.prepareStatement("DELETE FROM account WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
-            }
+        dataSource.connection.use { connection ->
+            if (trigger != null) connection.createStatement().use { it.execute("DROP TRIGGER IF EXISTS $trigger ON recovery_enrollment_request") }
+            if (function != null) connection.createStatement().use { it.execute("DROP FUNCTION IF EXISTS $function()") }
+            connection.prepareStatement("DELETE FROM sync_key_rotation_package WHERE rotation_id = ?").use { it.setString(1, fixture.rotationId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM sync_key_rotation WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM recovery_enrollment_request WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM recovery_proof WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM recovery_envelope WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM sync_space_membership WHERE sync_space_id = ?").use { it.setString(1, fixture.spaceId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM sync_space WHERE sync_space_id = ?").use { it.setString(1, fixture.spaceId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM device WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
+            connection.prepareStatement("DELETE FROM account WHERE account_id = ?").use { it.setString(1, fixture.accountId); it.executeUpdate() }
+
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM sync_key_rotation WHERE account_id = ?", fixture.accountId))
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM sync_key_rotation_package WHERE rotation_id = ?", fixture.rotationId))
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM recovery_envelope WHERE account_id = ?", fixture.accountId))
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM recovery_enrollment_request WHERE account_id = ?", fixture.accountId))
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM recovery_proof WHERE account_id = ?", fixture.accountId))
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM device WHERE account_id = ?", fixture.accountId))
+            assertEquals(0, count(dataSource, "SELECT COUNT(*) FROM account WHERE account_id = ?", fixture.accountId))
         }
     }
 
