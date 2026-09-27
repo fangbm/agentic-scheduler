@@ -435,15 +435,30 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     }
                 }
                 if (completed != null) {
+                    val sameIdentity = completed.accountId == request.accountId &&
+                        MessageDigest.isEqual(completed.fingerprint ?: ByteArray(0), fingerprint)
+                    val targetIsActive = if (sameIdentity) {
+                        connection.prepareStatement(
+                            "SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE",
+                        ).use { statement ->
+                            statement.setString(1, completed.targetDeviceId)
+                            statement.setString(2, request.accountId)
+                            statement.executeQuery().use { rs -> rs.next() && rs.getTimestamp("revoked_at") == null }
+                        }
+                    } else {
+                        false
+                    }
                     connection.rollback()
                     return@connection if (
-                        completed.accountId == request.accountId &&
-                        MessageDigest.isEqual(completed.fingerprint ?: ByteArray(0), fingerprint)
+                        sameIdentity && targetIsActive
                     ) {
                         RecoveryEnrollmentResult.Idempotent(request.accountId, completed.targetDeviceId)
                     } else {
-                        // A null fingerprint is a legacy completion and cannot be safely inferred.
-                        RecoveryEnrollmentResult.RequestIdentityConflict
+                        // Never report an old completion as success after its device was revoked
+                        // (or if its device row is unexpectedly missing). The client maps this
+                        // existing error to a non-ACTIVE outcome and retains its durable PENDING state.
+                        if (sameIdentity) RecoveryEnrollmentResult.TargetDeviceAlreadyExists
+                        else RecoveryEnrollmentResult.RequestIdentityConflict
                     }
                 }
 

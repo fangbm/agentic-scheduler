@@ -65,6 +65,52 @@ class JdbcRecoveryEnrollmentIdempotencyTest {
     }
 
     @Test
+    fun `completed recovery retry after target revocation is rejected without consuming proof`() {
+        withDatabase("revoked-retry") { fixture, dataSource, repository ->
+            val first = enrollment(fixture, proof(41), counter = 7, nextProof = proof(42))
+            assertEquals(
+                RecoveryEnrollmentResult.Created(fixture.accountId, fixture.deviceId),
+                repository.enrollWithRecovery(first),
+            )
+
+            val actorDeviceId = "d8-recovery-revoker-${fixture.suffix}"
+            dataSource.connection.use { connection ->
+                connection.prepareStatement(
+                    "INSERT INTO device(device_id, account_id, credential_hash, hpke_public_key) VALUES (?, ?, ?, ?)",
+                ).use { statement ->
+                    statement.setString(1, actorDeviceId)
+                    statement.setString(2, fixture.accountId)
+                    statement.setBytes(3, bytesOf(80))
+                    statement.setBytes(4, bytesOf(81))
+                    assertEquals(1, statement.executeUpdate())
+                }
+            }
+            assertEquals(
+                AtomicRevocationResult.Applied,
+                repository.revokeAndRotate(
+                    actor = AuthenticatedDevice(fixture.accountId, actorDeviceId),
+                    targetDeviceId = fixture.deviceId,
+                    request = AtomicRevocationRequest(
+                        rotationId = "d8-recovery-revoke-rotation-${fixture.suffix}",
+                        recoveryEnvelopeBase64Url = encode(bytesOf(82)),
+                        packages = listOf(RotationPackageUpload(actorDeviceId, encode(bytesOf(83)))),
+                    ),
+                ),
+            )
+
+            val retry = enrollment(fixture, proof(42), counter = 8, nextProof = proof(43))
+            assertEquals(
+                RecoveryEnrollmentResult.TargetDeviceAlreadyExists,
+                repository.enrollWithRecovery(retry),
+            )
+            assertProof(dataSource, fixture.accountId, proof(42), 8)
+            assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM recovery_enrollment_request WHERE request_id = ?", fixture.requestId))
+            assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM device WHERE device_id = ? AND revoked_at IS NOT NULL", fixture.deviceId))
+            assertEquals(1, count(dataSource, "SELECT COUNT(*) FROM sync_key_rotation WHERE revoked_device_id = ?", fixture.deviceId))
+        }
+    }
+
+    @Test
     fun `concurrent same request attempts serialize on account proof`() {
         val jdbcUrl = System.getenv("SYNC_TEST_DATABASE_URL") ?: return
         val suffix = UUID.randomUUID().toString().replace("-", "")

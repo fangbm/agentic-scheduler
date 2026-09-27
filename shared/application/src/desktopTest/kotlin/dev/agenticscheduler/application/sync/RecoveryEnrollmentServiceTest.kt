@@ -165,6 +165,32 @@ class RecoveryEnrollmentServiceTest {
     }
 
     @Test
+    fun `revoked completed recovery retry keeps local enrollment pending`() = runBlocking {
+        val fixture = Fixture().also {
+            it.transport.onEnrollment = { _, _ ->
+                throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.TargetDeviceExists)
+            }
+        }
+        val pending = LocalEnrollmentState.Pending(
+            accountId = account,
+            deviceId = device,
+            enrollmentRequestId = request,
+            hpkePublicKey = HpkePublicKeyBase64Url("AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"),
+            hpkePrivateKeyReference = SecretReference("secure://pairing/recovery-existing"),
+            deviceCredentialReference = SecretReference("secure://credential/recovery"),
+        )
+        fixture.enrollments.value = pending
+
+        assertEquals(
+            RecoveryEnrollmentServiceResult.TargetDeviceAlreadyExists,
+            fixture.service.recover(account, secret, device, request),
+        )
+        assertEquals(pending, fixture.enrollments.value)
+        assertEquals(1, fixture.transport.requests.size)
+        assertEquals(emptySet(), fixture.ring.installedEpochs)
+    }
+
+    @Test
     fun `recovery rejects an existing pending account after another account became active`() = runBlocking {
         val fixture = Fixture()
         val pending = LocalEnrollmentState.Pending(
