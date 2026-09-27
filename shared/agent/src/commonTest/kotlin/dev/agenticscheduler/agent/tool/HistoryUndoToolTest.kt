@@ -4,6 +4,7 @@ import dev.agenticscheduler.agent.permission.AgentPermissionMode
 import dev.agenticscheduler.agent.permission.AgentPermissionPolicy
 import dev.agenticscheduler.agent.permission.AgentToolCapability
 import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.AgentOriginWriteNotAllowed
 import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.application.history.UndoCapability
 import dev.agenticscheduler.application.history.UndoResult
@@ -106,6 +107,28 @@ class HistoryUndoToolTest {
     }
 
     @Test
+    fun `agent compatibility denial is structured and prevents undo while allowed gate executes`() = runBlocking {
+        val app = FakeUndoApplication().apply { agentWriteAllowed = false }
+        val tool = HistoryUndoTool(app)
+        val preview = assertIs<AgentToolOutcome.ConfirmationRequired<HistoryUndoPreview>>(
+            tool.prepare(args, defaultPolicy),
+        ).preview
+
+        assertEquals(
+            AgentToolOutcome.PermissionDenied(AgentToolCapability.UNDO),
+            tool.commit(args, preview, userConfirmed = true, defaultPolicy),
+        )
+        assertEquals(0, app.undoCalls)
+
+        app.agentWriteAllowed = true
+        val result = assertIs<AgentToolOutcome.Success<CommittedHistoryUndo>>(
+            tool.commit(args, preview, userConfirmed = true, defaultPolicy),
+        )
+        assertEquals(committedId, result.payload.mutationId)
+        assertEquals(1, app.undoCalls)
+    }
+
+    @Test
     fun `preview failures are redacted`() = runBlocking {
         val app = FakeUndoApplication().apply { throwOnDiff = true }
         val tool = HistoryUndoTool(app)
@@ -121,6 +144,7 @@ class HistoryUndoToolTest {
         var undoCalls = 0
         var throwOnDiff = false
         var throwOnUndo = false
+        var agentWriteAllowed = true
 
         override suspend fun canUndo(mutationId: String): UndoCapability {
             canUndoCalls++
@@ -152,6 +176,14 @@ class HistoryUndoToolTest {
                 return UndoResult.Applied(committedId)
             }
             return undoResult
+        }
+
+        override suspend fun undoAsAgent(
+            mutationId: String,
+            onCommitted: suspend (MutationExecution<UndoResult>) -> Unit,
+        ): UndoResult {
+            if (!agentWriteAllowed) throw AgentOriginWriteNotAllowed()
+            return undo(mutationId, onCommitted)
         }
     }
 }

@@ -42,15 +42,18 @@ class MutationCoordinator(
         onCommitted: suspend (MutationExecution<T>) -> Unit = {},
         block: suspend MutationScope.() -> T,
     ): MutationExecution<T> =
-        checkNotNull(executeIfAny(origin, onCommitted, block)) { "A committed MutationId must own at least one typed entity mutation." }
+        checkNotNull(executeIfAny(origin, onCommitted, block = block)) { "A committed MutationId must own at least one typed entity mutation." }
 
     /** Allows a validated no-op outcome (for example stale Planner Apply) without allocating causal state. */
     suspend fun <T> executeIfAny(
         origin: MutationOrigin,
         onCommitted: suspend (MutationExecution<T>) -> Unit = {},
+        requireAgentWriteAuthorization: Boolean = false,
         block: suspend MutationScope.() -> T,
     ): MutationExecution<T>? {
-        if (origin is MutationOrigin.Agent && !agentOriginWriteGate.mayCommit()) throw AgentOriginWriteNotAllowed()
+        if ((origin is MutationOrigin.Agent || requireAgentWriteAuthorization) && !agentOriginWriteGate.mayCommit()) {
+            throw AgentOriginWriteNotAllowed()
+        }
         return transactions.inWriteTransaction {
             val scope = MutationScope()
             val value = scope.block()

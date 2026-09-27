@@ -5,6 +5,7 @@ import dev.agenticscheduler.agent.permission.AgentPermissionEngine
 import dev.agenticscheduler.agent.permission.AgentPermissionPolicy
 import dev.agenticscheduler.agent.permission.AgentToolCapability
 import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.AgentOriginWriteNotAllowed
 import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.application.history.UndoCapability
 import dev.agenticscheduler.application.history.UndoResult
@@ -46,6 +47,10 @@ interface HistoryUndoApplication {
         mutationId: String,
         onCommitted: suspend (MutationExecution<UndoResult>) -> Unit = {},
     ): UndoResult
+    suspend fun undoAsAgent(
+        mutationId: String,
+        onCommitted: suspend (MutationExecution<UndoResult>) -> Unit = {},
+    ): UndoResult
 }
 
 class D7HistoryUndoApplication(
@@ -58,6 +63,11 @@ class D7HistoryUndoApplication(
         mutationId: String,
         onCommitted: suspend (MutationExecution<UndoResult>) -> Unit,
     ): UndoResult = undoService.undo(mutationId, onCommitted)
+
+    override suspend fun undoAsAgent(
+        mutationId: String,
+        onCommitted: suspend (MutationExecution<UndoResult>) -> Unit,
+    ): UndoResult = undoService.undoAsAgent(mutationId, onCommitted)
 }
 
 /**
@@ -118,7 +128,7 @@ class HistoryUndoTool(
         }
 
         return try {
-            when (val result = application.undo(current.originalMutationId, onCommitted)) {
+            when (val result = application.undoAsAgent(current.originalMutationId, onCommitted)) {
                 is UndoResult.Applied -> AgentToolOutcome.Success(CommittedHistoryUndo(current.originalMutationId, result.mutationId))
                 is UndoResult.Unsupported -> AgentToolOutcome.Unsupported(reasonCode(result.reason))
                 is UndoResult.Conflict -> AgentToolOutcome.Conflict(result.entityIds)
@@ -127,6 +137,8 @@ class HistoryUndoTool(
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (_: AgentOriginWriteNotAllowed) {
+            AgentToolOutcome.PermissionDenied(metadata.capability)
         } catch (_: Exception) {
             AgentToolOutcome.InfrastructureFailure("UNDO_TRANSACTION")
         }

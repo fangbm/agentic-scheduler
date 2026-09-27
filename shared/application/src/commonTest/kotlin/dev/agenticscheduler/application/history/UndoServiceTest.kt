@@ -56,6 +56,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertNull
 
@@ -78,6 +79,32 @@ class UndoServiceTest {
         assertEquals(MutationOrigin.Undo(history.id), journal.mutations.single().operation.origin)
         assertEquals(after.toSemanticImage(), inverse.before)
         assertEquals(before.toSemanticImage(), inverse.after)
+    }
+
+    @Test fun `agent undo requires compatibility gate but records D7 Undo origin when allowed`() = kotlinx.coroutines.runBlocking {
+        val id = EventId("00000000-0000-7000-8000-000000000010")
+        val before = event(id, "before")
+        val after = event(id, "after")
+        val history = MemoryHistory("00000000-0000-7000-8000-000000000020", EventPut(before.toSemanticImage(), after.toSemanticImage()))
+        val events = MemoryEvents(after)
+        val deniedJournal = MemoryJournalForUndo()
+        val deniedCoordinator = coordinator(deniedJournal, AgentOriginWriteGate { false })
+
+        assertFailsWith<AgentOriginWriteNotAllowed> {
+            UndoService(deniedCoordinator, history, events, MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy)
+                .undoAsAgent(history.id)
+        }
+        assertEquals(after, events.value)
+        assertEquals(emptyList(), deniedJournal.mutations)
+
+        val allowedJournal = MemoryJournalForUndo()
+        val allowedCoordinator = coordinator(allowedJournal, AgentOriginWriteGate { true })
+        assertIs<UndoResult.Applied>(
+            UndoService(allowedCoordinator, history, events, MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy)
+                .undoAsAgent(history.id),
+        )
+        assertEquals(before, events.value)
+        assertEquals(MutationOrigin.Undo(history.id), allowedJournal.mutations.single().operation.origin)
     }
 
     @Test fun `diverged event update is an undo conflict without a new mutation`() = kotlinx.coroutines.runBlocking {
@@ -249,7 +276,16 @@ class UndoServiceTest {
     private fun task(id: TaskId, title: String) = Task(id, title, TaskStatus.OPEN, TaskPriority.NORMAL, TaskEffort(null, kotlin.time.Duration.ZERO, null), null)
     private fun focus(id: String, start: String, end: String) = FocusBlock(FocusBlockId(id), TaskId("00000000-0000-7000-8000-000000000099"), dev.agenticscheduler.domain.time.ZonedTimeRange(kotlin.time.Instant.parse(start), kotlin.time.Instant.parse(end), kotlinx.datetime.TimeZone.UTC), dev.agenticscheduler.domain.planning.Flexibility.SOFT, dev.agenticscheduler.domain.planning.PinState.UNPINNED)
     private fun unusedEvents() = MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000098"), "unused"))
-    private fun coordinator(journal: MemoryJournalForUndo) = MutationCoordinator(IdentityTransactionsForUndo, journal, RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }), MutationWallClock { 1 })
+    private fun coordinator(
+        journal: MemoryJournalForUndo,
+        agentGate: AgentOriginWriteGate = AgentOriginWriteGate { true },
+    ) = MutationCoordinator(
+        IdentityTransactionsForUndo,
+        journal,
+        RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } }),
+        MutationWallClock { 1 },
+        agentGate,
+    )
 }
 
 private object IdentityTransactionsForUndo : ApplicationTransactionRunner { override suspend fun <T> inWriteTransaction(block: suspend () -> T): T = block() }
