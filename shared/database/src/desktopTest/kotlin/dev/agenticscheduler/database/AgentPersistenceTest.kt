@@ -138,6 +138,7 @@ class AgentPersistenceTest {
             val enrollment = object : LocalEnrollmentRepository {
                 var current: LocalEnrollmentState? = null
                 override suspend fun state(accountId: AccountId) = current
+                override suspend fun states() = listOfNotNull(current)
                 override suspend fun savePending(value: LocalEnrollmentState.Pending) { current = value }
                 override suspend fun saveActive(value: LocalEnrollmentState.Active) { current = value }
             }
