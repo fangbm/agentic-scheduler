@@ -102,6 +102,7 @@ import kotlin.time.Duration
 
 class MainActivity : ComponentActivity() {
     private val d8StartupState = mutableStateOf(D8StartupState.Activating)
+    private val d8SyncStoppedReason = mutableStateOf<String?>(null)
     private val database by lazy { openAndroidDatabase(this) }
     private val events by lazy { RoomEventRepository(database) }
     private val tasks by lazy { RoomTaskRepository(database) }
@@ -123,6 +124,7 @@ class MainActivity : ComponentActivity() {
     private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
+    @Volatile private var d8IsForeground = false
     private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
     private val reads by lazy { ConflictAwareSourceFactReadService(events, tasks, profiles, academics, d8Runtime.sourceFacts) }
     private val eventEditor by lazy { EventEditingService(events, ids, mutations, d8Runtime.writePolicy) }
@@ -148,10 +150,16 @@ class MainActivity : ComponentActivity() {
                         is ActiveSyncRuntimeCreation.Active -> {
                             val trigger = d8Runtime.newCatchUpTrigger(
                                 d8Scope,
-                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; retry remains scheduled.") },
+                                pollingIntervalMillis = ActiveSyncCatchUpTrigger.DESKTOP_ANDROID_POLL_INTERVAL_MILLIS,
+                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; transient retry remains scheduled.") },
+                                onNonRetryableFailure = { reason ->
+                                    android.util.Log.e("D8Sync", "Automatic sync stopped: $reason. Check account credentials or sync integrity before retrying.")
+                                    runOnUiThread { d8SyncStoppedReason.value = reason }
+                                },
                             )
                             d8SyncTrigger = trigger
                             trigger.start()
+                            trigger.setForeground(d8IsForeground)
                             registerNetworkRetry(trigger)
                             d8StartupState.value = D8StartupState.Ready
                         }
@@ -172,10 +180,22 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val startupState by d8StartupState
+            val syncStoppedReason by d8SyncStoppedReason
             MaterialTheme {
                 Surface {
                     when (startupState) {
-                        D8StartupState.Ready -> AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                        D8StartupState.Ready -> AndroidScheduler(
+                            reads,
+                            dogfoodPlanner,
+                            profileSettings,
+                            eventEditor,
+                            taskEditor,
+                            syncStoppedReason = syncStoppedReason,
+                            onRetrySync = {
+                                d8SyncStoppedReason.value = null
+                                d8SyncTrigger?.retryNow()
+                            },
+                        )
                         D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
                         D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
                     }
@@ -186,7 +206,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        d8SyncTrigger?.requestCatchUp()
+        d8IsForeground = true
+        d8SyncTrigger?.setForeground(true)
+    }
+
+    override fun onStop() {
+        d8IsForeground = false
+        d8SyncTrigger?.setForeground(false)
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -254,6 +281,8 @@ private fun AndroidScheduler(
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
     taskEditor: TaskEditingService,
+    syncStoppedReason: String?,
+    onRetrySync: () -> Unit,
 ) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     var selectedDate by remember { mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date) }
@@ -280,6 +309,14 @@ private fun AndroidScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
+        if (syncStoppedReason != null) {
+            item(key = "sync-stopped") {
+                Column {
+                    Text("Automatic sync stopped ($syncStoppedReason). Check the account credentials or sync integrity, then retry.")
+                    Button(onClick = onRetrySync) { Text("Retry sync") }
+                }
+            }
+        }
         item {
             Text("Agenda / Day: $selectedDate")
             Row {

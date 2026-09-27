@@ -391,23 +391,20 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 val credentialHash = decodeCanonical(request.credentialHashBase64Url, 32)
                 val proof = decodeCanonical(request.proofBase64Url, 32)
                 val nextProofHash = decodeCanonical(request.nextProofHashBase64Url, 32)
-                val completed = connection.prepareStatement(
-                    "SELECT account_id, target_device_id FROM recovery_enrollment_request WHERE request_id = ?",
-                ).use { statement ->
-                    statement.setString(1, request.requestId)
-                    statement.executeQuery().use { rs ->
-                        if (!rs.next()) null else rs.getString("account_id") to rs.getString("target_device_id")
-                    }
-                }
-                if (completed != null) {
+                val fingerprint = recoveryEnrollmentFingerprint(
+                    accountId = request.accountId,
+                    requestId = request.requestId,
+                    targetDeviceId = request.targetDeviceId,
+                    hpkePublicKey = hpkePublicKey,
+                    credentialHash = credentialHash,
+                )
+
+                // The account lock serializes proof rotation and all recovery requests for this account.
+                // Never reveal whether requestId completed until the current proof has been verified.
+                if (!lockAccountIfExists(connection, request.accountId)) {
                     connection.rollback()
-                    return@connection if (completed.first == request.accountId && completed.second == request.targetDeviceId) {
-                        RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
-                    } else {
-                        RecoveryEnrollmentResult.InvalidProof
-                    }
+                    return@connection RecoveryEnrollmentResult.UnknownAccount
                 }
-                lockAccount(connection, request.accountId)
                 val verifier = connection.prepareStatement(
                     "SELECT proof_hash, counter FROM recovery_proof WHERE account_id = ? FOR UPDATE",
                 ).use { statement ->
@@ -419,7 +416,38 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection RecoveryEnrollmentResult.UnknownAccount
                 }
-                if (request.counter != verifier.second || !MessageDigest.isEqual(verifier.first, sha256Bytes(proof)) || MessageDigest.isEqual(verifier.first, nextProofHash)) {
+                if (request.counter != verifier.second || !MessageDigest.isEqual(verifier.first, sha256Bytes(proof))) {
+                    connection.rollback()
+                    return@connection RecoveryEnrollmentResult.InvalidProof
+                }
+
+                val completed = connection.prepareStatement(
+                    "SELECT account_id, target_device_id, request_fingerprint " +
+                        "FROM recovery_enrollment_request WHERE request_id = ? FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, request.requestId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else CompletedRecoveryEnrollment(
+                            accountId = rs.getString("account_id"),
+                            targetDeviceId = rs.getString("target_device_id"),
+                            fingerprint = rs.getBytes("request_fingerprint"),
+                        )
+                    }
+                }
+                if (completed != null) {
+                    connection.rollback()
+                    return@connection if (
+                        completed.accountId == request.accountId &&
+                        MessageDigest.isEqual(completed.fingerprint ?: ByteArray(0), fingerprint)
+                    ) {
+                        RecoveryEnrollmentResult.Idempotent(request.accountId, completed.targetDeviceId)
+                    } else {
+                        // A null fingerprint is a legacy completion and cannot be safely inferred.
+                        RecoveryEnrollmentResult.RequestIdentityConflict
+                    }
+                }
+
+                if (MessageDigest.isEqual(verifier.first, nextProofHash)) {
                     connection.rollback()
                     return@connection RecoveryEnrollmentResult.InvalidProof
                 }
@@ -461,10 +489,14 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     statement.setString(3, request.accountId)
                     statement.executeUpdate()
                 }
-                connection.prepareStatement("INSERT INTO recovery_enrollment_request(request_id, account_id, target_device_id) VALUES (?, ?, ?)").use { statement ->
+                connection.prepareStatement(
+                    "INSERT INTO recovery_enrollment_request(request_id, account_id, target_device_id, request_fingerprint) " +
+                        "VALUES (?, ?, ?, ?)",
+                ).use { statement ->
                     statement.setString(1, request.requestId)
                     statement.setString(2, request.accountId)
                     statement.setString(3, request.targetDeviceId)
+                    statement.setBytes(4, fingerprint)
                     statement.executeUpdate()
                 }
                 connection.commit()
@@ -826,6 +858,12 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         }
     }
 
+    private fun lockAccountIfExists(connection: Connection, accountId: String): Boolean =
+        connection.prepareStatement("SELECT account_id FROM account WHERE account_id = ? FOR UPDATE").use { statement ->
+            statement.setString(1, accountId)
+            statement.executeQuery().use(ResultSet::next)
+        }
+
     private fun findEnvelope(connection: Connection, spaceId: String, mutationId: String): ExistingEnvelope? =
         connection.prepareStatement(
             "SELECT server_cursor, sender_device_id, key_epoch, ciphertext " +
@@ -893,6 +931,37 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         updateString(targetDeviceId)
         updateBytes(envelope)
         packages.forEach { (deviceId, bytes) -> updateString(deviceId); updateBytes(bytes) }
+        return digest.digest()
+    }
+
+    private data class CompletedRecoveryEnrollment(
+        val accountId: String,
+        val targetDeviceId: String,
+        val fingerprint: ByteArray?,
+    )
+
+    /**
+     * Stable v1 identity digest. All tuple fields, including the domain/version label,
+     * use unsigned-length-prefixed UTF-8/raw bytes and SHA-256.
+     */
+    private fun recoveryEnrollmentFingerprint(
+        accountId: String,
+        requestId: String,
+        targetDeviceId: String,
+        hpkePublicKey: ByteArray,
+        credentialHash: ByteArray,
+    ): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        fun updateLengthPrefixed(value: ByteArray) {
+            digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(value.size).array())
+            digest.update(value)
+        }
+        updateLengthPrefixed("agentic-scheduler-recovery-enrollment-v1".toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(accountId.toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(requestId.toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(targetDeviceId.toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(hpkePublicKey)
+        updateLengthPrefixed(credentialHash)
         return digest.digest()
     }
 

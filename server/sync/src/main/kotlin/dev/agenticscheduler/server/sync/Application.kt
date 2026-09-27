@@ -223,7 +223,9 @@ fun Application.syncServerModule(
             }
             when (val result = security.enrollWithRecovery(request)) {
                 is RecoveryEnrollmentResult.Created -> call.respond(HttpStatusCode.Created, RecoveryEnrollmentCreatedResponse(result.accountId, result.deviceId))
+                is RecoveryEnrollmentResult.Idempotent -> call.respond(HttpStatusCode.OK, RecoveryEnrollmentCreatedResponse(result.accountId, result.deviceId))
                 RecoveryEnrollmentResult.InvalidProof -> call.respond(HttpStatusCode.Unauthorized, ServerErrorResponse("INVALID_RECOVERY_PROOF"))
+                RecoveryEnrollmentResult.RequestIdentityConflict -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("RECOVERY_REQUEST_CONFLICT"))
                 RecoveryEnrollmentResult.TargetDeviceAlreadyExists -> call.respond(HttpStatusCode.Conflict, ServerErrorResponse("TARGET_DEVICE_EXISTS"))
                 RecoveryEnrollmentResult.UnknownAccount -> call.respond(HttpStatusCode.NotFound, ServerErrorResponse("NOT_FOUND"))
             }

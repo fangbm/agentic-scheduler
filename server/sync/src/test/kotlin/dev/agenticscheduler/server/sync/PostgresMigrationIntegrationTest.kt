@@ -46,6 +46,15 @@ class PostgresMigrationIntegrationTest {
                         assertTrue(result.getInt(1) == 1)
                     }
                 }
+                connection.createStatement().use { statement ->
+                    statement.executeQuery(
+                        "SELECT COUNT(*) FROM information_schema.columns " +
+                            "WHERE table_name = 'recovery_enrollment_request' AND column_name = 'request_fingerprint'",
+                    ).use { result ->
+                        result.next()
+                        assertEquals(1, result.getInt(1))
+                    }
+                }
             }
         } finally {
             dataSource.close()

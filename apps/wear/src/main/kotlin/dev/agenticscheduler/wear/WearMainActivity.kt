@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.compose.runtime.collectAsState
@@ -49,6 +51,7 @@ import kotlinx.datetime.toLocalDateTime
 
 class WearMainActivity : ComponentActivity() {
     private val d8StartupState = mutableStateOf(D8StartupState.Activating)
+    private val d8SyncFailure = mutableStateOf<String?>(null)
     private val database by lazy { openAndroidDatabase(this) }
     private val d8RuntimeLazy = lazy {
         RoomD8RuntimeComposition(
@@ -63,6 +66,7 @@ class WearMainActivity : ComponentActivity() {
     private val d8Scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val d8ShutdownScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var d8SyncTrigger: ActiveSyncCatchUpTrigger? = null
+    @Volatile private var d8IsForeground = false
     private var d8NetworkCallback: ConnectivityManager.NetworkCallback? = null
     private val calendarQueryService: ConflictAwareSourceFactReadService by lazy {
         ConflictAwareSourceFactReadService(
@@ -92,10 +96,16 @@ class WearMainActivity : ComponentActivity() {
                         is ActiveSyncRuntimeCreation.Active -> {
                             val trigger = d8Runtime.newCatchUpTrigger(
                                 d8Scope,
-                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; retry remains scheduled.") },
+                                pollingIntervalMillis = ActiveSyncCatchUpTrigger.WEAR_POLL_INTERVAL_MILLIS,
+                                onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; transient retry remains scheduled.") },
+                                onNonRetryableFailure = { reason ->
+                                    runOnUiThread { d8SyncFailure.value = reason }
+                                    android.util.Log.e("D8Sync", "Automatic sync stopped: $reason")
+                                },
                             )
                             d8SyncTrigger = trigger
                             trigger.start()
+                            trigger.setForeground(d8IsForeground)
                             registerNetworkRetry(trigger)
                             d8StartupState.value = D8StartupState.Ready
                         }
@@ -118,7 +128,14 @@ class WearMainActivity : ComponentActivity() {
             val startupState by d8StartupState
             MaterialTheme {
                 when (startupState) {
-                    D8StartupState.Ready -> WearAgenda(calendarQueryService)
+                    D8StartupState.Ready -> WearAgenda(
+                        calendarQueryService,
+                        d8SyncFailure.value,
+                        onRetrySync = {
+                            d8SyncFailure.value = null
+                            d8SyncTrigger?.retryNow()
+                        },
+                    )
                     D8StartupState.Activating -> Text("Connecting to your secure sync space…")
                     D8StartupState.Blocked -> Text("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
                 }
@@ -128,7 +145,14 @@ class WearMainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        d8SyncTrigger?.requestCatchUp()
+        d8IsForeground = true
+        d8SyncTrigger?.setForeground(true)
+    }
+
+    override fun onStop() {
+        d8IsForeground = false
+        d8SyncTrigger?.setForeground(false)
+        super.onStop()
     }
 
     override fun onDestroy() {
@@ -180,7 +204,11 @@ class WearMainActivity : ComponentActivity() {
 private enum class D8StartupState { Activating, Ready, Blocked }
 
 @androidx.compose.runtime.Composable
-private fun WearAgenda(service: ConflictAwareSourceFactReadService) {
+private fun WearAgenda(
+    service: ConflictAwareSourceFactReadService,
+    syncFailureReason: String?,
+    onRetrySync: () -> Unit,
+) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     val today = Clock.System.now().toLocalDateTime(displayTimeZone).date
     val viewport = remember(today, displayTimeZone) {
@@ -202,7 +230,15 @@ private fun WearAgenda(service: ConflictAwareSourceFactReadService) {
         .size
     val calendarOverlap = if (result.conflicts.isNotEmpty()) "\nCalendar overlaps: ${result.conflicts.size}" else ""
     val syncConflicts = if (syncConflictCount > 0) "\nSync conflicts: $syncConflictCount" else ""
-    Text("Today\n$todayText\nUpcoming\n$upcomingText$calendarOverlap$syncConflicts")
+    Column {
+        Text("Today\n$todayText\nUpcoming\n$upcomingText$calendarOverlap$syncConflicts")
+        if (syncFailureReason != null) {
+            Text("Sync stopped ($syncFailureReason). Check the account or sync data, then retry.")
+            Button(onClick = onRetrySync) {
+                Text("Retry sync")
+            }
+        }
+    }
 }
 
 private fun emptyProjection() = CalendarProjectionResult(
