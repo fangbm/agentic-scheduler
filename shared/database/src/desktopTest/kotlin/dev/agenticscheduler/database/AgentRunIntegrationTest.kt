@@ -55,6 +55,9 @@ import io.ktor.http.content.TextContent
 import io.ktor.http.headersOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.collections.immutable.persistentListOf
 import kotlinx.datetime.LocalDate
@@ -70,6 +73,59 @@ import kotlin.time.Instant
 
 class AgentRunIntegrationTest {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
+
+    @Test fun `concurrent run on one thread waits then observes pending confirmation`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val firstProbeEntered = CompletableDeferred<Unit>()
+        val releaseFirstProbe = CompletableDeferred<Unit>()
+        var requestIndex = 0
+        val createInput = TaskCreateToolInput("Serialized task", "HIGH", 30, null, null)
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            when (requestIndex++) {
+                0 -> {
+                    firstProbeEntered.complete(Unit)
+                    releaseFirstProbe.await()
+                    respond(reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall(
+                        "probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}"),
+                    )))), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                }
+                1 -> respond(reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall(
+                    "create-1", function = ProviderFunctionCall(AgentToolNames.TASK_CREATE, json.encodeToString(createInput)),
+                )))), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+                else -> error("Unexpected provider request $requestIndex")
+            }
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val config = ProviderConfig(ProviderConfigId(id(149)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val runtime = AgentRunService(state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 })
+            val threadId = runtime.createThread()
+
+            val firstRun = async { runtime.run(threadId, "Create the task") }
+            firstProbeEntered.await()
+            val secondRun = async(start = CoroutineStart.UNDISPATCHED) { runtime.run(threadId, "Also create a task") }
+
+            assertEquals(1, state.messages(threadId).size)
+            releaseFirstProbe.complete(Unit)
+            assertIs<AgentRunResult.AwaitingConfirmation>(firstRun.await())
+            assertEquals(AgentRunResult.Failed("CONFIRMATION_PENDING"), secondRun.await())
+            assertEquals(listOf(0L), state.messages(threadId).map { it.ordinal })
+            assertEquals(1, state.toolCalls(threadId).count { it.state == AgentToolCallState.WAITING_CONFIRMATION })
+            assertEquals(2, requestIndex)
+        } finally {
+            releaseFirstProbe.complete(Unit)
+            client.close()
+            database.close()
+        }
+    }
 
     @Test fun `model proposal local read confirmation Task commit and history share one MutationId`() = runBlocking {
         val database = openInMemoryDesktopDatabase()
