@@ -19,6 +19,7 @@ import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.application.history.UndoService
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
@@ -31,6 +32,10 @@ import dev.agenticscheduler.database.repository.RoomEventRepository
 import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.id.EventId
+import dev.agenticscheduler.domain.id.PlanBranchId
+import dev.agenticscheduler.domain.id.PlanningProfileId
+import dev.agenticscheduler.domain.planning.PlanningProfile
+import dev.agenticscheduler.domain.planning.PlanningProfileConfiguration
 import dev.agenticscheduler.domain.time.AllDayRange
 import dev.agenticscheduler.domain.planning.Flexibility
 import dev.agenticscheduler.domain.planning.PinState
@@ -51,6 +56,7 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.collections.immutable.persistentListOf
 import kotlinx.datetime.LocalDate
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
@@ -60,6 +66,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
+import kotlin.time.Instant
 
 class AgentRunIntegrationTest {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
@@ -175,6 +182,101 @@ class AgentRunIntegrationTest {
             assertEquals(action.id.value, origin.agentActionId)
             assertEquals(action.mutationIds.single(), result.mutationIds.single())
             assertEquals(AgentToolResultStatus.SUCCESS, result.status)
+        } finally {
+            client.close()
+            database.close()
+        }
+    }
+
+    @Test fun `PlanBranch preview cannot be applied from another Agent thread`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val branchId = id(168)
+        val profileId = PlanningProfileId(id(169))
+        val now = Instant.parse("2026-09-27T08:00:00Z")
+        val horizon = dev.agenticscheduler.planner.PlanningHorizon(now, Instant.parse("2026-09-28T08:00:00Z"))
+        val branch = dev.agenticscheduler.application.planner.PlanBranch(
+            id = PlanBranchId(branchId),
+            originalRequest = dev.agenticscheduler.application.planner.PlanningRequest.FullReplan,
+            baseFacts = dev.agenticscheduler.planner.PlanningSnapshot(
+                referenceNow = now,
+                horizon = horizon,
+                profile = PlanningProfile(profileId, "Study", PlanningProfileConfiguration.Unconfigured),
+                tasks = persistentListOf(), dependencies = persistentListOf(), focusBlocks = persistentListOf(),
+                events = persistentListOf(), courseSessions = persistentListOf(), exams = persistentListOf(),
+                constraints = persistentListOf(), askOverflowAuthorizedTaskIds = persistentListOf(),
+            ),
+            mutations = persistentListOf(), issues = persistentListOf(), explanations = persistentListOf(),
+        )
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-a", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("preview-a", function = ProviderFunctionCall(
+                PlannerToolNames.PREVIEW_FULL_REPLAN,
+                "{\"planningProfileId\":\"${profileId.value}\",\"referenceNow\":\"$now\",\"horizonStart\":\"${horizon.start}\",\"horizonEndExclusive\":\"${horizon.endExclusive}\"}",
+            ))))),
+            reply(ProviderChatMessage("assistant", "Preview ready.")),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-b", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("apply-b", function = ProviderFunctionCall(
+                PLANNER_APPLY_BRANCH_TOOL_NAME,
+                "{\"planBranchId\":\"$branchId\",\"applyNow\":\"$now\"}",
+            ))))),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val config = ProviderConfig(ProviderConfigId(id(170)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val preview = object : PlannerPreviewApplication {
+                override suspend fun fullReplan(profileId: PlanningProfileId, referenceNow: Instant, horizon: dev.agenticscheduler.planner.PlanningHorizon) =
+                    dev.agenticscheduler.application.planner.PlannerPreview.Applicable(branch)
+                override suspend fun localReflow(
+                    profileId: PlanningProfileId,
+                    referenceNow: Instant,
+                    horizon: dev.agenticscheduler.planner.PlanningHorizon,
+                    request: dev.agenticscheduler.planner.LocalReflowRequest,
+                ) = dev.agenticscheduler.application.planner.PlannerPreview.Applicable(branch)
+            }
+            var applyCalls = 0
+            val apply = object : PlannerBranchApplyApplication {
+                override suspend fun apply(
+                    branch: dev.agenticscheduler.application.planner.PlanBranch,
+                    applyNow: Instant,
+                    origin: MutationOrigin,
+                    onCommitted: suspend (MutationExecution<dev.agenticscheduler.application.planner.PlanBranchApplyResult>) -> Unit,
+                ): dev.agenticscheduler.application.planner.PlanBranchApplyResult {
+                    applyCalls++
+                    return dev.agenticscheduler.application.planner.PlanBranchApplyResult.Applied(
+                        branch.copy(status = dev.agenticscheduler.application.planner.PlanBranchStatus.APPLIED),
+                    )
+                }
+            }
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val runtime = AgentRunService(
+                state,
+                OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks),
+                TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)),
+                ids,
+                AgentClock { 6 },
+                plannerFullReplan = PlannerPreviewFullReplanTool(preview),
+                plannerApplyBranch = PlannerApplyBranchTool(apply),
+            )
+            val ownerThread = runtime.createThread()
+            val otherThread = runtime.createThread()
+
+            assertEquals("Preview ready.", assertIs<AgentRunResult.Completed>(runtime.run(ownerThread, "Preview my schedule")).assistantText)
+            assertEquals(branchId, state.actions(ownerThread).single().planBranchReference)
+
+            assertEquals(AgentRunResult.Failed("STALE"), runtime.run(otherThread, "Apply branch $branchId"))
+            assertEquals(AgentToolResultStatus.STALE, state.toolResults(otherThread).single().status)
+            assertEquals(0, applyCalls, "A thread must not obtain another thread's cached branch for Apply.")
+            assertTrue(history.timeline().isEmpty())
         } finally {
             client.close()
             database.close()

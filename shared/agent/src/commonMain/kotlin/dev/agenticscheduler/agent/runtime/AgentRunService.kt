@@ -70,7 +70,7 @@ class AgentRunService(
     private val json = Json { encodeDefaults = true; explicitNulls = true }
     private val transcripts = AgentTranscriptAssembler(state)
     /** Planner branches are session-local proposals; only their IDs/summaries enter the Agent audit. */
-    private val planBranches = mutableMapOf<String, dev.agenticscheduler.application.planner.PlanBranch>()
+    private val planBranches = mutableMapOf<Pair<AgentThreadId, String>, dev.agenticscheduler.application.planner.PlanBranch>()
     private val system = "Use only listed typed tools for reads and writes. Prose is not a mutation. Current tool results outrank summaries. Never claim a write succeeded without a successful tool result."
     private val taskGetSchema = schema("""{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"],"additionalProperties":false}""")
     private val taskCreateSchema = schema("""{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["LOW","NORMAL","HIGH"]},"estimatedMinutes":{"type":["integer","null"]},"remainingMinutes":{"type":["integer","null"]},"deadline":{"type":["object","null"]}},"required":["title","priority","estimatedMinutes","remainingMinutes","deadline"],"additionalProperties":false}""")
@@ -158,7 +158,7 @@ class AgentRunService(
         }
         if (call.name == PLANNER_APPLY_BRANCH_TOOL_NAME && plannerApplyBranch != null) {
             val branchId = runCatching { json.decodeFromString(PlannerApplyBranchToolInput.serializer(), call.argumentsJson).planBranchId }.getOrNull()
-            val branch = branchId?.let { planBranches[it] }
+            val branch = branchId?.let { planBranches[threadId to it] }
             if (branch == null) {
                 finishOutcome(call, action, AgentToolOutcome.Stale)
                 return resumeAfterTool(threadId)
@@ -281,7 +281,7 @@ class AgentRunService(
         val outcome = tool.commit(call.argumentsJson, branch, preview, true, policy, action.id, onCommitted = { committed ->
             val applied = committed.value as? dev.agenticscheduler.application.planner.PlanBranchApplyResult.Applied
                 ?: error("Planner Apply commit callback must describe an applied branch.")
-            planBranches[branch.id.value] = applied.branch
+            planBranches[call.threadId to branch.id.value] = applied.branch
             finishResult(
                 call, action, AgentToolResultStatus.SUCCESS,
                 json.encodeToString(PlannerApplyCommitSnapshot(branch.id.value, applied.branch.status.name, committed.mutationId.value)),
@@ -291,7 +291,7 @@ class AgentRunService(
         })
         when (outcome) {
             is AgentToolOutcome.Success -> {
-                planBranches[branch.id.value] = outcome.payload.branch
+                planBranches[call.threadId to branch.id.value] = outcome.payload.branch
                 if (!resultRecorded) finishResult(
                     call, action, AgentToolResultStatus.SUCCESS,
                     json.encodeToString(PlannerApplyCommitSnapshot(branch.id.value, outcome.payload.branch.status.name, null)),
@@ -502,7 +502,7 @@ class AgentRunService(
         }
         if (call.name == PLANNER_APPLY_BRANCH_TOOL_NAME && plannerApplyBranch != null) {
             val input = runCatching { json.decodeFromString(PlannerApplyBranchToolInput.serializer(), call.argumentsJson) }.getOrNull()
-            val branch = input?.let { planBranches[it.planBranchId] }
+            val branch = input?.let { planBranches[threadId to it.planBranchId] }
             if (branch == null) {
                 finishOutcome(call, action, AgentToolOutcome.Stale)
                 return AgentRunResult.Failed("STALE")
@@ -653,13 +653,13 @@ class AgentRunService(
         }
         if (call.name == PlannerToolNames.PREVIEW_FULL_REPLAN && allowLocalRead && plannerFullReplan != null) {
             val outcome = plannerFullReplan.execute(call.argumentsJson)
-            if (outcome is AgentToolOutcome.Success) planBranches[outcome.payload.id.value] = outcome.payload
+            if (outcome is AgentToolOutcome.Success) planBranches[threadId to outcome.payload.id.value] = outcome.payload
             finishPlannerPreview(call, action, outcome)
             return modelStep(threadId, config, tools, allowLocalRead = false)
         }
         if (call.name == PlannerToolNames.PREVIEW_LOCAL_REFLOW && allowLocalRead && plannerLocalReflow != null) {
             val outcome = plannerLocalReflow.execute(call.argumentsJson)
-            if (outcome is AgentToolOutcome.Success) planBranches[outcome.payload.id.value] = outcome.payload
+            if (outcome is AgentToolOutcome.Success) planBranches[threadId to outcome.payload.id.value] = outcome.payload
             finishPlannerPreview(call, action, outcome)
             return modelStep(threadId, config, tools, allowLocalRead = false)
         }
