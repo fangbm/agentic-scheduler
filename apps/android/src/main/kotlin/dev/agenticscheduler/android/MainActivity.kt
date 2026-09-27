@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -96,6 +97,7 @@ import dev.agenticscheduler.agent.history.AgentMessage
 import dev.agenticscheduler.agent.history.AgentStateRepository
 import dev.agenticscheduler.agent.history.AgentThreadId
 import dev.agenticscheduler.agent.history.AgentToolCall
+import dev.agenticscheduler.agent.history.AgentToolCallState
 import dev.agenticscheduler.agent.history.AgentToolResult
 import dev.agenticscheduler.agent.history.ProviderConfig
 import dev.agenticscheduler.agent.history.ProviderConfigId
@@ -422,7 +424,7 @@ private fun AndroidScheduler(
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
             if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }
-        item { AndroidAgentPanel(agentState, agentRun, secureStore, ids) }
+        item { AndroidAgentPanel(agentState, agentRun, secureStore, enrollments, ids) }
         item { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
@@ -437,6 +439,7 @@ private fun AndroidAgentPanel(
     state: AgentStateRepository,
     runService: AgentRunService,
     secureStore: PlatformSecretStore,
+    enrollments: LocalEnrollmentRepository,
     ids: dev.agenticscheduler.application.id.UuidV7Generator,
 ) {
     val scope = rememberCoroutineScope()
@@ -461,6 +464,8 @@ private fun AndroidAgentPanel(
     var busy by remember { mutableStateOf(false) }
     var configurationError by remember { mutableStateOf<String?>(null) }
     var effectivePolicy by remember { mutableStateOf<dev.agenticscheduler.agent.permission.AgentPermissionPolicy?>(null) }
+    var activeEnrollment by remember { mutableStateOf<LocalEnrollmentState.Active?>(null) }
+    var allowSyncedAgentWrites by remember { mutableStateOf(false) }
 
     suspend fun reloadConfig() {
         configChoices.clear()
@@ -469,11 +474,15 @@ private fun AndroidAgentPanel(
         effectivePolicy = state.permissionPolicy()
         threadChoices = state.threads().sortedByDescending { it.createdAtEpochMillis }
         if (threadId == null) threadId = threadChoices.firstOrNull()?.id
+        activeEnrollment = enrollments.states().filterIsInstance<LocalEnrollmentState.Active>().singleOrNull()
+        allowSyncedAgentWrites = activeEnrollment?.let { state.syncAgentOriginEnabled(it.syncSpaceId) } ?: false
     }
     suspend fun reloadThread(id: AgentThreadId) {
         messages.clear(); messages.addAll(state.messages(id).sortedWith(compareBy({ it.ordinal }, { it.id.value })))
         toolCalls.clear(); toolCalls.addAll(state.toolCalls(id).sortedWith(compareBy({ it.ordinal }, { it.id.value })))
         toolResults.clear(); toolResults.addAll(state.toolResults(id).sortedWith(compareBy({ it.ordinal }, { it.id.value })))
+        pendingConfirmation = toolCalls.lastOrNull { it.state == AgentToolCallState.WAITING_CONFIRMATION }
+            ?.let { call -> call.previewJson?.let { preview -> call.id to preview } }
     }
 
     LaunchedEffect(state) { reloadConfig() }
@@ -499,6 +508,23 @@ private fun AndroidAgentPanel(
                 Text("${capability.name}: ${policy.modeFor(capability).name}")
             }
         }
+        activeEnrollment?.let { active ->
+            Row {
+                Checkbox(
+                    checked = allowSyncedAgentWrites,
+                    onCheckedChange = { enabled -> scope.launch {
+                        state.setSyncAgentOriginEnabled(active.syncSpaceId, enabled)
+                        allowSyncedAgentWrites = state.syncAgentOriginEnabled(active.syncSpaceId)
+                    } },
+                )
+                Text("I confirm every enrolled device is upgraded for Agent-origin sync writes")
+            }
+            Text(if (allowSyncedAgentWrites) {
+                "Agent-origin sync writes are enabled for this SyncSpace."
+            } else {
+                "Agent-origin writes stay local until you enable this acknowledgement."
+            })
+        } ?: Text("No single active SyncSpace is selected. Agent writes remain local-only.")
 
         Text("Provider configuration")
         configChoices.forEach { config ->
