@@ -11,11 +11,12 @@ import kotlin.test.assertTrue
 /**
  * OD-012 executable compatibility POC.
  *
- * Room 3's KMP builder accepts only [SQLiteDriver]. SQLCipher's documented
- * Android Room integration supplies a legacy SupportSQLite `SupportFactory`,
- * which cannot be passed to this API. Keeping this assertion in the repository
- * prevents a future dependency-only "migration" from being mistaken for an
- * encrypted Room 3 database.
+ * Room 3's KMP builder accepts only [SQLiteDriver]. This establishes the
+ * required ABI for a candidate engine: the legacy SQLCipher SupportSQLite
+ * factory is insufficient, while the maintained SQLCipher Android driver now
+ * implements this interface. Keeping this assertion in the repository prevents
+ * a dependency-only "migration" from being mistaken for an encrypted Room 3
+ * database.
  */
 class Room3SqlCipherCompatibilityPocTest {
     @Test

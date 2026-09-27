@@ -145,10 +145,11 @@ Source: docs/PERSISTENCE_DECISIONS.md
 
 ```text
 Status: BLOCKED_BY_PLATFORM_COMPATIBILITY
-Decision: No production-ready Room 3/KMP SQLiteDriver integration for SQLCipher
-          or an equivalent has been verified across Android/Wear and JVM Desktop
-          (Windows/Linux). Do not replace BundledSQLiteDriver, use field-level
-          encryption, or create a custom encryption driver without an approved ADR.
+Decision: SQLCipher Android 4.19.0 supplies an Android/Wear Room 3 SQLiteDriver
+          candidate, but no production-ready, format-compatible Room 3/KMP
+          SQLiteDriver has been verified for JVM Desktop (Windows/Linux). Do not
+          replace BundledSQLiteDriver, use field-level encryption, or create a
+          custom encryption driver without an approved ADR.
 Evidence: docs/OD-012_LOCAL_DATABASE_ENCRYPTION.md;
           Room3SqlCipherCompatibilityPocTest
 Must resolve by: before claiming production-sensitive local-data readiness;

@@ -6,10 +6,11 @@ Scope: Android, Wear OS, Windows desktop, Linux desktop; Room 3.0.3, schema v11.
 
 ## Decision
 
-Do not implement a database-encryption feature on the current stack yet. There
-is no verified, production-supported SQLCipher (or equivalent) implementation
-that supplies Room 3's KMP `androidx.sqlite.SQLiteDriver` contract on all of the
-required targets. Replacing a dependency declaration, retaining
+Do not implement a cross-platform database-encryption feature on the current
+stack yet. SQLCipher Android 4.19.0 has a Room 3-compatible driver for Android
+and Wear, but there is no verified, production-supported
+`androidx.sqlite.SQLiteDriver` for this repository's JVM Desktop targets
+(Windows and Linux). Replacing a dependency declaration, retaining
 `BundledSQLiteDriver`, or encrypting selected fields would not encrypt the
 SQLite database file and is rejected.
 
@@ -22,16 +23,17 @@ with D9's future v12 and Agent tables once a supported driver is selected.
 | Option | Result |
 | --- | --- |
 | Room 3.0.3 | Its builder exposes `setDriver(SQLiteDriver)`, the KMP driver boundary. |
-| SQLCipher Android official Room recipe | Requires `net.sqlcipher.database.SupportFactory` and `openHelperFactory()`, a legacy SupportSQLite integration point. Room 3 removed that API. The legacy artifact is also deprecated by its maintainer. |
+| Legacy SQLCipher Android Room recipe | `net.sqlcipher.database.SupportFactory` requires the old SupportSQLite `openHelperFactory()` integration. It is deprecated and is not the candidate for this repository. |
+| SQLCipher Android 4.19.0 | **Positive ABI finding for Android/Wear only.** The released AAR contains `net.zetetic.database.sqlcipher.driver.SQLCipherDriver`, which implements `androidx.sqlite.SQLiteDriver`; its POM declares `androidx.sqlite:sqlite:2.7.0`, matching this repository. Actual encrypted-file, Keystore-key, migration, WAL and failure-path acceptance is still unexecuted. |
 | SQLCipher for JDBC | A supported Windows/Linux package exists, but it is a `java.sql.Driver`, not an `androidx.sqlite.SQLiteDriver`; it cannot be passed to Room 3. JDBC availability requires SQLCipher Enterprise. |
 | Raw SQLCipher C library / third-party KMP wrappers | The upstream C source can be built for the relevant OSes, but wiring it to Room 3 would require a new cross-platform native/JNI `SQLiteDriver`, release packaging, memory-key handling, and cryptographic compatibility ownership. That is a security-sensitive custom database driver, not an available mature integration, and is not authorized by this task. |
 
-`Room3SqlCipherCompatibilityPocTest` is the minimal runnable POC. It reflects
-the exact Room 3.0.3 runtime API used by this repository and proves both sides
-of the compatibility boundary: `setDriver(SQLiteDriver)` exists and
-`openHelperFactory()` does not. It also asserts that the current
-`BundledSQLiteDriver` implements that contract. The POC must pass before a
-vendor's claimed Room 3 adapter can be considered.
+`Room3SqlCipherCompatibilityPocTest` is the minimal runnable Room-side POC. It
+reflects the exact Room 3.0.3 runtime API used by this repository and proves
+the required boundary: `setDriver(SQLiteDriver)` exists and the current
+`BundledSQLiteDriver` implements that contract. The old factory-only SQLCipher
+recipe does not meet the boundary; the current Android driver does at binary
+ABI level. A candidate must still pass the real-file acceptance suite below.
 
 The POC's binary inspection was executed against the resolved artifacts on
 2026-09-27. `javap` reported:
@@ -41,6 +43,8 @@ RoomDatabase$Builder.setDriver(androidx.sqlite.SQLiteDriver)
 BundledSQLiteDriver implements androidx.sqlite.SQLiteDriver
 net.sqlcipher.database.SupportFactory implements
     androidx.sqlite.db.SupportSQLiteOpenHelper$Factory
+net.zetetic.database.sqlcipher.driver.SQLCipherDriver implements
+    androidx.sqlite.SQLiteDriver
 ```
 
 `./gradlew :shared:database:compileTestKotlinDesktop --rerun-tasks` produced
@@ -48,13 +52,19 @@ the POC test class with JDK 17. The local Gradle test executor could not run
 any desktop test because it fails before JUnit initialization with
 `ClassNotFoundException: worker.org.gradle.process.internal.worker.GradleWorkerMain`.
 That is a local Gradle-worker infrastructure failure, not acceptance evidence;
-the binary inspection above is the executed compatibility evidence.
+the binary inspection above is the executed compatibility evidence. PR #16's
+[CI run 36298971523](https://github.com/fangbm/agentic-scheduler/actions/runs/36298971523)
+subsequently completed successfully: the Linux `build` job runs `./gradlew
+build`, and the Windows, Android Keystore and Wear Keystore jobs also passed.
+That verifies the committed Room-side POC regresses none of the existing D8
+paths; it does not exercise SQLCipher or establish file encryption.
 
 Sources consulted on 2026-09-27:
 
 - [Room KMP driver setup](https://developer.android.com/kotlin/multiplatform/room)
 - [Room 3 migration from SupportSQLite](https://developer.android.com/blog/posts/modernizing-the-room)
-- [SQLCipher Android integration](https://github.com/sqlcipher/android-database-sqlcipher)
+- [Legacy SQLCipher Android integration](https://github.com/sqlcipher/android-database-sqlcipher)
+- [Current SQLCipher Android artifact](https://central.sonatype.com/artifact/net.zetetic/sqlcipher-android/4.19.0)
 - [SQLCipher for JDBC](https://www.zetetic.net/sqlcipher/jdbc/)
 - [SQLCipher upstream encryption/export behaviour](https://github.com/sqlcipher/sqlcipher)
 
@@ -63,9 +73,9 @@ Sources consulted on 2026-09-27:
 A release can proceed only after one of these is explicitly approved and
 verified against the exact pinned Room version:
 
-1. A vendor-supported, maintained `SQLiteDriver` for Room 3/KMP on Android,
-   Wear, Windows and Linux, with distributable licenses and reproducible native
-   artifacts; or
+1. A vendor-supported, maintained `SQLiteDriver` for Room 3/KMP on Windows and
+   Linux that is format-compatible with the Android/Wear engine, with
+   distributable licenses and reproducible native artifacts; or
 2. An approved architecture change that replaces Room 3 for every required
    platform and has its own migration, D8/D9 compatibility and security review;
    or

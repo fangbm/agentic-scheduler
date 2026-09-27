@@ -689,9 +689,10 @@ Unknown future schema versions are not opened by guessing compatibility.
 # PD-014 — Local-at-rest security boundary
 
 `OD-012 — Local database encryption at rest` was investigated after D8. Its
-current status is `BLOCKED_BY_PLATFORM_COMPATIBILITY`: no production-supported
-Room 3/KMP `SQLiteDriver` integration for encrypted SQLite has been verified
-for Android/Wear plus Windows/Linux Desktop. See
+current status is `BLOCKED_BY_PLATFORM_COMPATIBILITY`: SQLCipher Android 4.19.0
+now supplies an Android/Wear `SQLiteDriver` candidate, but no
+production-supported, format-compatible Room 3/KMP encrypted SQLite driver has
+been verified for Windows/Linux Desktop. See
 `docs/OD-012_LOCAL_DATABASE_ENCRYPTION.md` for the executable POC and required
 resolution paths. It remains unresolved for a production release and outside
 the D4 implementation gate.
