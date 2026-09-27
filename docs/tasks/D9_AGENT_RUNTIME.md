@@ -40,10 +40,15 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   the full AGT-004 acceptance matrix.
 - Agent-origin writes retain the D8 inner-payload-v2 compatibility gate and
   device-local all-devices-upgraded opt-in. This implementation does not
-  authorize synchronized Agent writes by default.
+  authorize synchronized Agent writes by default. Agent-triggered D7 Undo
+  keeps its compensating `Undo` origin while using that same trusted gate;
+  a missing acknowledgement cannot use Undo as a compatibility bypass.
 - Android and Desktop contain in-progress Universal Command surfaces wired to
   the persistent Agent run and confirmation flow. Cross-platform
-  usability/acceptance is open.
+  usability/acceptance is open. Android restores a durable
+  `WAITING_CONFIRMATION` call when its conversation is selected, rather than
+  relying only on in-memory dialog state. Session-local PlanBranch proposals
+  are scoped to their AgentThread.
 - Verification status: pending final focused compilation and CI on the
   combined branch. Do not infer verification success from the implementation
   inventory above.
