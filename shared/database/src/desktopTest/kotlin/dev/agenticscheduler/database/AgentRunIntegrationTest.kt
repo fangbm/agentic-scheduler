@@ -5,6 +5,9 @@ import dev.agenticscheduler.agent.provider.*
 import dev.agenticscheduler.agent.runtime.*
 import dev.agenticscheduler.agent.tool.*
 import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.EventEditingService
+import dev.agenticscheduler.application.editing.CreateEventInput
+import dev.agenticscheduler.application.editing.EventTimeInput
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionResult
 import dev.agenticscheduler.application.calendar.CalendarQueryService
@@ -16,6 +19,7 @@ import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.NoActiveSyncSpaceWritePolicy
 import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.UndoService
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
@@ -23,9 +27,13 @@ import dev.agenticscheduler.database.repository.RoomAgentStateRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
+import dev.agenticscheduler.database.repository.RoomEventRepository
+import dev.agenticscheduler.database.repository.RoomPlanningProfileRepository
 import dev.agenticscheduler.domain.id.TaskId
 import dev.agenticscheduler.domain.id.EventId
 import dev.agenticscheduler.domain.time.AllDayRange
+import dev.agenticscheduler.domain.planning.Flexibility
+import dev.agenticscheduler.domain.planning.PinState
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskEffort
 import dev.agenticscheduler.domain.task.TaskPriority
@@ -108,6 +116,112 @@ class AgentRunIntegrationTest {
             assertTrue(afterReadRequest.contains("get-1"))
             assertTrue(afterReadRequest.indexOf("potentially stale summary") in 0 until afterReadRequest.lastIndexOf("OPEN"))
             assertTrue((requests[3].body as TextContent).text.contains("create-1"))
+        } finally {
+            client.close()
+            database.close()
+        }
+    }
+
+    @Test fun `provider Event proposal confirmation commits through Room with linked AgentAction`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val input = EventCreateToolInput(
+            title = "Project review",
+            time = EventTimeToolInput(kind = "ALL_DAY", startDate = "2026-10-05", endDateExclusive = "2026-10-06"),
+            flexibility = "HARD",
+            pinState = "UNPINNED",
+        )
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-event", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("create-event", function = ProviderFunctionCall(EVENT_CREATE_TOOL_NAME, json.encodeToString(input)))))),
+            reply(ProviderChatMessage("assistant", "The event is saved.")),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val events = RoomEventRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val config = ProviderConfig(ProviderConfigId(id(140)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val editing = EventEditingService(events, ids, coordinator, NoActiveSyncSpaceWritePolicy)
+            val runtime = AgentRunService(
+                state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)),
+                ids, AgentClock { 6 }, eventCreate = EventCreateTool(editing),
+            )
+            val threadId = runtime.createThread()
+
+            val pending = assertIs<AgentRunResult.AwaitingConfirmation>(runtime.run(threadId, "Schedule a project review on October 5."))
+            assertTrue(pending.previewJson.contains("Project review"))
+            assertTrue(events.observeAll().first().isEmpty())
+            assertTrue(history.timeline().isEmpty())
+
+            assertEquals("The event is saved.", assertIs<AgentRunResult.Completed>(runtime.confirm(threadId, pending.callId, true)).assistantText)
+            val savedEvents = events.observeAll().first()
+            assertEquals(1, savedEvents.size)
+            assertEquals("Project review", savedEvents.single().title)
+            val mutation = history.timeline().single().operation
+            val origin = assertIs<MutationOrigin.Agent>(mutation.origin)
+            val action = requireNotNull(state.action(AgentActionId(origin.agentActionId)))
+            val result = state.toolResults(threadId).single()
+            assertEquals(AgentActionStatus.SUCCEEDED, action.status)
+            assertEquals(mutation.mutationId, action.mutationIds.single().value)
+            assertEquals(action.id.value, origin.agentActionId)
+            assertEquals(action.mutationIds.single(), result.mutationIds.single())
+            assertEquals(AgentToolResultStatus.SUCCESS, result.status)
+        } finally {
+            client.close()
+            database.close()
+        }
+    }
+
+    @Test fun `unsupported history Undo remains a structured ToolResult status`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-undo", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler { request ->
+            val response = if (replies.isNotEmpty()) replies.removeAt(0) else {
+                val history = RoomMutationJournalRepository(database)
+                val original = history.timeline().single().operation.mutationId
+                reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("undo-event-create", function = ProviderFunctionCall(
+                    AgentToolNames.HISTORY_UNDO, "{\"mutationId\":\"$original\"}",
+                )))))
+            }
+            respond(response, headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val events = RoomEventRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            EventEditingService(events, ids, coordinator, NoActiveSyncSpaceWritePolicy).create(
+                CreateEventInput("Cannot delete through Undo", EventTimeInput.AllDay(LocalDate(2026, 10, 5), LocalDate(2026, 10, 6)), Flexibility.HARD, PinState.UNPINNED),
+            )
+            val config = ProviderConfig(ProviderConfigId(id(141)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val undo = UndoService(coordinator, history, events, tasks, RoomPlanningProfileRepository(database), NoActiveSyncSpaceWritePolicy)
+            val runtime = AgentRunService(
+                state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)),
+                ids, AgentClock { 6 }, historyUndo = HistoryUndoTool(D7HistoryUndoApplication(undo, HistoryQueryService(history))),
+            )
+            val threadId = runtime.createThread()
+            assertEquals(AgentRunResult.Failed("UNSUPPORTED"), runtime.run(threadId, "Undo that event creation."))
+            assertEquals(AgentToolResultStatus.UNSUPPORTED, state.toolResults(threadId).single().status)
+            assertTrue(state.toolResults(threadId).single().resultJson.contains("EVENT_CREATE_UNSUPPORTED"))
+            assertEquals(1, history.timeline().size)
+            assertEquals(1, events.observeAll().first().size)
         } finally {
             client.close()
             database.close()

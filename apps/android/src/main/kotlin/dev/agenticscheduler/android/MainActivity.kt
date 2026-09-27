@@ -13,15 +13,19 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
@@ -39,6 +43,9 @@ import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.AgentOriginWriteGate
+import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.UndoService
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.ConflictAwareRead
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactReadService
@@ -76,9 +83,33 @@ import dev.agenticscheduler.domain.time.ZonedTimeRange
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeConfiguration
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
 import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
+import dev.agenticscheduler.application.sync.AgentOutboundCompatibilityGate
 import dev.agenticscheduler.application.sync.AndroidKeystoreSecureStore
+import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
+import dev.agenticscheduler.application.sync.LocalEnrollmentState
+import dev.agenticscheduler.application.sync.PlatformSecretMaterial
+import dev.agenticscheduler.application.sync.PlatformSecretStore
+import dev.agenticscheduler.application.sync.SecretReference
 import dev.agenticscheduler.application.sync.TinkPairingHpke
 import dev.agenticscheduler.sync.AccountId
+import dev.agenticscheduler.agent.history.AgentMessage
+import dev.agenticscheduler.agent.history.AgentStateRepository
+import dev.agenticscheduler.agent.history.AgentThreadId
+import dev.agenticscheduler.agent.history.AgentToolCall
+import dev.agenticscheduler.agent.history.AgentToolResult
+import dev.agenticscheduler.agent.history.ProviderConfig
+import dev.agenticscheduler.agent.history.ProviderConfigId
+import dev.agenticscheduler.agent.permission.AgentSyncWriteGate
+import dev.agenticscheduler.agent.provider.OpenAiCompatibleProvider
+import dev.agenticscheduler.agent.provider.SecretStoreProviderCredentialResolver
+import dev.agenticscheduler.agent.runtime.AgentClock
+import dev.agenticscheduler.agent.runtime.AgentRunService
+import dev.agenticscheduler.agent.runtime.AgentRunResult
+import dev.agenticscheduler.agent.tool.*
+import dev.agenticscheduler.database.repository.RoomAgentStateRepository
+import dev.agenticscheduler.database.repository.RoomLocalEnrollmentRepository
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.android.Android
 import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlanningHorizon
 import kotlinx.collections.immutable.toImmutableList
@@ -108,16 +139,29 @@ class MainActivity : ComponentActivity() {
     private val tasks by lazy { RoomTaskRepository(database) }
     private val transactionRunner by lazy { RoomApplicationTransactionRunner(database) }
     private val ids by lazy { productionUuidV7Generator() }
+    private val secureStore by lazy { AndroidKeystoreSecureStore(this) }
     private val academics by lazy { RoomAcademicRepository(database) }
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
-    private val mutations by lazy { MutationCoordinator(transactionRunner, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
+    private val agentState by lazy { RoomAgentStateRepository(database) }
+    private val localEnrollments by lazy { RoomLocalEnrollmentRepository(database) }
+    private val agentWriteGate by lazy { AndroidActiveEnrollmentAgentWriteGate(localEnrollments, agentState) }
+    private val mutations by lazy {
+        MutationCoordinator(
+            transactionRunner,
+            RoomMutationJournalRepository(database),
+            ids,
+            MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+            agentWriteGate,
+        )
+    }
     private val d8RuntimeLazy = lazy {
         RoomD8RuntimeComposition(
             database,
-            AndroidKeystoreSecureStore(this),
+            secureStore,
             TinkPairingHpke(),
             ids,
             MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+            agentOutboundGate = agentWriteGate,
         )
     }
     private val d8Runtime by d8RuntimeLazy
@@ -131,6 +175,32 @@ class MainActivity : ComponentActivity() {
     private val taskEditor by lazy { TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy) }
     private val dogfoodPlanner by lazy { DogfoodPlannerService(tasks, events, profiles, academics, ids, mutations = mutations, conflictWritePolicy = d8Runtime.writePolicy, sourceFacts = d8Runtime.sourceFacts) }
     private val profileSettings by lazy { PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy) }
+    private val agentHttpClientLazy = lazy { HttpClient(Android) }
+    private val agentHttpClient by agentHttpClientLazy
+    private val agentRun by lazy {
+        val journal = RoomMutationJournalRepository(database)
+        val history = HistoryQueryService(journal)
+        val undo = UndoService(mutations, journal, events, tasks, profiles, d8Runtime.writePolicy)
+        AgentRunService(
+            state = agentState,
+            provider = OpenAiCompatibleProvider(agentHttpClient, SecretStoreProviderCredentialResolver(secureStore)),
+            taskGet = TaskGetTool(tasks),
+            taskCreate = TaskCreateTool(taskEditor),
+            ids = ids,
+            clock = AgentClock { Clock.System.now().toEpochMilliseconds() },
+            taskList = TaskListTool(tasks),
+            historyReads = HistoryReadTools(history),
+            taskUpdate = TaskUpdateTool(taskEditor),
+            calendarList = CalendarListTool(reads),
+            eventCreate = EventCreateTool(eventEditor),
+            eventUpdate = EventUpdateTool(eventEditor),
+            plannerFullReplan = PlannerPreviewFullReplanTool(DogfoodPlannerPreviewApplication(dogfoodPlanner)),
+            plannerLocalReflow = PlannerPreviewLocalReflowTool(DogfoodPlannerPreviewApplication(dogfoodPlanner)),
+            historyUndo = HistoryUndoTool(D7HistoryUndoApplication(undo, history)),
+            planningProfileUpdate = PlanningProfileUpdateTool(profileSettings),
+            plannerApplyBranch = PlannerApplyBranchTool(dogfoodPlanner),
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -190,6 +260,10 @@ class MainActivity : ComponentActivity() {
                             profileSettings,
                             eventEditor,
                             taskEditor,
+                            agentState,
+                            agentRun,
+                            secureStore,
+                            ids,
                             syncStoppedReason = syncStoppedReason,
                             onRetrySync = {
                                 d8SyncStoppedReason.value = null
@@ -233,6 +307,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        if (agentHttpClientLazy.isInitialized()) agentHttpClient.close()
         super.onDestroy()
     }
 
@@ -281,6 +356,10 @@ private fun AndroidScheduler(
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
     taskEditor: TaskEditingService,
+    agentState: AgentStateRepository,
+    agentRun: AgentRunService,
+    secureStore: PlatformSecretStore,
+    ids: dev.agenticscheduler.application.id.UuidV7Generator,
     syncStoppedReason: String?,
     onRetrySync: () -> Unit,
 ) {
@@ -343,6 +422,7 @@ private fun AndroidScheduler(
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
             if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }
+        item { AndroidAgentPanel(agentState, agentRun, secureStore, ids) }
         item { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
@@ -350,6 +430,271 @@ private fun AndroidScheduler(
     editingEvent?.let { event -> EventEditorDialog(event, selectedDate, displayTimeZone, eventEditor, { editingEvent = null }, { editingEvent = null }) }
     if (creatingTask) TaskEditorDialog(null, taskEditor, { creatingTask = false }, { creatingTask = false })
     editingTask?.let { task -> TaskEditorDialog(task, taskEditor, { editingTask = null }, { editingTask = null }) }
+}
+
+@Composable
+private fun AndroidAgentPanel(
+    state: AgentStateRepository,
+    runService: AgentRunService,
+    secureStore: PlatformSecretStore,
+    ids: dev.agenticscheduler.application.id.UuidV7Generator,
+) {
+    val scope = rememberCoroutineScope()
+    val configChoices = remember { mutableStateListOf<ProviderConfig>() }
+    val messages = remember { mutableStateListOf<AgentMessage>() }
+    val toolCalls = remember { mutableStateListOf<AgentToolCall>() }
+    val toolResults = remember { mutableStateListOf<AgentToolResult>() }
+    var configId by remember { mutableStateOf<ProviderConfigId?>(null) }
+    var selectedConfigId by remember { mutableStateOf<ProviderConfigId?>(null) }
+    var threadChoices by remember { mutableStateOf(emptyList<dev.agenticscheduler.agent.history.AgentThread>()) }
+    var threadId by remember { mutableStateOf<AgentThreadId?>(null) }
+    var baseUrl by remember { mutableStateOf("") }
+    var model by remember { mutableStateOf("") }
+    var maxContext by remember { mutableStateOf("") }
+    var reservedOutput by remember { mutableStateOf("") }
+    var toolCalling by remember { mutableStateOf<Boolean?>(null) }
+    var streaming by remember { mutableStateOf<Boolean?>(null) }
+    var credential by remember { mutableStateOf("") }
+    var command by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("Configure a provider to begin.") }
+    var pendingConfirmation by remember { mutableStateOf<Pair<dev.agenticscheduler.agent.history.AgentToolCallId, String>?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var configurationError by remember { mutableStateOf<String?>(null) }
+    var effectivePolicy by remember { mutableStateOf<dev.agenticscheduler.agent.permission.AgentPermissionPolicy?>(null) }
+
+    suspend fun reloadConfig() {
+        configChoices.clear()
+        configChoices.addAll(state.providerConfigs())
+        selectedConfigId = state.selectedProviderConfigId()
+        effectivePolicy = state.permissionPolicy()
+        threadChoices = state.threads().sortedByDescending { it.createdAtEpochMillis }
+        if (threadId == null) threadId = threadChoices.firstOrNull()?.id
+    }
+    suspend fun reloadThread(id: AgentThreadId) {
+        messages.clear(); messages.addAll(state.messages(id).sortedWith(compareBy({ it.ordinal }, { it.id.value })))
+        toolCalls.clear(); toolCalls.addAll(state.toolCalls(id).sortedWith(compareBy({ it.ordinal }, { it.id.value })))
+        toolResults.clear(); toolResults.addAll(state.toolResults(id).sortedWith(compareBy({ it.ordinal }, { it.id.value })))
+    }
+
+    LaunchedEffect(state) { reloadConfig() }
+    LaunchedEffect(selectedConfigId, configChoices.size) {
+        val selected = configChoices.firstOrNull { it.id == selectedConfigId }
+        if (selected != null) {
+            configId = selected.id
+            baseUrl = selected.baseUrl
+            model = selected.model
+            maxContext = selected.maxContextUnits.toString()
+            reservedOutput = selected.reservedOutputUnits.toString()
+            toolCalling = selected.toolCallingSupported
+            streaming = selected.streamingSupported
+        }
+    }
+    LaunchedEffect(threadId) { threadId?.let { reloadThread(it) } }
+
+    Column {
+        Text("Universal Command")
+        Text("This device’s Agent permission policy")
+        effectivePolicy?.let { policy ->
+            dev.agenticscheduler.agent.permission.AgentToolCapability.entries.forEach { capability ->
+                Text("${capability.name}: ${policy.modeFor(capability).name}")
+            }
+        }
+
+        Text("Provider configuration")
+        configChoices.forEach { config ->
+            Row {
+                RadioButton(selected = config.id == selectedConfigId, onClick = {
+                    selectedConfigId = config.id
+                    configId = config.id
+                    scope.launch { state.selectProviderConfig(config.id); reloadConfig() }
+                })
+                Text("${config.model} · ${config.baseUrl}")
+            }
+        }
+        OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("Provider base URL (explicit)") })
+        OutlinedTextField(model, { model = it }, label = { Text("Model (explicit)") })
+        OutlinedTextField(maxContext, { maxContext = it }, label = { Text("Maximum context units") })
+        OutlinedTextField(reservedOutput, { reservedOutput = it }, label = { Text("Reserved output units") })
+        Text("Structured tool calling")
+        Row {
+            RadioButton(selected = toolCalling == true, onClick = { toolCalling = true }); Text("Enabled")
+            RadioButton(selected = toolCalling == false, onClick = { toolCalling = false }); Text("Disabled")
+        }
+        Text("Streaming")
+        Row {
+            RadioButton(selected = streaming == true, onClick = { streaming = true }); Text("Enabled")
+            RadioButton(selected = streaming == false, onClick = { streaming = false }); Text("Disabled")
+        }
+        OutlinedTextField(
+            value = credential,
+            onValueChange = { credential = it },
+            label = { Text("Optional API credential (stored in Android secure storage)") },
+            visualTransformation = PasswordVisualTransformation(),
+        )
+        Text("Leave the credential blank to keep the selected secure-store credential, or configure this endpoint without one. Credentialed endpoints require HTTPS.")
+        Text("A credential-free HTTP endpoint on another device or host can expose prompts and schedule data in transit.")
+        configurationError?.let { Text(it) }
+        Button(enabled = !busy, onClick = {
+            val max = maxContext.toLongOrNull()
+            val output = reservedOutput.toLongOrNull()
+            if (baseUrl.isBlank() || model.isBlank() || max == null || output == null || output <= 0 || max <= output || toolCalling == null || streaming == null) {
+                configurationError = "Enter URL, model, positive context/output capacities, and choose tool-calling and streaming support."
+            } else scope.launch {
+                busy = true
+                configurationError = null
+                var newReference: SecretReference? = null
+                var supersededCredential: SecretReference? = null
+                var published = false
+                try {
+                    val previous = configId?.let { state.providerConfig(it) }
+                    val previousCredential = previous?.credentialReference
+                    val ref = if (credential.isNotEmpty()) {
+                        val secretBytes = credential.encodeToByteArray()
+                        try {
+                            secureStore.importSecret(AndroidAgentCredential(secretBytes)).also { newReference = it }
+                        } finally { secretBytes.fill(0) }
+                    } else previousCredential
+                    val config = ProviderConfig(
+                        id = configId ?: ProviderConfigId(ids.next()),
+                        baseUrl = baseUrl.trim(),
+                        model = model.trim(),
+                        maxContextUnits = max,
+                        reservedOutputUnits = output,
+                        streamingSupported = requireNotNull(streaming),
+                        toolCallingSupported = requireNotNull(toolCalling),
+                        credentialReference = ref,
+                    )
+                    state.saveProviderConfig(config)
+                    published = true
+                    state.selectProviderConfig(config.id)
+                    supersededCredential = previousCredential?.takeIf { it != ref }
+                    credential = ""
+                    configId = config.id
+                    selectedConfigId = config.id
+                    status = "Provider configuration saved. The runtime probes structured tool support before enabling Tools."
+                    reloadConfig()
+                } catch (_: Exception) {
+                    // Before publishing Room metadata, an imported key is safe to clean up.
+                    // Once metadata is durable, it must stay available even if later UI work fails.
+                    if (!published) newReference?.let { runCatching { secureStore.delete(it) } }
+                    configurationError = "Provider configuration could not be saved. Secret contents were not stored in Agent history."
+                } finally {
+                    busy = false
+                }
+                // This is post-publication cleanup. Failure leaves an orphaned secure object,
+                // never a Room reference to a deleted credential.
+                if (published) {
+                    supersededCredential?.let { reference -> runCatching { secureStore.delete(reference) } }
+                }
+            }
+        }) { Text("Save provider configuration") }
+
+        Row {
+            Text("Agent conversation")
+            Button(enabled = !busy, onClick = {
+                scope.launch {
+                    threadId = runService.createThread()
+                    reloadConfig()
+                    threadId?.let { reloadThread(it) }
+                    status = "New application-owned AgentThread created."
+                }
+            }) { Text("New conversation") }
+        }
+        threadChoices.forEach { thread ->
+            Button(onClick = { threadId = thread.id }) { Text(if (thread.id == threadId) "Current conversation" else "Conversation ${thread.id.value.take(8)}") }
+        }
+        OutlinedTextField(command, { command = it }, label = { Text("Ask, query, or request a typed action") })
+        Button(enabled = !busy && threadId != null && selectedConfigId != null && command.isNotBlank(), onClick = {
+            val id = threadId ?: return@Button
+            val request = command
+            command = ""
+            scope.launch {
+                busy = true
+                status = if (streaming == true) "Sending · streaming response…" else "Sending · thinking…"
+                try {
+                    when (val result = runService.run(id, request)) {
+                        is AgentRunResult.Completed -> status = "Completed"
+                        is AgentRunResult.AwaitingConfirmation -> {
+                            pendingConfirmation = result.callId to result.previewJson
+                            status = "Confirmation required"
+                        }
+                        is AgentRunResult.Failed -> status = agentFailureMessage(result.redactedCode)
+                    }
+                    reloadThread(id)
+                    reloadConfig()
+                } catch (_: Exception) { status = "Agent run failed. Check provider availability and retry." }
+                finally { busy = false }
+            }
+        }) { Text("Send") }
+        Text(status)
+        Text("Conversation")
+        messages.forEach { message ->
+            Text("${message.role.name}: ${message.content}")
+        }
+        Text("Structured Tool calls")
+        toolCalls.forEach { call ->
+            Text("${call.name} · ${call.state.name}")
+            Text("Input: ${call.argumentsJson}")
+            call.previewJson?.let { Text("Preview: $it") }
+        }
+        Text("Structured Tool results")
+        toolResults.forEach { result ->
+            Text("${result.status.name}: ${result.resultJson}")
+        }
+    }
+
+    pendingConfirmation?.let { (callId, preview) ->
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("Confirm Agent action") },
+            text = { Text("Preview of the validated change:\n$preview") },
+            confirmButton = { Button(enabled = !busy, onClick = {
+                val id = threadId ?: return@Button
+                scope.launch {
+                    busy = true
+                    pendingConfirmation = null
+                    status = "Applying confirmed action…"
+                    try {
+                        when (val result = runService.confirm(id, callId, approved = true)) {
+                            is AgentRunResult.Completed -> status = "Confirmed action completed"
+                            is AgentRunResult.AwaitingConfirmation -> { pendingConfirmation = result.callId to result.previewJson; status = "Confirmation required" }
+                            is AgentRunResult.Failed -> status = agentFailureMessage(result.redactedCode)
+                        }
+                        reloadThread(id)
+                    } catch (_: Exception) { status = "Confirmed action failed; inspect the structured Tool result." }
+                    finally { busy = false }
+                }
+            }) { Text("Confirm") } },
+            dismissButton = { Button(enabled = !busy, onClick = {
+                val id = threadId ?: return@Button
+                scope.launch {
+                    busy = true
+                    pendingConfirmation = null
+                    try {
+                        when (val result = runService.confirm(id, callId, approved = false)) {
+                            is AgentRunResult.Completed -> status = "Denied. No write was authorized."
+                            is AgentRunResult.AwaitingConfirmation -> { pendingConfirmation = result.callId to result.previewJson; status = "Confirmation required" }
+                            is AgentRunResult.Failed -> status = agentFailureMessage(result.redactedCode)
+                        }
+                        reloadThread(id)
+                    } catch (_: Exception) { status = "Denial could not be recorded." }
+                    finally { busy = false }
+                }
+            }) { Text("Deny") } },
+        )
+    }
+}
+
+private fun agentFailureMessage(code: String): String = when {
+    code.contains("PROVIDER") || code.contains("NETWORK") || code.startsWith("HTTP_") || code.contains("CREDENTIAL") -> "Provider/network unavailable ($code)"
+    code.contains("PERMISSION") || code.contains("DENIED") -> "Permission denied ($code)"
+    code.contains("STALE") || code.contains("CONFLICT") -> "Stale or conflicting state ($code)"
+    code.contains("INFEASIBLE") -> "Planner reports an infeasible request ($code)"
+    else -> "Agent request failed ($code)"
+}
+
+private class AndroidAgentCredential(private val raw: ByteArray) : PlatformSecretMaterial {
+    override fun copyRawSecretBytesForSecureStore(): ByteArray = raw.copyOf()
 }
 
 @Composable
@@ -710,3 +1055,24 @@ private fun emptyProjection() = CalendarProjectionResult(
     emptyList<CalendarConflict>().toImmutableList(),
     emptyList<CalendarProjectionIssue>().toImmutableList(),
 )
+
+/** One local database can only emit Agent-origin payload v2 after its sole ACTIVE replica opted in. */
+private class AndroidActiveEnrollmentAgentWriteGate(
+    private val enrollments: LocalEnrollmentRepository,
+    private val state: AgentStateRepository,
+) : AgentOriginWriteGate, AgentOutboundCompatibilityGate {
+    override suspend fun mayCommit(): Boolean {
+        val active = enrollments.states().filterIsInstance<LocalEnrollmentState.Active>()
+        return when (active.size) {
+            0 -> true
+            1 -> AgentSyncWriteGate(active.single().accountId, enrollments, state).mayCommit()
+            else -> false
+        }
+    }
+
+    override suspend fun enabled(syncSpaceId: dev.agenticscheduler.sync.SyncSpaceId): Boolean {
+        val active = enrollments.states().filterIsInstance<LocalEnrollmentState.Active>()
+        val selected = active.singleOrNull { it.syncSpaceId == syncSpaceId } ?: return false
+        return active.size == 1 && AgentSyncWriteGate(selected.accountId, enrollments, state).enabled(syncSpaceId)
+    }
+}

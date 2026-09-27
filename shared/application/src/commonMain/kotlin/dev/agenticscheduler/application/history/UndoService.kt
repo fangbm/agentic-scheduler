@@ -43,9 +43,12 @@ class UndoService(
         return unsupportedReason(original.operation.orderedMutations)?.let(UndoCapability::Unsupported) ?: UndoCapability.Available
     }
 
-    suspend fun undo(originalMutationId: String): UndoResult {
+    suspend fun undo(
+        originalMutationId: String,
+        onCommitted: suspend (MutationExecution<UndoResult>) -> Unit = {},
+    ): UndoResult {
         var noMutation: UndoResult? = null
-        val execution = coordinator.executeIfAny(MutationOrigin.Undo(originalMutationId)) {
+        val execution = coordinator.executeIfAny(MutationOrigin.Undo(originalMutationId), onCommitted) {
             val original = history.mutation(originalMutationId)
             if (original == null) {
                 noMutation = UndoResult.NotFound

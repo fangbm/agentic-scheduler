@@ -34,6 +34,11 @@ sealed interface AgentToolOutcome<out T> {
 
     data object Stale : AgentToolOutcome<Nothing>
 
+    /** A valid request whose operation is intentionally outside the supported application contract. */
+    data class Unsupported(val reasonCode: String) : AgentToolOutcome<Nothing> {
+        init { require(reasonCode.isNotBlank()) }
+    }
+
     data class Conflict(val conflictIds: List<String>) : AgentToolOutcome<Nothing> {
         init { require(conflictIds.isNotEmpty() && conflictIds.all(String::isNotBlank)) }
     }

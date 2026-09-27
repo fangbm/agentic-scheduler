@@ -37,6 +37,7 @@ object AgentToolNames {
     const val HISTORY_TIMELINE = "history.timeline"
     const val HISTORY_GET_MUTATION = "history.getMutation"
     const val HISTORY_GET_ENTITY_CHANGES = "history.getEntityChanges"
+    const val HISTORY_UNDO = "history.undo"
 }
 
 /**

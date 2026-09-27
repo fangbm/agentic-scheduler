@@ -56,7 +56,7 @@ data class AgentToolCall(
 ) { init { require(ordinal >= 0 && name.isNotBlank() && argumentsJson.isNotBlank() && (providerCallId == null || providerCallId.isNotBlank())) } }
 
 @Serializable enum class AgentToolResultStatus {
-    SUCCESS, INVALID_INPUT, NOT_FOUND, PERMISSION_DENIED, STALE, CONFLICT, INFEASIBLE, INFRASTRUCTURE_FAILURE,
+    SUCCESS, INVALID_INPUT, NOT_FOUND, PERMISSION_DENIED, STALE, UNSUPPORTED, CONFLICT, INFEASIBLE, INFRASTRUCTURE_FAILURE,
 }
 
 @Serializable

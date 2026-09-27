@@ -90,6 +90,16 @@ data class UpdateEventInput(
     val pinState: PinState,
 )
 
+/** Validated Event content before an ID is allocated or any write is attempted. */
+data class EventCreatePreview(
+    val title: String,
+    val time: TimePlacement,
+    val flexibility: Flexibility,
+    val pinState: PinState,
+)
+
+data class EventUpdatePreview(val before: Event, val after: Event)
+
 data class CreateTaskInput(
     val title: String,
     val priority: TaskPriority,
@@ -160,6 +170,19 @@ class EventEditingService(
     private val mutations: MutationCoordinator,
     private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
+    fun previewCreate(input: CreateEventInput): EditingResult<EventCreatePreview> = when (val built = validateEvent(input.title, input.time)) {
+        is EventInput.Invalid -> EditingResult.Invalid(built.issues)
+        is EventInput.Valid -> EditingResult.Success(EventCreatePreview(input.title, built.time, input.flexibility, input.pinState))
+    }
+
+    suspend fun previewUpdate(input: UpdateEventInput): EditingResult<EventUpdatePreview> {
+        val built = validateEvent(input.title, input.time)
+        if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
+        val before = events.get(input.id) ?: return EditingResult.NotFound
+        val after = Event(input.id, input.title, (built as EventInput.Valid).time, input.flexibility, input.pinState)
+        return EditingResult.Success(EventUpdatePreview(before, after))
+    }
+
     suspend fun create(
         input: CreateEventInput,
         origin: MutationOrigin = MutationOrigin.User,
@@ -188,6 +211,7 @@ class EventEditingService(
         input: UpdateEventInput,
         origin: MutationOrigin = MutationOrigin.User,
         onCommitted: suspend (MutationExecution<EditingResult<Event>>) -> Unit = {},
+        expectedBefore: Event? = null,
     ): EditingResult<Event> {
         val built = validateEvent(input.title, input.time)
         if (built is EventInput.Invalid) return EditingResult.Invalid(built.issues)
@@ -197,6 +221,8 @@ class EventEditingService(
             val before = events.get(input.id)
             result = if (before == null) {
                 EditingResult.NotFound
+            } else if (expectedBefore != null && before != expectedBefore) {
+                EditingResult.Stale
             } else {
                 val proposed = EventPut(before.toSemanticImage(), event.toSemanticImage())
                 val blocks = conflictWritePolicy.blocks(listOf(proposed))

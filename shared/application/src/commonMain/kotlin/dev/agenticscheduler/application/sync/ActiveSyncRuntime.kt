@@ -62,6 +62,8 @@ data class ActiveSyncRuntimeDependencies(
     val keyRing: SyncKeyRingRepository,
     val secureStore: PlatformD8SecureStore,
     val pairingHpke: PairingHpke,
+    /** Device-local D9 acknowledgement; defaults fail-closed until a host wires it. */
+    val agentOutboundGate: AgentOutboundCompatibilityGate = AgentOutboundCompatibilityGate { false },
 )
 
 sealed interface ActiveSyncRuntimeCreation {
@@ -270,6 +272,7 @@ class ActiveSyncRuntimeFactory(
                 active.deviceId,
                 transports.sync,
                 EncryptedSyncReceiveGateway(AuthenticatedSyncEnvelopeCodec(decryptionKeys, encryptionKeys), engine),
+                dependencies.agentOutboundGate,
             )
             ActiveSyncRuntimeCreation.Active(
                 ActiveSyncRuntime(

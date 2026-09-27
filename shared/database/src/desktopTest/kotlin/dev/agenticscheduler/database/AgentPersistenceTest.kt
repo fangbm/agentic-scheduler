@@ -14,6 +14,13 @@ import dev.agenticscheduler.agent.tool.TaskCreateToolInput
 import dev.agenticscheduler.agent.tool.TaskCreateWritePreview
 import dev.agenticscheduler.agent.tool.TaskUpdateTool
 import dev.agenticscheduler.agent.tool.TaskUpdateToolInput
+import dev.agenticscheduler.agent.tool.EventCreateTool
+import dev.agenticscheduler.agent.tool.EventCreateToolInput
+import dev.agenticscheduler.agent.tool.EventTimeToolInput
+import dev.agenticscheduler.agent.tool.EventUpdateTool
+import dev.agenticscheduler.agent.tool.EventUpdateToolInput
+import dev.agenticscheduler.agent.tool.CommittedEventCreate
+import dev.agenticscheduler.agent.tool.CommittedEventUpdate
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.agent.provider.AgentTranscriptAssembler
 import dev.agenticscheduler.agent.provider.AgentTranscriptResult
@@ -22,6 +29,10 @@ import dev.agenticscheduler.application.sync.LocalEnrollmentState
 import dev.agenticscheduler.application.editing.CreateTaskInput
 import dev.agenticscheduler.application.editing.EditingResult
 import dev.agenticscheduler.application.editing.TaskEditingService
+import dev.agenticscheduler.application.editing.CreateEventInput
+import dev.agenticscheduler.application.editing.EventEditingService
+import dev.agenticscheduler.application.editing.EventTimeInput
+import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.history.AgentOriginWriteGate
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
@@ -34,6 +45,12 @@ import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomAgentStateRepository
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
 import dev.agenticscheduler.database.repository.RoomTaskRepository
+import dev.agenticscheduler.database.repository.RoomEventRepository
+import dev.agenticscheduler.domain.planning.Flexibility
+import dev.agenticscheduler.domain.planning.PinState
+import dev.agenticscheduler.domain.time.AllDayRange
+import dev.agenticscheduler.domain.time.FloatingTimeRange
+import dev.agenticscheduler.domain.time.ZonedTimeRange
 import dev.agenticscheduler.domain.task.Task
 import dev.agenticscheduler.domain.task.TaskPriority
 import dev.agenticscheduler.domain.task.TaskStatus
@@ -47,6 +64,10 @@ import dev.agenticscheduler.sync.MutationOrigin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.encodeToString
+import kotlinx.datetime.LocalDate
+import kotlinx.datetime.LocalDateTime
+import kotlinx.datetime.TimeZone
 import org.junit.Rule
 import java.nio.file.Files
 import java.nio.file.Path
@@ -325,6 +346,112 @@ class AgentPersistenceTest {
             val committed = assertIs<AgentToolOutcome.Success<dev.agenticscheduler.agent.tool.CommittedTaskUpdate>>(tool.commit(arguments, fresh, true, policy, AgentActionId(id(95)))).payload
             assertEquals("Agent edit", tasks.getTask(created.id)?.title)
             assertEquals(committed.mutationId.value, history.timeline().last().operation.mutationId)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test fun `event create Tool validates before permission and confirms normalized time preview`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val events = RoomEventRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val editing = EventEditingService(events, ids, MutationCoordinator(
+                RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true },
+            ), NoActiveSyncSpaceWritePolicy)
+            val tool = EventCreateTool(editing)
+            val policy = AgentPermissionPolicy.default()
+            val deniedPolicy = policy.withMode(AgentToolCapability.LOW_RISK_CREATE, AgentPermissionMode.DENY)
+            val badRange = EventCreateToolInput("Meeting", EventTimeToolInput("FLOATING", start = "2026-09-27T11:00", endExclusive = "2026-09-27T10:00"), "HARD", "UNPINNED")
+            val badRangeJson = Json.encodeToString(EventCreateToolInput.serializer(), badRange)
+            assertIs<AgentToolOutcome.InvalidInput>(tool.prepare("{}", deniedPolicy))
+            assertIs<AgentToolOutcome.InvalidInput>(tool.prepare(badRangeJson, deniedPolicy))
+
+            val input = EventCreateToolInput("Meeting", EventTimeToolInput(
+                "ZONED", start = "2026-09-27T10:00", endExclusive = "2026-09-27T11:00", timeZone = "America/New_York",
+            ), "HARD", "UNPINNED")
+            val arguments = Json.encodeToString(EventCreateToolInput.serializer(), input)
+            assertIs<AgentToolOutcome.PermissionDenied>(tool.prepare(arguments, deniedPolicy))
+            val previewOutcome = assertIs<AgentToolOutcome.ConfirmationRequired<dev.agenticscheduler.agent.tool.EventCreateWritePreview>>(tool.prepare(arguments, policy))
+            val preview = previewOutcome.preview
+            assertTrue(events.observeAll().first().isEmpty())
+            assertTrue(history.timeline().isEmpty())
+            assertEquals(AgentToolOutcome.Stale, tool.commit(arguments, preview.copy(after = preview.after.copy(title = "Changed")), true, policy, AgentActionId(id(101))))
+            assertIs<AgentToolOutcome.PermissionDenied>(tool.commit(arguments, preview, false, policy, AgentActionId(id(101))))
+            assertTrue(history.timeline().isEmpty())
+
+            val committed = assertIs<AgentToolOutcome.Success<CommittedEventCreate>>(
+                tool.commit(arguments, preview, true, policy, AgentActionId(id(101))),
+            ).payload
+            assertEquals(committed.event, events.get(committed.event.id))
+            assertEquals(committed.mutationId.value, history.timeline().single().operation.mutationId)
+            assertTrue(tool.normalizedPreviewJson(preview).contains("ZONED:"))
+
+            val direct = policy.withMode(AgentToolCapability.LOW_RISK_CREATE, AgentPermissionMode.ALLOW_DIRECT)
+            val directPreview = assertIs<AgentToolOutcome.Success<dev.agenticscheduler.agent.tool.EventCreateWritePreview>>(tool.prepare(arguments, direct)).payload
+            assertIs<AgentToolOutcome.Success<CommittedEventCreate>>(tool.commit(arguments, directPreview, false, direct, AgentActionId(id(102))))
+            assertEquals(2, history.timeline().size)
+
+            val failingInput = input.copy(title = "Must roll back")
+            val failingArguments = Json.encodeToString(EventCreateToolInput.serializer(), failingInput)
+            val failingPreview = assertIs<AgentToolOutcome.ConfirmationRequired<dev.agenticscheduler.agent.tool.EventCreateWritePreview>>(
+                tool.prepare(failingArguments, policy),
+            ).preview
+            assertEquals(
+                AgentToolOutcome.InfrastructureFailure("EVENT_CREATE_TRANSACTION"),
+                tool.commit(failingArguments, failingPreview, true, policy, AgentActionId(id(106))) { error("audit write failed") },
+            )
+            assertEquals(2, events.observeAll().first().size)
+            assertEquals(2, history.timeline().size)
+        } finally {
+            database.close()
+        }
+    }
+
+    @Test fun `event update Tool reports not found and rechecks transaction before image`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val events = RoomEventRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val editing = EventEditingService(events, ids, MutationCoordinator(
+                RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true },
+            ), NoActiveSyncSpaceWritePolicy)
+            val original = assertIs<EditingResult.Success<dev.agenticscheduler.domain.event.Event>>(
+                editing.create(CreateEventInput("Before", EventTimeInput.AllDay(LocalDate(2026, 9, 27), LocalDate(2026, 9, 28)), Flexibility.HARD, PinState.UNPINNED)),
+            ).value
+            val tool = EventUpdateTool(editing)
+            val policy = AgentPermissionPolicy.default()
+            val update = EventUpdateToolInput(original.id.value, "Agent edit", EventTimeToolInput(
+                "FLOATING", start = "2026-09-27T10:00", endExclusive = "2026-09-27T11:00",
+            ), "SOFT", "PINNED")
+            val arguments = Json.encodeToString(EventUpdateToolInput.serializer(), update)
+            val missing = update.copy(eventId = id(103))
+            assertEquals(AgentToolOutcome.NotFound, tool.prepare(Json.encodeToString(EventUpdateToolInput.serializer(), missing), policy))
+            val shown = assertIs<AgentToolOutcome.ConfirmationRequired<dev.agenticscheduler.application.editing.EventUpdatePreview>>(tool.prepare(arguments, policy)).preview
+            val concurrentInput = UpdateEventInput(original.id, "Concurrent", EventTimeInput.AllDay(LocalDate(2026, 9, 28), LocalDate(2026, 9, 29)), Flexibility.HARD, PinState.UNPINNED)
+            assertIs<EditingResult.Success<dev.agenticscheduler.domain.event.Event>>(editing.update(concurrentInput))
+            assertEquals(
+                EditingResult.Stale,
+                editing.update(
+                    UpdateEventInput(original.id, "Agent edit", EventTimeInput.Floating(LocalDateTime(2026, 9, 27, 10, 0), LocalDateTime(2026, 9, 27, 11, 0)), Flexibility.SOFT, PinState.PINNED),
+                    expectedBefore = shown.before,
+                ),
+            )
+            assertEquals(AgentToolOutcome.Stale, tool.commit(arguments, shown, true, policy, AgentActionId(id(104))))
+            assertEquals(2, history.timeline().size)
+
+            val fresh = assertIs<AgentToolOutcome.ConfirmationRequired<dev.agenticscheduler.application.editing.EventUpdatePreview>>(tool.prepare(arguments, policy)).preview
+            val committed = assertIs<AgentToolOutcome.Success<CommittedEventUpdate>>(
+                tool.commit(arguments, fresh, true, policy, AgentActionId(id(105))),
+            ).payload
+            assertEquals("Agent edit", events.get(original.id)?.title)
+            assertEquals(committed.mutationId.value, history.timeline().last().operation.mutationId)
+            assertEquals(3, history.timeline().size)
+            assertTrue(tool.normalizedPreviewJson(fresh).contains("FLOATING:"))
         } finally {
             database.close()
         }

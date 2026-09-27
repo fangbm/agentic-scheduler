@@ -2,6 +2,7 @@ package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.application.history.MutationScope
 import dev.agenticscheduler.application.history.SyncConflictWriteBlock
 import dev.agenticscheduler.application.history.SyncConflictWritePolicy
@@ -112,9 +113,14 @@ class PlanBranchApplier(
     /** A null snapshot means the current facts cannot be resolved safely, so Apply is stale. */
     private val currentSnapshot: suspend () -> PlanningSnapshot?,
 ) {
-    suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult {
+    suspend fun apply(
+        branch: PlanBranch,
+        applyNow: Instant,
+        origin: MutationOrigin = MutationOrigin.Planner,
+        onCommitted: suspend (MutationExecution<PlanBranchApplyResult>) -> Unit = {},
+    ): PlanBranchApplyResult {
         var noMutationResult: PlanBranchApplyResult? = null
-        val execution = mutations.executeIfAny(MutationOrigin.Planner) { applyWithin(branch, applyNow, this).also { noMutationResult = it } }
+        val execution = mutations.executeIfAny(origin, onCommitted) { applyWithin(branch, applyNow, this).also { noMutationResult = it } }
         return execution?.value ?: requireNotNull(noMutationResult)
     }
 

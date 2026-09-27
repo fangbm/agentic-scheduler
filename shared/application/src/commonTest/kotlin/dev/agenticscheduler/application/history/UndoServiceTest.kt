@@ -67,11 +67,15 @@ class UndoServiceTest {
         val events = MemoryEvents(after)
         val history = MemoryHistory("00000000-0000-7000-8000-000000000020", EventPut(before.toSemanticImage(), after.toSemanticImage()))
         val journal = MemoryJournalForUndo()
-        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(history.id)
+        var callbackExecution: MutationExecution<UndoResult>? = null
+        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy)
+            .undo(history.id) { callbackExecution = it }
 
         assertIs<UndoResult.Applied>(result)
+        assertEquals((result as UndoResult.Applied).mutationId, callbackExecution?.mutationId)
         assertEquals(before, events.value)
         val inverse = assertIs<EventPut>(journal.mutations.single().operation.orderedMutations.single())
+        assertEquals(MutationOrigin.Undo(history.id), journal.mutations.single().operation.origin)
         assertEquals(after.toSemanticImage(), inverse.before)
         assertEquals(before.toSemanticImage(), inverse.after)
     }

@@ -59,9 +59,18 @@ class AgentRunService(
     private val historyReads: HistoryReadTools? = null,
     private val taskUpdate: TaskUpdateTool? = null,
     private val calendarList: CalendarListTool? = null,
+    private val eventCreate: EventCreateTool? = null,
+    private val eventUpdate: EventUpdateTool? = null,
+    private val plannerFullReplan: PlannerPreviewFullReplanTool? = null,
+    private val plannerLocalReflow: PlannerPreviewLocalReflowTool? = null,
+    private val historyUndo: HistoryUndoTool? = null,
+    private val planningProfileUpdate: PlanningProfileUpdateTool? = null,
+    private val plannerApplyBranch: PlannerApplyBranchTool? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
     private val transcripts = AgentTranscriptAssembler(state)
+    /** Planner branches are session-local proposals; only their IDs/summaries enter the Agent audit. */
+    private val planBranches = mutableMapOf<String, dev.agenticscheduler.application.planner.PlanBranch>()
     private val system = "Use only listed typed tools for reads and writes. Prose is not a mutation. Current tool results outrank summaries. Never claim a write succeeded without a successful tool result."
     private val taskGetSchema = schema("""{"type":"object","properties":{"taskId":{"type":"string"}},"required":["taskId"],"additionalProperties":false}""")
     private val taskCreateSchema = schema("""{"type":"object","properties":{"title":{"type":"string"},"priority":{"type":"string","enum":["LOW","NORMAL","HIGH"]},"estimatedMinutes":{"type":["integer","null"]},"remainingMinutes":{"type":["integer","null"]},"deadline":{"type":["object","null"]}},"required":["title","priority","estimatedMinutes","remainingMinutes","deadline"],"additionalProperties":false}""")
@@ -71,6 +80,14 @@ class AgentRunService(
     private val historyMutationSchema = schema("""{"type":"object","properties":{"mutationId":{"type":"string"}},"required":["mutationId"],"additionalProperties":false}""")
     private val historyEntitySchema = schema("""{"type":"object","properties":{"entityKind":{"type":"string"},"entityId":{"type":"string"},"limit":{"type":["integer","null"],"minimum":1,"maximum":200}},"required":["entityKind","entityId","limit"],"additionalProperties":false}""")
     private val calendarSchema = schema("""{"type":"object","properties":{"startDate":{"type":"string"},"endDateExclusive":{"type":"string"},"displayTimeZone":{"type":"string"}},"required":["startDate","endDateExclusive","displayTimeZone"],"additionalProperties":false}""")
+    private val eventTimeSchema = schema("""{"type":"object","properties":{"kind":{"type":"string","enum":["ZONED","ALL_DAY","FLOATING"]},"start":{"type":["string","null"]},"endExclusive":{"type":["string","null"]},"startDate":{"type":["string","null"]},"endDateExclusive":{"type":["string","null"]},"timeZone":{"type":["string","null"]}},"required":["kind","start","endExclusive","startDate","endDateExclusive","timeZone"],"additionalProperties":false}""")
+    private val eventCreateSchema = schema("""{"type":"object","properties":{"title":{"type":"string"},"time":$eventTimeSchema,"flexibility":{"type":"string","enum":["HARD","FLEXIBLE","SOFT"]},"pinState":{"type":"string","enum":["PINNED","UNPINNED"]}},"required":["title","time","flexibility","pinState"],"additionalProperties":false}""")
+    private val eventUpdateSchema = schema("""{"type":"object","properties":{"eventId":{"type":"string"},"title":{"type":"string"},"time":$eventTimeSchema,"flexibility":{"type":"string","enum":["HARD","FLEXIBLE","SOFT"]},"pinState":{"type":"string","enum":["PINNED","UNPINNED"]}},"required":["eventId","title","time","flexibility","pinState"],"additionalProperties":false}""")
+    private val plannerFullReplanSchema = schema("""{"type":"object","properties":{"planningProfileId":{"type":"string"},"referenceNow":{"type":"string"},"horizonStart":{"type":"string"},"horizonEndExclusive":{"type":"string"}},"required":["planningProfileId","referenceNow","horizonStart","horizonEndExclusive"],"additionalProperties":false}""")
+    private val plannerLocalReflowSchema = schema("""{"type":"object","properties":{"planningProfileId":{"type":"string"},"referenceNow":{"type":"string"},"horizonStart":{"type":"string"},"horizonEndExclusive":{"type":"string"},"affectedFocusBlockIds":{"type":"array","items":{"type":"string"}},"disruptedRanges":{"type":"array","items":{"type":"object","properties":{"start":{"type":"string"},"endExclusive":{"type":"string"},"timeZone":{"type":"string"}},"required":["start","endExclusive","timeZone"],"additionalProperties":false}},"searchWindow":{"type":"object","properties":{"start":{"type":"string"},"endExclusive":{"type":"string"},"timeZone":{"type":"string"}},"required":["start","endExclusive","timeZone"],"additionalProperties":false}},"required":["planningProfileId","referenceNow","horizonStart","horizonEndExclusive","affectedFocusBlockIds","disruptedRanges","searchWindow"],"additionalProperties":false}""")
+    private val historyUndoSchema = schema("""{"type":"object","properties":{"mutationId":{"type":"string"}},"required":["mutationId"],"additionalProperties":false}""")
+    private val planningProfileUpdateSchema = schema("""{"type":"object","properties":{"planningProfileId":{"type":"string"},"name":{"type":"string"},"configuration":{"type":"string","enum":["UNCONFIGURED","CONFIGURED"]},"timeZone":{"type":["string","null"]},"weeklyAvailability":{"type":["array","null"],"items":{"type":"object","properties":{"dayOfWeek":{"type":"string","enum":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]},"start":{"type":"string"},"endExclusive":{"type":"string"}},"required":["dayOfWeek","start","endExclusive"],"additionalProperties":false}},"minimumFocusBlockMinutes":{"type":["integer","null"]},"preferredFocusBlockMinutes":{"type":["integer","null"]},"maximumFocusBlockMinutes":{"type":["integer","null"]},"allDayEventPolicy":{"type":["string","null"],"enum":["AVOID","TREAT_AS_BUSY",null]}},"required":["planningProfileId","name","configuration","timeZone","weeklyAvailability","minimumFocusBlockMinutes","preferredFocusBlockMinutes","maximumFocusBlockMinutes","allDayEventPolicy"],"additionalProperties":false}""")
+    private val plannerApplyBranchSchema = schema("""{"type":"object","properties":{"planBranchId":{"type":"string"},"applyNow":{"type":"string"}},"required":["planBranchId","applyNow"],"additionalProperties":false}""")
 
     suspend fun createThread(): AgentThreadId = AgentThreadId(ids.next()).also { state.saveThread(AgentThread(it, null, clock.nowEpochMillis())) }
 
@@ -99,16 +116,65 @@ class AgentRunService(
             return resumeAfterTool(threadId)
         }
         val policy = state.permissionPolicy()
+        if (call.name == EVENT_CREATE_TOOL_NAME && eventCreate != null) {
+            val prepared = eventCreate.prepare(call.argumentsJson, policy)
+            val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
+            if (eventCreate.normalizedPreviewJson(preview) != call.previewJson) {
+                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
+                return resumeAfterTool(threadId)
+            }
+            executeEventCreate(call, action, preview, policy)
+            return resumeAfterTool(threadId)
+        }
+        if (call.name == EVENT_UPDATE_TOOL_NAME && eventUpdate != null) {
+            val prepared = eventUpdate.prepare(call.argumentsJson, policy)
+            val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
+            if (eventUpdate.normalizedPreviewJson(preview) != call.previewJson) {
+                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
+                return resumeAfterTool(threadId)
+            }
+            executeEventUpdate(call, action, preview, policy)
+            return resumeAfterTool(threadId)
+        }
+        if (call.name == AgentToolNames.HISTORY_UNDO && historyUndo != null) {
+            val prepared = historyUndo.prepare(call.argumentsJson, policy)
+            val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
+            if (historyUndo.normalizedPreviewJson(preview) != call.previewJson) {
+                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
+                return resumeAfterTool(threadId)
+            }
+            executeHistoryUndo(call, action, preview, policy)
+            return resumeAfterTool(threadId)
+        }
+        if (call.name == PLANNING_PROFILE_UPDATE_TOOL_NAME && planningProfileUpdate != null) {
+            val prepared = planningProfileUpdate.prepare(call.argumentsJson, policy)
+            val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
+            if (planningProfileUpdate.normalizedPreviewJson(preview) != call.previewJson) {
+                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
+                return resumeAfterTool(threadId)
+            }
+            executePlanningProfileUpdate(call, action, preview, policy)
+            return resumeAfterTool(threadId)
+        }
+        if (call.name == PLANNER_APPLY_BRANCH_TOOL_NAME && plannerApplyBranch != null) {
+            val branchId = runCatching { json.decodeFromString(PlannerApplyBranchToolInput.serializer(), call.argumentsJson).planBranchId }.getOrNull()
+            val branch = branchId?.let { planBranches[it] }
+            if (branch == null) {
+                finishOutcome(call, action, AgentToolOutcome.Stale)
+                return resumeAfterTool(threadId)
+            }
+            val prepared = plannerApplyBranch.prepare(call.argumentsJson, branch, policy)
+            val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
+            if (branch.toSnapshotJson() != call.previewJson) {
+                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
+                return resumeAfterTool(threadId)
+            }
+            executePlannerApply(call, action.copy(planBranchReference = branch.id.value), branch, preview, policy)
+            return resumeAfterTool(threadId)
+        }
         if (call.name == AgentToolNames.TASK_UPDATE && taskUpdate != null) {
             val prepared = taskUpdate.prepare(call.argumentsJson, policy)
-            val preview = when (prepared) {
-                is AgentToolOutcome.ConfirmationRequired -> prepared.preview
-                is AgentToolOutcome.Success -> prepared.payload
-                else -> {
-                    finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "PREVIEW_UNAVAILABLE", AgentActionStatus.STALE)
-                    return resumeAfterTool(threadId)
-                }
-            }
+            val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
             if (taskUpdate.normalizedPreviewJson(preview) != call.previewJson) {
                 finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
                 return resumeAfterTool(threadId)
@@ -118,20 +184,122 @@ class AgentRunService(
         }
         if (call.name != AgentToolNames.TASK_CREATE) return AgentRunResult.Failed("CONFIRMATION_UNSUPPORTED")
         val prepared = taskCreate.prepare(call.argumentsJson, policy)
-        val preview = when (prepared) {
-            is AgentToolOutcome.ConfirmationRequired -> prepared.preview
-            is AgentToolOutcome.Success -> prepared.payload
-            else -> {
-                finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "PREVIEW_UNAVAILABLE", AgentActionStatus.STALE)
-                return resumeAfterTool(threadId)
-            }
-        }
+        val preview = previewForConfirmation(prepared, call, action) ?: return resumeAfterTool(threadId)
         if (taskCreate.normalizedPreviewJson(preview) != call.previewJson) {
             finishWithoutWrite(call, action, AgentToolResultStatus.STALE, "STALE_PREVIEW", AgentActionStatus.STALE)
             return resumeAfterTool(threadId)
         }
         executeTaskCreate(call, action, preview, true, policy)
         return resumeAfterTool(threadId)
+    }
+
+    private suspend fun <T> previewForConfirmation(
+        outcome: AgentToolOutcome<T>, call: AgentToolCall, action: AgentAction,
+    ): T? = when (outcome) {
+        is AgentToolOutcome.ConfirmationRequired -> outcome.preview
+        is AgentToolOutcome.Success -> outcome.payload
+        else -> {
+            finishOutcome(call, action, outcome)
+            null
+        }
+    }
+
+    private suspend fun executeEventCreate(
+        call: AgentToolCall, action: AgentAction, preview: EventCreateWritePreview,
+        policy: dev.agenticscheduler.agent.permission.AgentPermissionPolicy,
+    ) {
+        val tool = requireNotNull(eventCreate)
+        val resultId = AgentToolResultId(ids.next())
+        val outcome = tool.commit(call.argumentsJson, preview, true, policy, action.id, onCommitted = { committed ->
+            val event = (committed.value as EditingResult.Success).value
+            state.appendToolResult(AgentToolResult(resultId, call.threadId, call.id, call.ordinal, AgentToolResultStatus.SUCCESS,
+                json.encodeToString(EventCommitSnapshot(event.id.value, committed.mutationId.value)), listOf(committed.mutationId)))
+            state.saveAction(action.copy(toolResultIds = listOf(resultId), mutationIds = listOf(committed.mutationId), status = AgentActionStatus.SUCCEEDED))
+            state.saveToolCall(call.copy(state = AgentToolCallState.COMPLETED))
+        })
+        if (outcome !is AgentToolOutcome.Success) finishOutcome(call, action, outcome)
+    }
+
+    private suspend fun executeEventUpdate(
+        call: AgentToolCall, action: AgentAction, preview: dev.agenticscheduler.application.editing.EventUpdatePreview,
+        policy: dev.agenticscheduler.agent.permission.AgentPermissionPolicy,
+    ) {
+        val tool = requireNotNull(eventUpdate)
+        val resultId = AgentToolResultId(ids.next())
+        val outcome = tool.commit(call.argumentsJson, preview, true, policy, action.id, onCommitted = { committed ->
+            val event = (committed.value as EditingResult.Success).value
+            state.appendToolResult(AgentToolResult(resultId, call.threadId, call.id, call.ordinal, AgentToolResultStatus.SUCCESS,
+                json.encodeToString(EventCommitSnapshot(event.id.value, committed.mutationId.value)), listOf(committed.mutationId)))
+            state.saveAction(action.copy(toolResultIds = listOf(resultId), mutationIds = listOf(committed.mutationId), status = AgentActionStatus.SUCCEEDED))
+            state.saveToolCall(call.copy(state = AgentToolCallState.COMPLETED))
+        })
+        if (outcome !is AgentToolOutcome.Success) finishOutcome(call, action, outcome)
+    }
+
+    private suspend fun executeHistoryUndo(
+        call: AgentToolCall, action: AgentAction, preview: HistoryUndoPreview,
+        policy: dev.agenticscheduler.agent.permission.AgentPermissionPolicy,
+    ) {
+        val tool = requireNotNull(historyUndo)
+        val resultId = AgentToolResultId(ids.next())
+        val outcome = tool.commit(call.argumentsJson, preview, true, policy, onCommitted = { committed ->
+            check(committed.value is dev.agenticscheduler.application.history.UndoResult.Applied) {
+                "Undo commit callback must describe an applied result."
+            }
+            state.appendToolResult(AgentToolResult(resultId, call.threadId, call.id, call.ordinal, AgentToolResultStatus.SUCCESS,
+                json.encodeToString(UndoCommitSnapshot(preview.originalMutationId, committed.mutationId.value)), listOf(committed.mutationId)))
+            state.saveAction(action.copy(toolResultIds = listOf(resultId), mutationIds = listOf(committed.mutationId), status = AgentActionStatus.SUCCEEDED))
+            state.saveToolCall(call.copy(state = AgentToolCallState.COMPLETED))
+        })
+        if (outcome !is AgentToolOutcome.Success) finishOutcome(call, action, outcome)
+    }
+
+    private suspend fun executePlanningProfileUpdate(
+        call: AgentToolCall, action: AgentAction, preview: PlanningProfileUpdateWritePreview,
+        policy: dev.agenticscheduler.agent.permission.AgentPermissionPolicy,
+    ) {
+        val tool = requireNotNull(planningProfileUpdate)
+        val resultId = AgentToolResultId(ids.next())
+        val outcome = tool.commit(call.argumentsJson, preview, true, policy, action.id, onCommitted = { committed ->
+            val result = committed.value as dev.agenticscheduler.application.planner.PlanningProfileSettingsResult.Success
+            state.appendToolResult(AgentToolResult(resultId, call.threadId, call.id, call.ordinal, AgentToolResultStatus.SUCCESS,
+                json.encodeToString(ProfileCommitSnapshot(result.profile.id.value, result.profile.name, committed.mutationId.value)), listOf(committed.mutationId)))
+            state.saveAction(action.copy(toolResultIds = listOf(resultId), mutationIds = listOf(committed.mutationId), status = AgentActionStatus.SUCCEEDED))
+            state.saveToolCall(call.copy(state = AgentToolCallState.COMPLETED))
+        })
+        if (outcome !is AgentToolOutcome.Success) finishOutcome(call, action, outcome)
+    }
+
+    private suspend fun executePlannerApply(
+        call: AgentToolCall, action: AgentAction,
+        branch: dev.agenticscheduler.application.planner.PlanBranch,
+        preview: PlannerApplyBranchPreview,
+        policy: dev.agenticscheduler.agent.permission.AgentPermissionPolicy,
+    ) {
+        val tool = requireNotNull(plannerApplyBranch)
+        var resultRecorded = false
+        val outcome = tool.commit(call.argumentsJson, branch, preview, true, policy, action.id, onCommitted = { committed ->
+            val applied = committed.value as? dev.agenticscheduler.application.planner.PlanBranchApplyResult.Applied
+                ?: error("Planner Apply commit callback must describe an applied branch.")
+            planBranches[branch.id.value] = applied.branch
+            finishResult(
+                call, action, AgentToolResultStatus.SUCCESS,
+                json.encodeToString(PlannerApplyCommitSnapshot(branch.id.value, applied.branch.status.name, committed.mutationId.value)),
+                AgentActionStatus.SUCCEEDED, listOf(committed.mutationId), branch.id.value,
+            )
+            resultRecorded = true
+        })
+        when (outcome) {
+            is AgentToolOutcome.Success -> {
+                planBranches[branch.id.value] = outcome.payload.branch
+                if (!resultRecorded) finishResult(
+                    call, action, AgentToolResultStatus.SUCCESS,
+                    json.encodeToString(PlannerApplyCommitSnapshot(branch.id.value, outcome.payload.branch.status.name, null)),
+                    AgentActionStatus.SUCCEEDED, planBranchReference = branch.id.value,
+                )
+            }
+            else -> finishOutcome(call, action, outcome)
+        }
     }
 
     private suspend fun executeTaskCreate(
@@ -288,6 +456,67 @@ class AgentRunService(
             finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "UNREGISTERED_TOOL", AgentActionStatus.DENIED)
             return AgentRunResult.Failed("UNREGISTERED_TOOL")
         }
+        if (call.name == EVENT_CREATE_TOOL_NAME && eventCreate != null) {
+            val policy = state.permissionPolicy()
+            return when (val prepared = eventCreate.prepare(call.argumentsJson, policy)) {
+                is AgentToolOutcome.ConfirmationRequired -> awaitConfirmation(call, action, eventCreate.normalizedPreviewJson(prepared.preview))
+                is AgentToolOutcome.Success -> {
+                    executeEventCreate(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), prepared.payload, policy)
+                    modelStep(threadId, config, emptyList(), allowLocalRead = false)
+                }
+                else -> { finishOutcome(call, action, prepared); AgentRunResult.Failed(outcomeCode(prepared)) }
+            }
+        }
+        if (call.name == EVENT_UPDATE_TOOL_NAME && eventUpdate != null) {
+            val policy = state.permissionPolicy()
+            return when (val prepared = eventUpdate.prepare(call.argumentsJson, policy)) {
+                is AgentToolOutcome.ConfirmationRequired -> awaitConfirmation(call, action, eventUpdate.normalizedPreviewJson(prepared.preview))
+                is AgentToolOutcome.Success -> {
+                    executeEventUpdate(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), prepared.payload, policy)
+                    modelStep(threadId, config, emptyList(), allowLocalRead = false)
+                }
+                else -> { finishOutcome(call, action, prepared); AgentRunResult.Failed(outcomeCode(prepared)) }
+            }
+        }
+        if (call.name == AgentToolNames.HISTORY_UNDO && historyUndo != null) {
+            val policy = state.permissionPolicy()
+            return when (val prepared = historyUndo.prepare(call.argumentsJson, policy)) {
+                is AgentToolOutcome.ConfirmationRequired -> awaitConfirmation(call, action, historyUndo.normalizedPreviewJson(prepared.preview))
+                is AgentToolOutcome.Success -> {
+                    executeHistoryUndo(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), prepared.payload, policy)
+                    modelStep(threadId, config, emptyList(), allowLocalRead = false)
+                }
+                else -> { finishOutcome(call, action, prepared); AgentRunResult.Failed(outcomeCode(prepared)) }
+            }
+        }
+        if (call.name == PLANNING_PROFILE_UPDATE_TOOL_NAME && planningProfileUpdate != null) {
+            val policy = state.permissionPolicy()
+            return when (val prepared = planningProfileUpdate.prepare(call.argumentsJson, policy)) {
+                is AgentToolOutcome.ConfirmationRequired -> awaitConfirmation(call, action, planningProfileUpdate.normalizedPreviewJson(prepared.preview))
+                is AgentToolOutcome.Success -> {
+                    executePlanningProfileUpdate(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), prepared.payload, policy)
+                    modelStep(threadId, config, emptyList(), allowLocalRead = false)
+                }
+                else -> { finishOutcome(call, action, prepared); AgentRunResult.Failed(outcomeCode(prepared)) }
+            }
+        }
+        if (call.name == PLANNER_APPLY_BRANCH_TOOL_NAME && plannerApplyBranch != null) {
+            val input = runCatching { json.decodeFromString(PlannerApplyBranchToolInput.serializer(), call.argumentsJson) }.getOrNull()
+            val branch = input?.let { planBranches[it.planBranchId] }
+            if (branch == null) {
+                finishOutcome(call, action, AgentToolOutcome.Stale)
+                return AgentRunResult.Failed("STALE")
+            }
+            val policy = state.permissionPolicy()
+            return when (val prepared = plannerApplyBranch.prepare(call.argumentsJson, branch, policy)) {
+                is AgentToolOutcome.ConfirmationRequired -> awaitConfirmation(call, action.copy(planBranchReference = branch.id.value), branch.toSnapshotJson())
+                is AgentToolOutcome.Success -> {
+                    executePlannerApply(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT, planBranchReference = branch.id.value), branch, prepared.payload, policy)
+                    modelStep(threadId, config, emptyList(), allowLocalRead = false)
+                }
+                else -> { finishOutcome(call, action, prepared); AgentRunResult.Failed(outcomeCode(prepared)) }
+            }
+        }
         if (call.name == AgentToolNames.TASK_CREATE) {
             val policy = state.permissionPolicy()
             return when (val prepared = taskCreate.prepare(call.argumentsJson, policy)) {
@@ -329,6 +558,11 @@ class AgentRunService(
             state.permissionPolicy().modeFor(dev.agenticscheduler.agent.permission.AgentToolCapability.READ) != AgentPermissionMode.ALLOW_DIRECT) {
             finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "READ_NOT_ALLOWED", AgentActionStatus.DENIED)
             return AgentRunResult.Failed("READ_NOT_ALLOWED")
+        }
+        if (call.name in setOf(PlannerToolNames.PREVIEW_FULL_REPLAN, PlannerToolNames.PREVIEW_LOCAL_REFLOW) &&
+            state.permissionPolicy().modeFor(dev.agenticscheduler.agent.permission.AgentToolCapability.PLAN_PREVIEW) != AgentPermissionMode.ALLOW_DIRECT) {
+            finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "PLAN_PREVIEW_NOT_ALLOWED", AgentActionStatus.DENIED)
+            return AgentRunResult.Failed("PLAN_PREVIEW_NOT_ALLOWED")
         }
         if (call.name == AgentToolNames.TASK_GET && allowLocalRead) {
             val taskId = runCatching { TaskId(json.decodeFromString(TaskGetInput.serializer(), call.argumentsJson).taskId) }.getOrNull()
@@ -417,6 +651,18 @@ class AgentRunService(
             finishWithoutWrite(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), result.first, result.second, if (result.first == AgentToolResultStatus.SUCCESS) AgentActionStatus.SUCCEEDED else AgentActionStatus.FAILED)
             return modelStep(threadId, config, tools, allowLocalRead = false)
         }
+        if (call.name == PlannerToolNames.PREVIEW_FULL_REPLAN && allowLocalRead && plannerFullReplan != null) {
+            val outcome = plannerFullReplan.execute(call.argumentsJson)
+            if (outcome is AgentToolOutcome.Success) planBranches[outcome.payload.id.value] = outcome.payload
+            finishPlannerPreview(call, action, outcome)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
+        if (call.name == PlannerToolNames.PREVIEW_LOCAL_REFLOW && allowLocalRead && plannerLocalReflow != null) {
+            val outcome = plannerLocalReflow.execute(call.argumentsJson)
+            if (outcome is AgentToolOutcome.Success) planBranches[outcome.payload.id.value] = outcome.payload
+            finishPlannerPreview(call, action, outcome)
+            return modelStep(threadId, config, tools, allowLocalRead = false)
+        }
         finishWithoutWrite(call, action, AgentToolResultStatus.PERMISSION_DENIED, "TOOL_CALL_LIMIT", AgentActionStatus.DENIED)
         return AgentRunResult.Failed("TOOL_CALL_LIMIT")
     }
@@ -432,6 +678,149 @@ class AgentRunService(
         state.saveAction(action.copy(toolResultIds = listOf(resultId), status = actionStatus))
     }
 
+    private suspend fun awaitConfirmation(call: AgentToolCall, action: AgentAction, previewJson: String): AgentRunResult.AwaitingConfirmation {
+        state.saveToolCall(call.copy(state = AgentToolCallState.WAITING_CONFIRMATION, previewJson = previewJson))
+        state.saveAction(action.copy(
+            permissionDecision = AgentPermissionMode.REQUIRE_CONFIRMATION,
+            confirmationReference = call.id.value,
+            status = AgentActionStatus.WAITING_CONFIRMATION,
+        ))
+        return AgentRunResult.AwaitingConfirmation(call.id, previewJson)
+    }
+
+    private suspend fun finishOutcome(call: AgentToolCall, action: AgentAction, outcome: AgentToolOutcome<*>) {
+        val status = when (outcome) {
+            is AgentToolOutcome.Success -> AgentToolResultStatus.SUCCESS
+            is AgentToolOutcome.InvalidInput -> AgentToolResultStatus.INVALID_INPUT
+            AgentToolOutcome.NotFound -> AgentToolResultStatus.NOT_FOUND
+            is AgentToolOutcome.PermissionDenied -> AgentToolResultStatus.PERMISSION_DENIED
+            is AgentToolOutcome.ConfirmationRequired -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE
+            AgentToolOutcome.Stale -> AgentToolResultStatus.STALE
+            is AgentToolOutcome.Unsupported -> AgentToolResultStatus.UNSUPPORTED
+            is AgentToolOutcome.Conflict -> AgentToolResultStatus.CONFLICT
+            is AgentToolOutcome.Infeasible -> AgentToolResultStatus.INFEASIBLE
+            is AgentToolOutcome.InfrastructureFailure -> AgentToolResultStatus.INFRASTRUCTURE_FAILURE
+        }
+        val actionStatus = when (status) {
+            AgentToolResultStatus.PERMISSION_DENIED -> AgentActionStatus.DENIED
+            AgentToolResultStatus.STALE -> AgentActionStatus.STALE
+            AgentToolResultStatus.SUCCESS -> AgentActionStatus.SUCCEEDED
+            else -> AgentActionStatus.FAILED
+        }
+        val payload = when (outcome) {
+            is AgentToolOutcome.InvalidInput -> OutcomeSnapshot("INVALID_INPUT", issues = outcome.issues.map { "${it.field}:${it.code}" })
+            AgentToolOutcome.NotFound -> OutcomeSnapshot("NOT_FOUND")
+            is AgentToolOutcome.PermissionDenied -> OutcomeSnapshot("PERMISSION_DENIED", code = outcome.capability.name)
+            is AgentToolOutcome.ConfirmationRequired -> OutcomeSnapshot("CONFIRMATION_REQUIRED")
+            AgentToolOutcome.Stale -> OutcomeSnapshot("STALE")
+            is AgentToolOutcome.Unsupported -> OutcomeSnapshot("UNSUPPORTED", code = outcome.reasonCode)
+            is AgentToolOutcome.Conflict -> OutcomeSnapshot("CONFLICT", ids = outcome.conflictIds)
+            is AgentToolOutcome.Infeasible -> OutcomeSnapshot("INFEASIBLE", issues = outcome.reasonCodes)
+            is AgentToolOutcome.InfrastructureFailure -> OutcomeSnapshot("INFRASTRUCTURE_FAILURE", code = outcome.redactedCode)
+            is AgentToolOutcome.Success -> OutcomeSnapshot("SUCCESS")
+        }
+        finishResult(call, action, status, json.encodeToString(payload), actionStatus)
+    }
+
+    private suspend fun finishPlannerPreview(
+        call: AgentToolCall, action: AgentAction, outcome: AgentToolOutcome<dev.agenticscheduler.application.planner.PlanBranch>,
+    ) {
+        when (outcome) {
+            is AgentToolOutcome.Success -> {
+                val branch = outcome.payload
+                finishResult(
+                    call,
+                    action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT),
+                    AgentToolResultStatus.SUCCESS,
+                    json.encodeToString(branch.toSnapshot()),
+                    AgentActionStatus.SUCCEEDED,
+                    planBranchReference = branch.id.value,
+                )
+            }
+            else -> finishOutcome(call, action.copy(permissionDecision = AgentPermissionMode.ALLOW_DIRECT), outcome)
+        }
+    }
+
+    private suspend fun finishResult(
+        call: AgentToolCall,
+        action: AgentAction,
+        status: AgentToolResultStatus,
+        resultJson: String,
+        actionStatus: AgentActionStatus,
+        mutationIds: List<MutationId> = emptyList(),
+        planBranchReference: String? = null,
+    ) {
+        val resultId = AgentToolResultId(ids.next())
+        state.appendToolResult(AgentToolResult(resultId, call.threadId, call.id, call.ordinal, status, resultJson, mutationIds))
+        state.saveToolCall(call.copy(state = when (actionStatus) {
+            AgentActionStatus.DENIED -> AgentToolCallState.DENIED
+            AgentActionStatus.SUCCEEDED -> AgentToolCallState.COMPLETED
+            else -> AgentToolCallState.FAILED
+        }))
+        state.saveAction(action.copy(
+            toolResultIds = listOf(resultId), mutationIds = mutationIds, status = actionStatus,
+            planBranchReference = planBranchReference ?: action.planBranchReference,
+        ))
+    }
+
+    private fun outcomeCode(outcome: AgentToolOutcome<*>): String = when (outcome) {
+        is AgentToolOutcome.InvalidInput -> "INVALID_INPUT"
+        AgentToolOutcome.NotFound -> "NOT_FOUND"
+        is AgentToolOutcome.PermissionDenied -> "PERMISSION_DENIED"
+        is AgentToolOutcome.ConfirmationRequired -> "CONFIRMATION_REQUIRED"
+        AgentToolOutcome.Stale -> "STALE"
+        is AgentToolOutcome.Unsupported -> "UNSUPPORTED"
+        is AgentToolOutcome.Conflict -> "CONFLICT"
+        is AgentToolOutcome.Infeasible -> "INFEASIBLE"
+        is AgentToolOutcome.InfrastructureFailure -> outcome.redactedCode
+        is AgentToolOutcome.Success -> "SUCCESS"
+    }
+
+    private fun dev.agenticscheduler.application.planner.PlanBranch.toSnapshot() = PlanBranchSnapshot(
+        id = id.value,
+        status = status.name,
+        mutations = mutations.map { mutation -> when (mutation) {
+            is dev.agenticscheduler.planner.FocusBlockMutation.Create -> PlannerMutationSnapshot(
+                "CREATE", mutation.taskId.value, null, mutation.draft.time.start.toString(), mutation.draft.time.endExclusive.toString(), mutation.draft.time.timeZone.id,
+            )
+            is dev.agenticscheduler.planner.FocusBlockMutation.Move -> PlannerMutationSnapshot(
+                "MOVE", mutation.taskId.value, mutation.id.value, mutation.time.start.toString(), mutation.time.endExclusive.toString(), mutation.time.timeZone.id,
+            )
+            is dev.agenticscheduler.planner.FocusBlockMutation.Resize -> PlannerMutationSnapshot(
+                "RESIZE", mutation.taskId.value, mutation.id.value, mutation.time.start.toString(), mutation.time.endExclusive.toString(), mutation.time.timeZone.id,
+            )
+            is dev.agenticscheduler.planner.FocusBlockMutation.Delete -> PlannerMutationSnapshot(
+                "DELETE", mutation.taskId.value, mutation.id.value, null, null, null,
+            )
+        } },
+        issues = issues.map(::plannerIssueCode),
+        explanations = explanations.map { explanation -> PlannerExplanationSnapshot(
+            explanation.taskId.value,
+            when (val mutation = explanation.mutation) {
+                is dev.agenticscheduler.planner.FocusBlockMutation.Create -> "CREATE"
+                is dev.agenticscheduler.planner.FocusBlockMutation.Move -> "MOVE"
+                is dev.agenticscheduler.planner.FocusBlockMutation.Resize -> "RESIZE"
+                is dev.agenticscheduler.planner.FocusBlockMutation.Delete -> "DELETE"
+            },
+            explanation.criteria.map { it.name },
+        ) },
+    )
+    private fun dev.agenticscheduler.application.planner.PlanBranch.toSnapshotJson(): String = json.encodeToString(toSnapshot())
+
+    private fun plannerIssueCode(issue: dev.agenticscheduler.planner.PlannerIssue): String = when (issue) {
+        dev.agenticscheduler.planner.PlannerIssue.ProfileUnconfigured -> "PROFILE_UNCONFIGURED"
+        is dev.agenticscheduler.planner.PlannerIssue.InvalidSnapshot -> "INVALID_SNAPSHOT"
+        is dev.agenticscheduler.planner.PlannerIssue.TimeResolutionFailure -> "TIME_RESOLUTION_FAILURE"
+        is dev.agenticscheduler.planner.PlannerIssue.UnknownRemainingEffort -> "UNKNOWN_REMAINING_EFFORT"
+        is dev.agenticscheduler.planner.PlannerIssue.NoLegalAvailability -> "NO_LEGAL_AVAILABILITY"
+        is dev.agenticscheduler.planner.PlannerIssue.DependencyBlocked -> "DEPENDENCY_BLOCKED"
+        is dev.agenticscheduler.planner.PlannerIssue.OverflowApprovalRequired -> "OVERFLOW_APPROVAL_REQUIRED"
+        is dev.agenticscheduler.planner.PlannerIssue.HardDeadlineShortfall -> "HARD_DEADLINE_SHORTFALL"
+        is dev.agenticscheduler.planner.PlannerIssue.UnscheduledEffort -> "UNSCHEDULED_EFFORT"
+        is dev.agenticscheduler.planner.PlannerIssue.OverallocatedPlannedEffort -> "OVERALLOCATED_PLANNED_EFFORT"
+        is dev.agenticscheduler.planner.PlannerIssue.ImmovableConflict -> "IMMOVABLE_CONFLICT"
+    }
+
     private suspend fun selectedConfig(): ProviderConfig? = state.selectedProviderConfigId()?.let { state.providerConfig(it) }
     private fun supportedTools() = buildList {
         add(ProviderToolDefinition(AgentToolNames.TASK_GET, "Read one Task by immutable ID", taskGetSchema))
@@ -442,6 +831,13 @@ class AgentRunService(
         if (historyReads != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_GET_ENTITY_CHANGES, "Read one entity ChangeLog", historyEntitySchema))
         add(ProviderToolDefinition(AgentToolNames.TASK_CREATE, "Propose a Task with explicit values", taskCreateSchema))
         if (taskUpdate != null) add(ProviderToolDefinition(AgentToolNames.TASK_UPDATE, "Propose a Task update with full source facts", taskUpdateSchema))
+        if (eventCreate != null) add(ProviderToolDefinition(EVENT_CREATE_TOOL_NAME, "Propose a typed Event creation", eventCreateSchema))
+        if (eventUpdate != null) add(ProviderToolDefinition(EVENT_UPDATE_TOOL_NAME, "Propose a typed Event update", eventUpdateSchema))
+        if (plannerFullReplan != null) add(ProviderToolDefinition(PlannerToolNames.PREVIEW_FULL_REPLAN, "Preview a deterministic full replan", plannerFullReplanSchema))
+        if (plannerLocalReflow != null) add(ProviderToolDefinition(PlannerToolNames.PREVIEW_LOCAL_REFLOW, "Preview a deterministic local reflow", plannerLocalReflowSchema))
+        if (historyUndo != null) add(ProviderToolDefinition(AgentToolNames.HISTORY_UNDO, "Propose a compensating Undo for one mutation", historyUndoSchema))
+        if (planningProfileUpdate != null) add(ProviderToolDefinition(PLANNING_PROFILE_UPDATE_TOOL_NAME, "Propose a typed PlanningProfile update", planningProfileUpdateSchema))
+        if (plannerApplyBranch != null) add(ProviderToolDefinition(PLANNER_APPLY_BRANCH_TOOL_NAME, "Apply a previously previewed PlanBranch", plannerApplyBranchSchema))
     }
 
     private fun group(messages: List<ProviderChatMessage>): List<Pair<Int, List<ProviderChatMessage>>> = buildList {
@@ -518,5 +914,29 @@ class AgentRunService(
         } },
     )
     @Serializable private data class TaskCommitSnapshot(val taskId: String, val mutationId: String)
+    @Serializable private data class EventCommitSnapshot(val eventId: String, val mutationId: String)
+    @Serializable private data class UndoCommitSnapshot(val originalMutationId: String, val mutationId: String)
+    @Serializable private data class ProfileCommitSnapshot(val planningProfileId: String, val name: String, val mutationId: String)
+    @Serializable private data class PlannerApplyCommitSnapshot(val planBranchId: String, val status: String, val mutationId: String?)
+    @Serializable private data class OutcomeSnapshot(
+        val status: String,
+        val code: String? = null,
+        val issues: List<String> = emptyList(),
+        val ids: List<String> = emptyList(),
+    )
+    @Serializable private data class PlanBranchSnapshot(
+        val id: String,
+        val status: String,
+        val mutations: List<PlannerMutationSnapshot>,
+        val issues: List<String>,
+        val explanations: List<PlannerExplanationSnapshot>,
+    )
+    @Serializable private data class PlannerMutationSnapshot(
+        val kind: String, val taskId: String, val focusBlockId: String?,
+        val start: String?, val endExclusive: String?, val timeZone: String?,
+    )
+    @Serializable private data class PlannerExplanationSnapshot(
+        val taskId: String, val mutationKind: String, val criteria: List<String>,
+    )
     @Serializable private data class StatusSnapshot(val status: String)
 }
