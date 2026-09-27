@@ -19,6 +19,7 @@ sealed interface UndoResult {
     data class Applied(val mutationId: MutationId) : UndoResult
     data class Unsupported(val reason: String) : UndoResult
     data class Conflict(val entityIds: List<String>) : UndoResult
+    data class BlockedBySyncConflict(val blocks: List<SyncConflictWriteBlock>) : UndoResult
     data object NotFound : UndoResult
 }
 
@@ -35,6 +36,7 @@ class UndoService(
     private val events: EventRepository,
     private val tasks: TaskRepository,
     private val profiles: PlanningProfileRepository,
+    private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
     suspend fun canUndo(originalMutationId: String): UndoCapability {
         val original = history.mutation(originalMutationId) ?: return UndoCapability.NotFound
@@ -89,6 +91,11 @@ class UndoService(
                 noMutation = UndoResult.Conflict(conflicts.distinct().sorted())
                 return@executeIfAny noMutation!!
             }
+            val blocked = conflictWritePolicy.blocks(actions.map { it.toMutation() })
+            if (blocked.isNotEmpty()) {
+                noMutation = UndoResult.BlockedBySyncConflict(blocked)
+                return@executeIfAny noMutation!!
+            }
             actions.forEach { action ->
                 when (action) {
                     is InverseAction.EventRestore -> { val value = action.after.toDomain(); events.upsert(value); record(EventPut(action.before, value.toSemanticImage())) }
@@ -118,4 +125,12 @@ private sealed interface InverseAction {
     data class ProfileRestore(val before: dev.agenticscheduler.sync.PlanningProfileImage, val after: dev.agenticscheduler.sync.PlanningProfileImage) : InverseAction
     data class FocusRestore(val before: dev.agenticscheduler.sync.FocusBlockImage?, val after: dev.agenticscheduler.sync.FocusBlockImage) : InverseAction
     data class FocusDelete(val value: dev.agenticscheduler.sync.FocusBlockImage) : InverseAction
+}
+
+private fun InverseAction.toMutation(): EntityMutation = when (this) {
+    is InverseAction.EventRestore -> EventPut(before, after)
+    is InverseAction.TaskRestore -> TaskPut(before, after)
+    is InverseAction.ProfileRestore -> PlanningProfilePut(before, after)
+    is InverseAction.FocusRestore -> FocusBlockPut(before, after)
+    is InverseAction.FocusDelete -> FocusBlockDelete(value)
 }

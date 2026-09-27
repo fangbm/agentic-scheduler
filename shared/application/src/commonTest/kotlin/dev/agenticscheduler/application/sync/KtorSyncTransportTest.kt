@@ -144,7 +144,6 @@ class KtorSyncTransportTest {
         val rotations = lifecycle.rotationPackages()
         assertEquals("rotation-1", rotations.single().rotationId)
         assertEquals("device", rotations.single().targetDeviceId)
-        lifecycle.revokeDevice("target")
         assertEquals(null, requests.first().second)
         assertTrue(requests.drop(1).all { it.second == "Bearer ${credential.value}" })
         client.close()
@@ -170,6 +169,56 @@ class KtorSyncTransportTest {
         assertEquals(7L, bootstrap.counter)
         assertEquals("AQI", bootstrap.recoveryEnvelopeBase64Url)
         assertEquals(null, authorization)
+        client.close()
+    }
+
+    @Test
+    fun `recovery enrollment classifies unauthorized proof and immutable identity conflict`() = runBlocking {
+        var status = HttpStatusCode.OK
+        var errorCode = "RECOVERY_REQUEST_CONFLICT"
+        val client = HttpClient(MockEngine) {
+            engine {
+                addHandler {
+                    respond(
+                        if (status == HttpStatusCode.Conflict) """{"code":"$errorCode"}"""
+                        else """{"accountId":"account","deviceId":"device"}""",
+                        status = status,
+                        headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
+                    )
+                }
+            }
+        }
+        val lifecycle = KtorSyncLifecycleTransport(client, "https://sync.example", { null })
+        val request = ClientRecoveryEnrollmentRequest(
+            accountId = "account",
+            requestId = "request",
+            targetDeviceId = "device",
+            hpkePublicKeyBase64Url = "AQI",
+            credentialHashBase64Url = "AwQ",
+            proofBase64Url = "BQY",
+            counter = 1,
+            nextProofHashBase64Url = "Bwg",
+        )
+
+        assertEquals(
+            ClientRecoveryEnrollmentCreated("account", "device"),
+            lifecycle.enrollWithRecovery(request),
+        )
+        status = HttpStatusCode.Unauthorized
+        assertEquals(
+            RecoveryEnrollmentRejection.InvalidProof,
+            assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
+        )
+        status = HttpStatusCode.Conflict
+        assertEquals(
+            RecoveryEnrollmentRejection.RequestIdentityConflict,
+            assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
+        )
+        errorCode = "TARGET_DEVICE_EXISTS"
+        assertEquals(
+            RecoveryEnrollmentRejection.TargetDeviceExists,
+            assertFailsWith<RecoveryEnrollmentRejected> { lifecycle.enrollWithRecovery(request) }.rejection,
+        )
         client.close()
     }
 

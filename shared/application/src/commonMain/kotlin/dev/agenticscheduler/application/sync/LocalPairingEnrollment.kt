@@ -46,6 +46,8 @@ sealed interface LocalEnrollmentState {
 /** Application port for the non-secret local enrollment metadata. */
 interface LocalEnrollmentRepository {
     suspend fun state(accountId: AccountId): LocalEnrollmentState?
+    /** One durable snapshot, so another ACTIVE account cannot masquerade as local-only. */
+    suspend fun states(): List<LocalEnrollmentState>
     suspend fun savePending(value: LocalEnrollmentState.Pending)
     suspend fun saveActive(value: LocalEnrollmentState.Active)
 }
@@ -68,6 +70,8 @@ sealed interface StartLocalEnrollmentResult {
         val credentialHashBase64Url: String,
     ) : StartLocalEnrollmentResult
     data class Existing(val state: LocalEnrollmentState) : StartLocalEnrollmentResult
+    /** Another account already owns this installation's single D8 v1 Personal space. */
+    data class RejectedActiveAccount(val activeAccountIds: List<AccountId>) : StartLocalEnrollmentResult
 }
 
 /** Creates a restart-safe local PENDING identity before its public request is relayed. */
@@ -81,8 +85,32 @@ class LocalEnrollmentRequestService(
         deviceId: DeviceId,
         enrollmentRequestId: EnrollmentRequestId,
     ): StartLocalEnrollmentResult {
-        val existing = enrollments.state(accountId)
-        if (existing != null) return StartLocalEnrollmentResult.Existing(existing)
+        // Use the repository's one-snapshot API so an existing PENDING row cannot
+        // short-circuit the single-active-account check after another account has
+        // become ACTIVE.
+        val states = enrollments.states()
+        val existing = states.firstOrNull { it.accountId == accountId }
+        val conflictingActiveAccounts = states
+            .asSequence()
+            .filterIsInstance<LocalEnrollmentState.Active>()
+            .map(LocalEnrollmentState.Active::accountId)
+            .filter { it != accountId }
+            .distinct()
+            .sortedBy(AccountId::value)
+            .toList()
+        if (conflictingActiveAccounts.isNotEmpty()) {
+            return StartLocalEnrollmentResult.RejectedActiveAccount(conflictingActiveAccounts)
+        }
+        // Preserve the established idempotent result for a same-account ACTIVE row.
+        if (existing is LocalEnrollmentState.Active) {
+            return StartLocalEnrollmentResult.Existing(existing)
+        }
+        if (existing is LocalEnrollmentState.Pending) {
+            // Revalidate the existing request at the durable transaction boundary;
+            // another activation may have raced the snapshot read above.
+            enrollments.savePending(existing)
+            return StartLocalEnrollmentResult.Existing(existing)
+        }
 
         val generated = privateKeys.generatePairingDeviceKey()
         val credential = try {

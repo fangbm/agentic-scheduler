@@ -74,6 +74,9 @@ data class ClientRecoveryEnrollmentRequest(
 @Serializable
 data class ClientRecoveryEnrollmentCreated(val accountId: String, val deviceId: String)
 
+@Serializable
+private data class ClientServerErrorResponse(val code: String)
+
 /** Frozen SYN-005C recovery endpoints. The bootstrap request is deliberately unauthenticated. */
 interface RecoveryEnrollmentTransport {
     suspend fun recoveryBootstrap(accountId: String): ClientRecoveryBootstrapResponse
@@ -221,7 +224,25 @@ class KtorSyncLifecycleTransport(
             contentType(ContentType.Application.Json)
             setBody(json.encodeToString(ClientRecoveryEnrollmentRequest.serializer(), request))
         }
-        requireStatus(response, HttpStatusCode.Created)
+        when (response.status) {
+            // SYN-005D: a first successful enrollment is Created, while a
+            // completed request with the same immutable identity is an
+            // idempotent success and is returned as OK.
+            HttpStatusCode.Created,
+            HttpStatusCode.OK,
+            -> Unit
+            HttpStatusCode.Unauthorized -> throw RecoveryEnrollmentRejected(RecoveryEnrollmentRejection.InvalidProof)
+            HttpStatusCode.Conflict -> {
+                val code = decode(response.bodyAsText(), ClientServerErrorResponse.serializer()).code
+                val rejection = when (code) {
+                    "RECOVERY_REQUEST_CONFLICT" -> RecoveryEnrollmentRejection.RequestIdentityConflict
+                    "TARGET_DEVICE_EXISTS" -> RecoveryEnrollmentRejection.TargetDeviceExists
+                    else -> throw SyncTransportException("HTTP_${response.status.value}:$code")
+                }
+                throw RecoveryEnrollmentRejected(rejection)
+            }
+            else -> requireStatus(response, HttpStatusCode.Created)
+        }
         return decode(response.bodyAsText(), ClientRecoveryEnrollmentCreated.serializer())
     }
 
@@ -258,11 +279,6 @@ class KtorSyncLifecycleTransport(
         )
     }
 
-    suspend fun revokeDevice(deviceId: String) {
-        val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke") { authorization() }
-        requireStatus(response, HttpStatusCode.OK)
-    }
-
     override suspend fun revokeDeviceAndRotate(deviceId: String, request: ClientAtomicRevocationRequest) {
         val response = client.post("$baseUrl/v1/devices/${encodePathSegment(deviceId)}/revoke-and-rotate") {
             authorization()
@@ -287,3 +303,12 @@ class KtorSyncLifecycleTransport(
         throw SyncTransportException("MALFORMED_SERVER_RESPONSE", failure)
     }
 }
+
+enum class RecoveryEnrollmentRejection {
+    InvalidProof,
+    RequestIdentityConflict,
+    TargetDeviceExists,
+}
+
+/** A definitive SYN-005D rejection. It must not be treated as a lost response and retried. */
+class RecoveryEnrollmentRejected(val rejection: RecoveryEnrollmentRejection) : RuntimeException(rejection.name)

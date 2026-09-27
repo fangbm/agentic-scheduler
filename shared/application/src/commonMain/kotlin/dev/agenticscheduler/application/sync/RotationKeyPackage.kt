@@ -13,6 +13,7 @@ import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncSpaceKeyPackageV1
 import dev.agenticscheduler.sync.decodeCanonicalBase64Url
 import dev.agenticscheduler.sync.encodeCanonicalBase64Url
+import kotlinx.coroutines.CancellationException
 
 data class RotationKeyPackageBuildRequest(
     val accountId: AccountId,
@@ -404,6 +405,7 @@ private class RotationByteBuilder {
 sealed interface RotationPackageCatchUpResult {
     data class Completed(val outcomes: List<RotationPackageOutcome>) : RotationPackageCatchUpResult
     data object FetchFailed : RotationPackageCatchUpResult
+    data class FetchRejected(val reason: String) : RotationPackageCatchUpResult
     data class InvalidRelayPackage(val rotationId: String) : RotationPackageCatchUpResult
     data class ApplyFailed(val rotationId: String, val result: RotationKeyPackageApplyResult) : RotationPackageCatchUpResult
 }
@@ -425,6 +427,15 @@ class RotationPackageCatchUpService(
     suspend fun catchUp(): RotationPackageCatchUpResult {
         val remote = try {
             transport.rotationPackages()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: SyncTransportException) {
+            return when (val uploadFailure = failure.asUploadFailure()) {
+                is SyncUploadResult.RetryableFailure -> RotationPackageCatchUpResult.FetchFailed
+                is SyncUploadResult.NonRetryableFailure -> RotationPackageCatchUpResult.FetchRejected(uploadFailure.detail)
+                is SyncUploadResult.IntegrityConflict -> RotationPackageCatchUpResult.FetchRejected(uploadFailure.detail)
+                is SyncUploadResult.Stored, is SyncUploadResult.Idempotent -> error("Transport exception cannot map to a successful upload result.")
+            }
         } catch (_: Throwable) {
             return RotationPackageCatchUpResult.FetchFailed
         }

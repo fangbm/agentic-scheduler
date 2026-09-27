@@ -117,6 +117,49 @@ class SyncServerRoutesTest {
         assertEquals(HttpStatusCode.Created, response.status)
     }
 
+    @Test
+    fun `recovery enrollment maps retry conflict and invalid proof outcomes`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig()) }
+        val bytes = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+        val body = """{"accountId":"account","requestId":"recovery-1","targetDeviceId":"recovered","hpkePublicKeyBase64Url":"$bytes","credentialHashBase64Url":"$bytes","proofBase64Url":"$bytes","counter":1,"nextProofHashBase64Url":"$bytes"}"""
+
+        repository.recoveryEnrollmentResult = RecoveryEnrollmentResult.Idempotent("account", "recovered")
+        assertEquals(HttpStatusCode.OK, client.post("/v1/recovery/enroll") {
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }.status)
+
+        repository.recoveryEnrollmentResult = RecoveryEnrollmentResult.RequestIdentityConflict
+        val conflict = client.post("/v1/recovery/enroll") {
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+        assertEquals(HttpStatusCode.Conflict, conflict.status)
+        assertTrue(conflict.bodyAsText().contains("RECOVERY_REQUEST_CONFLICT"))
+
+        repository.recoveryEnrollmentResult = RecoveryEnrollmentResult.InvalidProof
+        assertEquals(HttpStatusCode.Unauthorized, client.post("/v1/recovery/enroll") {
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }.status)
+    }
+
+    @Test
+    fun `lifecycle request bodies are bounded before recovery state is read`() = testApplication {
+        val repository = FakeRepository()
+        application { syncServerModule(repository, testConfig().copy(maxRequestBodyBytes = 64)) }
+
+        val response = client.put("/v1/recovery/proof") {
+            header(HttpHeaders.Authorization, "Bearer credential")
+            contentType(ContentType.Application.Json)
+            setBody("""{"proofHashBase64Url":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","counter":0}""" + " ".repeat(80))
+        }
+
+        assertEquals(HttpStatusCode.PayloadTooLarge, response.status)
+        assertEquals(null, repository.registeredRecoveryProof())
+    }
+
 
     @Test
     fun `active device directory is authenticated deterministic and fails closed when incomplete`() = testApplication {
@@ -171,7 +214,7 @@ class SyncServerRoutesTest {
     }
 
     @Test
-    fun `recovery envelope is opaque and device revocation is account-bound`() = testApplication {
+    fun `recovery envelope is opaque and credential-only revocation is unavailable`() = testApplication {
         val repository = FakeRepository()
         application { syncServerModule(repository, testConfig()) }
         val stored = client.put("/v1/recovery/envelope") {
@@ -183,10 +226,7 @@ class SyncServerRoutesTest {
         val fetched = client.get("/v1/recovery/envelope") { header(HttpHeaders.Authorization, "Bearer credential") }
         assertEquals(HttpStatusCode.OK, fetched.status)
         assertTrue(fetched.bodyAsText().contains("AQI"))
-        assertEquals(HttpStatusCode.OK, client.post("/v1/devices/other/revoke") {
-            header(HttpHeaders.Authorization, "Bearer credential")
-        }.status)
-        assertEquals(HttpStatusCode.BadRequest, client.post("/v1/devices/device/revoke") {
+        assertEquals(HttpStatusCode.NotFound, client.post("/v1/devices/other/revoke") {
             header(HttpHeaders.Authorization, "Bearer credential")
         }.status)
     }
@@ -265,6 +305,7 @@ class SyncServerRoutesTest {
         private var recoveryProof: RecoveryProofRegistrationRequest? = null
         private var consumed = false
         var incompleteDirectory = false
+        var recoveryEnrollmentResult: RecoveryEnrollmentResult = RecoveryEnrollmentResult.Created("account", "device")
         override fun authenticate(credential: String): AuthenticatedDevice? =
             if (credential == "credential") AuthenticatedDevice("account", "device") else null
 
@@ -330,7 +371,7 @@ class SyncServerRoutesTest {
         }
 
         override fun enrollWithRecovery(request: RecoveryEnrollmentRequestWire): RecoveryEnrollmentResult =
-            RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
+            recoveryEnrollmentResult
 
         override fun activeDevices(actor: AuthenticatedDevice): ActiveDeviceDirectoryResult =
             if (incompleteDirectory) ActiveDeviceDirectoryResult.IncompleteIdentity
@@ -349,10 +390,7 @@ class SyncServerRoutesTest {
 
         override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = recoveryBytes
 
-        override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult = when (targetDeviceId) {
-            actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
-            "other" -> DeviceRevocationResult.Revoked
-            else -> DeviceRevocationResult.NotFound
-        }
+        fun registeredRecoveryProof(): RecoveryProofRegistrationRequest? = recoveryProof
+
     }
 }

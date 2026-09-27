@@ -25,7 +25,10 @@ import kotlinx.coroutines.flow.map
 
 /** A projected source-fact read or D8-P02's explicit fail-closed result. */
 sealed interface ConflictAwareRead<out T> {
-    data class Projected<T>(val value: T) : ConflictAwareRead<T>
+    data class Projected<T>(
+        val value: T,
+        val syncConflictRefs: List<SyncConflictProjectionRef> = emptyList(),
+    ) : ConflictAwareRead<T>
     data class Unprojectable(val conflictIds: List<String>, val reason: String) : ConflictAwareRead<Nothing>
 }
 
@@ -44,56 +47,60 @@ class ConflictAwareSourceFactReadService(
     private val sourceFacts: ConflictAwareSourceFactQuery,
 ) : CalendarQueryService {
     fun observeTasks(): Flow<ConflictAwareRead<ImmutableList<Task>>> =
-        tasks.observeTasks().map { values ->
-            projectCollection(EntityKind.TASK, values, { TaskPut(null, it.toSemanticImage()) }) {
-                (it as TaskPut).after.toDomain()
-            }
+        observeCollection(tasks.observeTasks(), EntityKind.TASK, { TaskPut(null, it.toSemanticImage()) }) {
+            (it as TaskPut).after.toDomain()
         }
 
     fun observeFocusBlocks(): Flow<ConflictAwareRead<ImmutableList<FocusBlock>>> =
-        tasks.observeFocusBlocks().map { values ->
-            projectCollection(EntityKind.FOCUS_BLOCK, values, { FocusBlockPut(null, it.toSemanticImage()) }) {
-                (it as FocusBlockPut).after.toDomain()
-            }
+        observeCollection(tasks.observeFocusBlocks(), EntityKind.FOCUS_BLOCK, { FocusBlockPut(null, it.toSemanticImage()) }) {
+            (it as FocusBlockPut).after.toDomain()
         }
 
     fun observePlanningProfiles(): Flow<ConflictAwareRead<ImmutableList<PlanningProfile>>> =
-        profiles.observeAll().map { values ->
-            projectCollection(EntityKind.PLANNING_PROFILE, values, { PlanningProfilePut(null, it.toSemanticImage()) }) {
-                (it as PlanningProfilePut).after.toDomain()
-            }
+        observeCollection(profiles.observeAll(), EntityKind.PLANNING_PROFILE, { PlanningProfilePut(null, it.toSemanticImage()) }) {
+            (it as PlanningProfilePut).after.toDomain()
         }
 
     suspend fun event(id: EventId): ConflictAwareRead<Event?> {
         val durable = events.get(id) ?: return ConflictAwareRead.Projected(null)
-        return when (val projected = sourceFacts.project(EventPut(null, durable.toSemanticImage()))) {
-            is ConflictProjection.Projected -> ConflictAwareRead.Projected((projected.mutation as? EventPut)?.after?.toDomain())
+        val projected = sourceFacts.project(EventPut(null, durable.toSemanticImage()))
+        return when (projected) {
+            is ConflictProjection.Projected -> ConflictAwareRead.Projected(
+                (projected.mutation as? EventPut)?.after?.toDomain(),
+                projected.openConflictIds.takeIf { it.isNotEmpty() }?.let {
+                    listOf(SyncConflictProjectionRef(EntityKind.EVENT, id.value, it.distinct().sorted()))
+                }.orEmpty(),
+            )
             is ConflictProjection.Unprojectable -> ConflictAwareRead.Unprojectable(projected.conflictIds, projected.reason)
         }
     }
 
     override fun observe(viewport: CalendarViewport): Flow<CalendarProjectionResult> {
         val academicBase = combine(
-            academics.observeSemesters().map { values -> projectCollection(EntityKind.SEMESTER, values, { SemesterPut(null, it.toSemanticImage()) }) { (it as SemesterPut).after.toDomain() } },
-            academics.observeCourses().map { values -> projectCollection(EntityKind.COURSE, values, { CoursePut(null, it.toSemanticImage()) }) { (it as CoursePut).after.toDomain() } },
-            academics.observeCourseScheduleRules().map { values -> projectCollection(EntityKind.COURSE_SCHEDULE_RULE, values, { CourseScheduleRulePut(null, it.toSemanticImage()) }) { (it as CourseScheduleRulePut).after.toDomain() } },
-            academics.observePeriodTemplates().map { values -> projectCollection(EntityKind.PERIOD_TEMPLATE, values, { PeriodTemplatePut(null, it.toSemanticImage()) }) { (it as PeriodTemplatePut).after.toDomain() } },
-            academics.observeAcademicHolidays().map { values -> projectCollection(EntityKind.ACADEMIC_HOLIDAY, values, { AcademicHolidayPut(null, it.toSemanticImage()) }) { (it as AcademicHolidayPut).after.toDomain() } },
+            observeCollection(academics.observeSemesters(), EntityKind.SEMESTER, { SemesterPut(null, it.toSemanticImage()) }) { (it as SemesterPut).after.toDomain() },
+            observeCollection(academics.observeCourses(), EntityKind.COURSE, { CoursePut(null, it.toSemanticImage()) }) { (it as CoursePut).after.toDomain() },
+            observeCollection(academics.observeCourseScheduleRules(), EntityKind.COURSE_SCHEDULE_RULE, { CourseScheduleRulePut(null, it.toSemanticImage()) }) { (it as CourseScheduleRulePut).after.toDomain() },
+            observeCollection(academics.observePeriodTemplates(), EntityKind.PERIOD_TEMPLATE, { PeriodTemplatePut(null, it.toSemanticImage()) }) { (it as PeriodTemplatePut).after.toDomain() },
+            observeCollection(academics.observeAcademicHolidays(), EntityKind.ACADEMIC_HOLIDAY, { AcademicHolidayPut(null, it.toSemanticImage()) }) { (it as AcademicHolidayPut).after.toDomain() },
         ) { semesters, courses, rules, templates, holidays ->
             CalendarAcademicFacts(semesters, courses, rules, templates, holidays)
         }
         val academic = combine(
             academicBase,
-            academics.observeCourseOccurrenceExceptions().map { values -> projectCollection(EntityKind.COURSE_OCCURRENCE_EXCEPTION, values, { CourseOccurrenceExceptionPut(null, it.toSemanticImage()) }) { (it as CourseOccurrenceExceptionPut).after.toDomain() } },
-            academics.observeExams().map { values -> projectCollection(EntityKind.EXAM, values, { ExamPut(null, it.toSemanticImage()) }) { (it as ExamPut).after.toDomain() } },
+            observeCollection(academics.observeCourseOccurrenceExceptions(), EntityKind.COURSE_OCCURRENCE_EXCEPTION, { CourseOccurrenceExceptionPut(null, it.toSemanticImage()) }) { (it as CourseOccurrenceExceptionPut).after.toDomain() },
+            observeCollection(academics.observeExams(), EntityKind.EXAM, { ExamPut(null, it.toSemanticImage()) }) { (it as ExamPut).after.toDomain() },
         ) { base, exceptions, exams -> base.copy(exceptions = exceptions, exams = exams) }
         return combine(
-            events.observeAll().map { values -> projectCollection(EntityKind.EVENT, values, { EventPut(null, it.toSemanticImage()) }) { (it as EventPut).after.toDomain() } },
+            observeCollection(events.observeAll(), EntityKind.EVENT, { EventPut(null, it.toSemanticImage()) }) { (it as EventPut).after.toDomain() },
             observeFocusBlocks(),
             academic,
         ) { eventValues, focusBlocks, snapshot ->
             val reads: List<ConflictAwareRead<*>> = listOf(eventValues, focusBlocks) + snapshot.reads()
             val failures = reads.filterIsInstance<ConflictAwareRead.Unprojectable>()
+            val syncConflictRefs = reads.filterIsInstance<ConflictAwareRead.Projected<*>>()
+                .flatMap { it.syncConflictRefs }
+                .distinctBy { it.entityKind to it.entityId }
+                .sortedWith(compareBy(SyncConflictProjectionRef::entityKind, SyncConflictProjectionRef::entityId))
             if (failures.isNotEmpty()) {
                 CalendarProjectionResult(
                     emptyList<dev.agenticscheduler.application.calendar.CalendarItem>().toImmutableList(),
@@ -102,6 +109,7 @@ class ConflictAwareSourceFactReadService(
                         .distinct()
                         .sortedBy { it.toString() }
                         .toImmutableList(),
+                    syncConflictRefs,
                 )
             } else {
                 project(
@@ -109,10 +117,18 @@ class ConflictAwareSourceFactReadService(
                     requireNotNull(eventValues.valueOrNull()),
                     requireNotNull(focusBlocks.valueOrNull()),
                     snapshot.toProjectionInput(),
-                )
+                ).copy(syncConflictRefs = syncConflictRefs)
             }
         }
     }
+
+    private fun <D, T> observeCollection(
+        source: Flow<ImmutableList<D>>,
+        entityKind: EntityKind,
+        toMutation: (D) -> EntityMutation,
+        toDomain: (EntityMutation) -> T,
+    ): Flow<ConflictAwareRead<ImmutableList<T>>> = combine(source, sourceFacts.observeConflicts()) { values, _ -> values }
+        .map { values -> projectCollection(entityKind, values, toMutation, toDomain) }
 
     private suspend fun <T, D> projectCollection(
         entityKind: EntityKind,
@@ -120,7 +136,10 @@ class ConflictAwareSourceFactReadService(
         toMutation: (D) -> EntityMutation,
         toDomain: (EntityMutation) -> T,
     ): ConflictAwareRead<ImmutableList<T>> = when (val projected = sourceFacts.projectCollection(entityKind, durable.map(toMutation))) {
-        is ConflictCollectionProjection.Projected -> ConflictAwareRead.Projected(projected.mutations.map(toDomain).toImmutableList())
+        is ConflictCollectionProjection.Projected -> ConflictAwareRead.Projected(
+            projected.mutations.map(toDomain).toImmutableList(),
+            projected.syncConflictRefs,
+        )
         is ConflictCollectionProjection.Unprojectable -> ConflictAwareRead.Unprojectable(projected.conflictIds, projected.reason)
     }
 }

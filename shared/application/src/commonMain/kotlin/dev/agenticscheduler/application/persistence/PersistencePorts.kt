@@ -18,6 +18,7 @@ import dev.agenticscheduler.sync.SyncConflict
 import dev.agenticscheduler.sync.FocusBlockDelete
 import kotlinx.collections.immutable.ImmutableList
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 interface ApplicationTransactionRunner { suspend fun <T> inWriteTransaction(block: suspend () -> T): T }
 
@@ -79,6 +80,11 @@ interface SyncReceiveRepository {
     suspend fun saveConflict(value: SyncConflict)
     suspend fun conflict(conflictId: String): SyncConflict?
     suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict>
+
+    /** Emits persisted conflict snapshots; implementations should stay reactive when supported. */
+    fun observeConflicts(syncSpaceId: SyncSpaceId): Flow<List<SyncConflict>> = flow {
+        emit(conflicts(syncSpaceId))
+    }
 }
 
 /** Durable outbound ciphertext; retaining the exact envelope makes retries idempotent. */

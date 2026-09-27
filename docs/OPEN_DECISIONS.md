@@ -349,6 +349,42 @@ Decision: D8 v1 uses distinct RotationKeyPackageEnvelopeV1/PlaintextV1 with
 Source: docs/SYNC_SECURITY_DECISIONS.md SYN-007B
 ```
 
+## OD-048 — Recovery requestId reuse and changed-identity semantics
+
+```text
+Status: RESOLVED FOR D8 V1 (IMPLEMENTATION PENDING)
+Decision: a successful recovery enrollment requestId binds permanently to the
+          domain-separated fingerprint of accountId, requestId, targetDeviceId,
+          HPKE public key bytes, and DeviceCredential hash. Under one account
+          lock, require a valid CURRENT Recovery Secret proof before returning
+          any duplicate result. Identical fingerprint -> idempotent success
+          without consuming the proof; changed fingerprint -> 409 conflict;
+          invalid/stale proof -> 401. A client with a lost response refreshes
+          bootstrap, retains the original durable PENDING identity, and retries.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-005D
+```
+
+The PostgreSQL completion fingerprint migration and lost-ack/concurrency tests
+must pass before treating recovery idempotency as implemented. Legacy completion
+rows without provably recoverable full fingerprints fail closed.
+
+## OD-049 — Foreground idle sync trigger and frequency
+
+```text
+Status: RESOLVED FOR D8 V1 (IMPLEMENTATION PENDING)
+Decision: ACTIVE foreground clients poll with bounded HTTPS catch-up, including
+          remote-only changes: Desktop 60 s, Android 60 s, Wear OS 180 s,
+          approximately ±10% per-period jitter; startup/local-commit/foreground/
+          network-available signals still trigger immediate conflated single-
+          flight catch-up. Rotation packages must precede ordinary envelopes.
+          No background timing guarantee or WebSocket/push requirement in v1.
+Source: docs/SYNC_SECURITY_DECISIONS.md SYN-012A
+```
+
+Transient retry keeps bounded exponential backoff. Explicitly non-retryable
+auth/integrity failures stop automatic retries and surface a runtime status;
+coverage for idle remote-only writes and platform lifecycle is mandatory.
+
 ---
 
 # D9 Agent / context

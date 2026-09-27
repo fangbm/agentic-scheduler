@@ -71,6 +71,7 @@ class RevocationRotationServiceTest {
     private fun active() = LocalEnrollmentState.Active(account, self, EnrollmentRequestId("req-1"), public, SecretReference("secure://hpke/a"), space, SecretReference("secure://amk/old"), SecretReference("secure://credential/a"))
     private inner class Enrollments(var value: LocalEnrollmentState) : LocalEnrollmentRepository {
         override suspend fun state(accountId: AccountId) = value.takeIf { it.accountId == account }
+        override suspend fun states(): List<LocalEnrollmentState> = listOf(value)
         override suspend fun savePending(value: LocalEnrollmentState.Pending) = error("unused")
         override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
     }

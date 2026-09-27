@@ -67,7 +67,7 @@ class UndoServiceTest {
         val events = MemoryEvents(after)
         val history = MemoryHistory("00000000-0000-7000-8000-000000000020", EventPut(before.toSemanticImage(), after.toSemanticImage()))
         val journal = MemoryJournalForUndo()
-        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles()).undo(history.id)
+        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(history.id)
 
         assertIs<UndoResult.Applied>(result)
         assertEquals(before, events.value)
@@ -82,9 +82,30 @@ class UndoServiceTest {
         val events = MemoryEvents(event(id, "newer"))
         val history = MemoryHistory("00000000-0000-7000-8000-000000000020", EventPut(before.toSemanticImage(), after.toSemanticImage()))
         val journal = MemoryJournalForUndo()
-        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles()).undo(history.id)
+        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(history.id)
 
         assertEquals(UndoResult.Conflict(listOf(id.value)), result)
+        assertEquals(emptyList(), journal.mutations)
+    }
+
+    @Test fun `undo cannot write an open conflicted semantic group`() = kotlinx.coroutines.runBlocking {
+        val id = EventId("00000000-0000-7000-8000-000000000010")
+        val before = event(id, "before"); val after = event(id, "after")
+        val events = MemoryEvents(after)
+        val history = MemoryHistory("00000000-0000-7000-8000-000000000020", EventPut(before.toSemanticImage(), after.toSemanticImage()))
+        val journal = MemoryJournalForUndo()
+        val block = SyncConflictWriteBlock("conflict-1", EntityKind.EVENT, id.value, listOf("title"))
+        val policy = SyncConflictWritePolicy { proposed ->
+            val inverse = assertIs<EventPut>(proposed.single())
+            assertEquals(after.toSemanticImage(), inverse.before)
+            assertEquals(before.toSemanticImage(), inverse.after)
+            listOf(block)
+        }
+
+        val result = UndoService(coordinator(journal), history, events, MemoryTasksForUndo(), MemoryProfiles(), policy).undo(history.id)
+
+        assertEquals(UndoResult.BlockedBySyncConflict(listOf(block)), result)
+        assertEquals(after, events.value)
         assertEquals(emptyList(), journal.mutations)
     }
 
@@ -93,7 +114,7 @@ class UndoServiceTest {
         val taskBefore = task(taskId, "before"); val taskAfter = task(taskId, "after")
         val taskJournal = MemoryJournalForUndo()
         val tasks = MemoryTasksForUndo(taskAfter)
-        val taskResult = UndoService(coordinator(taskJournal), MemoryHistory("00000000-0000-7000-8000-000000000041", TaskPut(taskBefore.toSemanticImage(), taskAfter.toSemanticImage())), MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000042"), "unused")), tasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000041")
+        val taskResult = UndoService(coordinator(taskJournal), MemoryHistory("00000000-0000-7000-8000-000000000041", TaskPut(taskBefore.toSemanticImage(), taskAfter.toSemanticImage())), MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000042"), "unused")), tasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo("00000000-0000-7000-8000-000000000041")
         assertIs<UndoResult.Applied>(taskResult)
         assertEquals(taskBefore, tasks.task)
         assertIs<TaskPut>(taskJournal.mutations.single().operation.orderedMutations.single())
@@ -102,7 +123,7 @@ class UndoServiceTest {
         val profileBefore = PlanningProfile(profileId, "before", PlanningProfileConfiguration.Unconfigured)
         val profileAfter = PlanningProfile(profileId, "after", PlanningProfileConfiguration.Unconfigured)
         val profiles = MemoryProfiles(profileAfter); val profileJournal = MemoryJournalForUndo()
-        val profileResult = UndoService(coordinator(profileJournal), MemoryHistory("00000000-0000-7000-8000-000000000044", PlanningProfilePut(profileBefore.toSemanticImage(), profileAfter.toSemanticImage())), MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000045"), "unused")), MemoryTasksForUndo(), profiles).undo("00000000-0000-7000-8000-000000000044")
+        val profileResult = UndoService(coordinator(profileJournal), MemoryHistory("00000000-0000-7000-8000-000000000044", PlanningProfilePut(profileBefore.toSemanticImage(), profileAfter.toSemanticImage())), MemoryEvents(event(EventId("00000000-0000-7000-8000-000000000045"), "unused")), MemoryTasksForUndo(), profiles, NoActiveSyncSpaceWritePolicy).undo("00000000-0000-7000-8000-000000000044")
         assertIs<UndoResult.Applied>(profileResult)
         assertEquals(profileBefore, profiles.value)
         assertIs<PlanningProfilePut>(profileJournal.mutations.single().operation.orderedMutations.single())
@@ -116,22 +137,22 @@ class UndoServiceTest {
 
         val createTasks = MemoryTasksForUndo(focus = original)
         val createJournal = MemoryJournalForUndo()
-        assertIs<UndoResult.Applied>(UndoService(coordinator(createJournal), MemoryHistory("00000000-0000-7000-8000-000000000051", FocusBlockPut(null, original.toSemanticImage())), unusedEvents(), createTasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000051"))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(createJournal), MemoryHistory("00000000-0000-7000-8000-000000000051", FocusBlockPut(null, original.toSemanticImage())), unusedEvents(), createTasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo("00000000-0000-7000-8000-000000000051"))
         assertNull(createTasks.focus)
         assertIs<FocusBlockDelete>(createJournal.mutations.single().operation.orderedMutations.single())
 
         val moveTasks = MemoryTasksForUndo(focus = moved)
-        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), MemoryHistory("00000000-0000-7000-8000-000000000052", FocusBlockPut(original.toSemanticImage(), moved.toSemanticImage())), unusedEvents(), moveTasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000052"))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), MemoryHistory("00000000-0000-7000-8000-000000000052", FocusBlockPut(original.toSemanticImage(), moved.toSemanticImage())), unusedEvents(), moveTasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo("00000000-0000-7000-8000-000000000052"))
         assertEquals(original, moveTasks.focus)
 
         val resizeTasks = MemoryTasksForUndo(focus = resized)
-        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), MemoryHistory("00000000-0000-7000-8000-000000000053", FocusBlockPut(moved.toSemanticImage(), resized.toSemanticImage())), unusedEvents(), resizeTasks, MemoryProfiles()).undo("00000000-0000-7000-8000-000000000053"))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), MemoryHistory("00000000-0000-7000-8000-000000000053", FocusBlockPut(moved.toSemanticImage(), resized.toSemanticImage())), unusedEvents(), resizeTasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo("00000000-0000-7000-8000-000000000053"))
         assertEquals(moved, resizeTasks.focus)
 
         val deleteId = "00000000-0000-7000-8000-000000000054"
         val deleteTasks = MemoryTasksForUndo()
         val deleteHistory = MemoryHistory(deleteId, FocusBlockDelete(original.toSemanticImage()), tombstone = FocusBlockTombstone(original.id.value, dev.agenticscheduler.sync.MutationId(deleteId), DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000001", 1))))
-        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), deleteHistory, unusedEvents(), deleteTasks, MemoryProfiles()).undo(deleteId))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(MemoryJournalForUndo()), deleteHistory, unusedEvents(), deleteTasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(deleteId))
         assertEquals(original, deleteTasks.focus)
     }
 
@@ -142,14 +163,14 @@ class UndoServiceTest {
         val successTasks = MemoryTasksForUndo(focus = first, extraFocus = second)
         val successJournal = MemoryJournalForUndo()
         val original = MemoryHistory(id, FocusBlockPut(null, first.toSemanticImage()), extraMutations = listOf(FocusBlockPut(null, second.toSemanticImage())))
-        assertIs<UndoResult.Applied>(UndoService(coordinator(successJournal), original, unusedEvents(), successTasks, MemoryProfiles()).undo(id))
+        assertIs<UndoResult.Applied>(UndoService(coordinator(successJournal), original, unusedEvents(), successTasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(id))
         assertNull(successTasks.focus); assertNull(successTasks.extraFocus)
         assertEquals(2, successJournal.mutations.single().operation.orderedMutations.size)
 
         val diverged = second.copy(flexibility = dev.agenticscheduler.domain.planning.Flexibility.HARD)
         val failedTasks = MemoryTasksForUndo(focus = first, extraFocus = diverged)
         val failedJournal = MemoryJournalForUndo()
-        assertEquals(UndoResult.Conflict(listOf(second.id.value)), UndoService(coordinator(failedJournal), original, unusedEvents(), failedTasks, MemoryProfiles()).undo(id))
+        assertEquals(UndoResult.Conflict(listOf(second.id.value)), UndoService(coordinator(failedJournal), original, unusedEvents(), failedTasks, MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(id))
         assertEquals(first, failedTasks.focus); assertEquals(diverged, failedTasks.extraFocus); assertEquals(emptyList(), failedJournal.mutations)
     }
 
@@ -171,7 +192,7 @@ class UndoServiceTest {
         unsupported.forEachIndexed { index, operation ->
             val mutationId = "00000000-0000-7000-8000-0000000001${index.toString().padStart(2, '0')}"
             val journal = MemoryJournalForUndo()
-            val result = UndoService(coordinator(journal), MemoryHistory(mutationId, operation), unusedEvents(), MemoryTasksForUndo(), MemoryProfiles()).undo(mutationId)
+            val result = UndoService(coordinator(journal), MemoryHistory(mutationId, operation), unusedEvents(), MemoryTasksForUndo(), MemoryProfiles(), NoActiveSyncSpaceWritePolicy).undo(mutationId)
             assertIs<UndoResult.Unsupported>(result, operation.operationKind())
             assertEquals(emptyList(), journal.mutations, operation.operationKind())
         }

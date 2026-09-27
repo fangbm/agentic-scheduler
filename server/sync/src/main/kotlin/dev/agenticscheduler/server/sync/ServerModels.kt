@@ -153,13 +153,6 @@ sealed interface EnrollmentApprovalResult {
     data object MissingCredentialHash : EnrollmentApprovalResult
 }
 
-sealed interface DeviceRevocationResult {
-    data object Revoked : DeviceRevocationResult
-    data object NotFound : DeviceRevocationResult
-    data object AlreadyRevoked : DeviceRevocationResult
-    data object SelfRevocationDenied : DeviceRevocationResult
-}
-
 sealed interface AtomicRevocationResult {
     data object Applied : AtomicRevocationResult
     data object AlreadyApplied : AtomicRevocationResult
@@ -179,7 +172,9 @@ sealed interface RecoveryProofRegistrationResult {
 
 sealed interface RecoveryEnrollmentResult {
     data class Created(val accountId: String, val deviceId: String) : RecoveryEnrollmentResult
+    data class Idempotent(val accountId: String, val deviceId: String) : RecoveryEnrollmentResult
     data object InvalidProof : RecoveryEnrollmentResult
+    data object RequestIdentityConflict : RecoveryEnrollmentResult
     data object TargetDeviceAlreadyExists : RecoveryEnrollmentResult
     data object UnknownAccount : RecoveryEnrollmentResult
 }
@@ -240,5 +235,4 @@ interface ServerSecurityLifecycleRepository {
     fun revokeAndRotate(actor: AuthenticatedDevice, targetDeviceId: String, request: AtomicRevocationRequest): AtomicRevocationResult
     fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean
     fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray?
-    fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult
 }

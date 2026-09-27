@@ -207,6 +207,11 @@ class RoomSyncReceiveRepository(private val database: AgenticSchedulerDatabase) 
 
     override suspend fun conflicts(syncSpaceId: SyncSpaceId): List<SyncConflict> =
         database.syncReceiveDao().conflicts(syncSpaceId.value).map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+
+    override fun observeConflicts(syncSpaceId: SyncSpaceId): Flow<List<SyncConflict>> =
+        database.syncReceiveDao().observeConflicts(syncSpaceId.value).map { records ->
+            records.map { SyncReceiveStateCodec.decodeConflict(it.conflictJson) }
+        }
 }
 
 class RoomSyncOutboundEnvelopeRepository(private val database: AgenticSchedulerDatabase) : SyncOutboundEnvelopeRepository {
@@ -405,12 +410,85 @@ class RoomLocalEnrollmentRepository(private val database: AgenticSchedulerDataba
     override suspend fun state(accountId: dev.agenticscheduler.sync.AccountId): LocalEnrollmentState? =
         database.localPairingEnrollmentDao().state(accountId.value)?.toLocalEnrollmentState()
 
+    override suspend fun states(): List<LocalEnrollmentState> =
+        database.localPairingEnrollmentDao().states().map(LocalPairingEnrollmentRecord::toLocalEnrollmentState)
+
     override suspend fun savePending(value: LocalEnrollmentState.Pending) {
-        database.localPairingEnrollmentDao().save(value.toRecord())
+        database.withWriteTransaction {
+            val currentStates = database.localPairingEnrollmentDao().states()
+            val conflictingAccounts = currentStates
+                .asSequence()
+                .filter { it.status == "ACTIVE" && it.accountId != value.accountId.value }
+                .map { it.accountId }
+                .sorted()
+                .toList()
+            check(conflictingAccounts.isEmpty()) {
+                "A local installation can have only one ACTIVE Personal SyncSpace; existing ACTIVE accounts: " +
+                    conflictingAccounts.joinToString(", ")
+            }
+
+            val currentAccountState = currentStates.singleOrNull { it.accountId == value.accountId.value }
+            check(currentAccountState?.status != "ACTIVE") {
+                "An ACTIVE local enrollment cannot transition back to PENDING."
+            }
+
+            val pendingRecord = value.toRecord()
+            if (currentAccountState != null) {
+                check(currentAccountState.enrollmentRequestId == value.enrollmentRequestId.value) {
+                    "A different enrollment request cannot replace an existing PENDING enrollment."
+                }
+                check(currentAccountState == pendingRecord) {
+                    "An existing PENDING enrollment request is immutable."
+                }
+                return@withWriteTransaction
+            }
+
+            database.localPairingEnrollmentDao().save(pendingRecord)
+        }
     }
 
     override suspend fun saveActive(value: LocalEnrollmentState.Active) {
-        database.localPairingEnrollmentDao().save(value.toRecord())
+        database.withWriteTransaction {
+            val currentStates = database.localPairingEnrollmentDao().states()
+            val conflictingAccounts = currentStates
+                .asSequence()
+                .filter { it.status == "ACTIVE" && it.accountId != value.accountId.value }
+                .map { it.accountId }
+                .sorted()
+                .toList()
+            check(conflictingAccounts.isEmpty()) {
+                "A local installation can have only one ACTIVE Personal SyncSpace; existing ACTIVE accounts: " +
+                    conflictingAccounts.joinToString(", ")
+            }
+
+            val current = currentStates.singleOrNull { it.accountId == value.accountId.value }
+            if (current != null) {
+                check(current.deviceId == value.deviceId.value) {
+                    "An enrollment's device identity is immutable."
+                }
+                check(current.enrollmentRequestId == value.enrollmentRequestId.value) {
+                    "An enrollment request identity is immutable."
+                }
+                check(current.hpkePublicKeyBase64Url == value.hpkePublicKey.value) {
+                    "An enrollment's HPKE public identity is immutable."
+                }
+                check(current.hpkePrivateKeySecretRef == value.hpkePrivateKeyReference.value) {
+                    "An enrollment's HPKE private-key reference is immutable."
+                }
+                current.deviceCredentialSecretRef?.let { currentCredential ->
+                    check(currentCredential == value.deviceCredentialReference.value) {
+                        "An enrollment's DeviceCredential reference is immutable."
+                    }
+                }
+
+                if (current.status == "ACTIVE") {
+                    check(current.syncSpaceId == value.syncSpaceId.value) {
+                        "An ACTIVE enrollment's SyncSpace identity is immutable."
+                    }
+                }
+            }
+            database.localPairingEnrollmentDao().save(value.toRecord())
+        }
     }
 }
 

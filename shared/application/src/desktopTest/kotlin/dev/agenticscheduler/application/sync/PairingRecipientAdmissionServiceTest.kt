@@ -119,6 +119,7 @@ class PairingRecipientAdmissionServiceTest {
     private class MemoryEnrollments(initial: LocalEnrollmentState) : LocalEnrollmentRepository {
         var value: LocalEnrollmentState = initial
         override suspend fun state(accountId: AccountId): LocalEnrollmentState? = value.takeIf { it.accountId == accountId }
+        override suspend fun states(): List<LocalEnrollmentState> = listOf(value)
         override suspend fun savePending(value: LocalEnrollmentState.Pending) { this.value = value }
         override suspend fun saveActive(value: LocalEnrollmentState.Active) { this.value = value }
     }

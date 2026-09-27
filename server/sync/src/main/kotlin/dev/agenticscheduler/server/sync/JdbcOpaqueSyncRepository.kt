@@ -202,6 +202,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
             try {
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.NotFound
@@ -236,7 +237,6 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection EnrollmentApprovalResult.MissingCredentialHash
                 }
-                lockAccount(connection, request.accountId)
                 val targetExists = connection.prepareStatement("SELECT 1 FROM device WHERE device_id = ?").use { statement ->
                     statement.setString(1, request.targetDeviceId)
                     statement.executeQuery().use(ResultSet::next)
@@ -306,6 +306,7 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         dataSource.connection.use connection@{ connection ->
             connection.autoCommit = false
             try {
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection RecoveryProofRegistrationResult.NotFound
@@ -390,23 +391,20 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 val credentialHash = decodeCanonical(request.credentialHashBase64Url, 32)
                 val proof = decodeCanonical(request.proofBase64Url, 32)
                 val nextProofHash = decodeCanonical(request.nextProofHashBase64Url, 32)
-                val completed = connection.prepareStatement(
-                    "SELECT account_id, target_device_id FROM recovery_enrollment_request WHERE request_id = ?",
-                ).use { statement ->
-                    statement.setString(1, request.requestId)
-                    statement.executeQuery().use { rs ->
-                        if (!rs.next()) null else rs.getString("account_id") to rs.getString("target_device_id")
-                    }
-                }
-                if (completed != null) {
+                val fingerprint = recoveryEnrollmentFingerprint(
+                    accountId = request.accountId,
+                    requestId = request.requestId,
+                    targetDeviceId = request.targetDeviceId,
+                    hpkePublicKey = hpkePublicKey,
+                    credentialHash = credentialHash,
+                )
+
+                // The account lock serializes proof rotation and all recovery requests for this account.
+                // Never reveal whether requestId completed until the current proof has been verified.
+                if (!lockAccountIfExists(connection, request.accountId)) {
                     connection.rollback()
-                    return@connection if (completed.first == request.accountId && completed.second == request.targetDeviceId) {
-                        RecoveryEnrollmentResult.Created(request.accountId, request.targetDeviceId)
-                    } else {
-                        RecoveryEnrollmentResult.InvalidProof
-                    }
+                    return@connection RecoveryEnrollmentResult.UnknownAccount
                 }
-                lockAccount(connection, request.accountId)
                 val verifier = connection.prepareStatement(
                     "SELECT proof_hash, counter FROM recovery_proof WHERE account_id = ? FOR UPDATE",
                 ).use { statement ->
@@ -418,7 +416,53 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection RecoveryEnrollmentResult.UnknownAccount
                 }
-                if (request.counter != verifier.second || !MessageDigest.isEqual(verifier.first, sha256Bytes(proof)) || MessageDigest.isEqual(verifier.first, nextProofHash)) {
+                if (request.counter != verifier.second || !MessageDigest.isEqual(verifier.first, sha256Bytes(proof))) {
+                    connection.rollback()
+                    return@connection RecoveryEnrollmentResult.InvalidProof
+                }
+
+                val completed = connection.prepareStatement(
+                    "SELECT account_id, target_device_id, request_fingerprint " +
+                        "FROM recovery_enrollment_request WHERE request_id = ? FOR UPDATE",
+                ).use { statement ->
+                    statement.setString(1, request.requestId)
+                    statement.executeQuery().use { rs ->
+                        if (!rs.next()) null else CompletedRecoveryEnrollment(
+                            accountId = rs.getString("account_id"),
+                            targetDeviceId = rs.getString("target_device_id"),
+                            fingerprint = rs.getBytes("request_fingerprint"),
+                        )
+                    }
+                }
+                if (completed != null) {
+                    val sameIdentity = completed.accountId == request.accountId &&
+                        MessageDigest.isEqual(completed.fingerprint ?: ByteArray(0), fingerprint)
+                    val targetIsActive = if (sameIdentity) {
+                        connection.prepareStatement(
+                            "SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE",
+                        ).use { statement ->
+                            statement.setString(1, completed.targetDeviceId)
+                            statement.setString(2, request.accountId)
+                            statement.executeQuery().use { rs -> rs.next() && rs.getTimestamp("revoked_at") == null }
+                        }
+                    } else {
+                        false
+                    }
+                    connection.rollback()
+                    return@connection if (
+                        sameIdentity && targetIsActive
+                    ) {
+                        RecoveryEnrollmentResult.Idempotent(request.accountId, completed.targetDeviceId)
+                    } else {
+                        // Never report an old completion as success after its device was revoked
+                        // (or if its device row is unexpectedly missing). The client maps this
+                        // existing error to a non-ACTIVE outcome and retains its durable PENDING state.
+                        if (sameIdentity) RecoveryEnrollmentResult.TargetDeviceAlreadyExists
+                        else RecoveryEnrollmentResult.RequestIdentityConflict
+                    }
+                }
+
+                if (MessageDigest.isEqual(verifier.first, nextProofHash)) {
                     connection.rollback()
                     return@connection RecoveryEnrollmentResult.InvalidProof
                 }
@@ -460,10 +504,14 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     statement.setString(3, request.accountId)
                     statement.executeUpdate()
                 }
-                connection.prepareStatement("INSERT INTO recovery_enrollment_request(request_id, account_id, target_device_id) VALUES (?, ?, ?)").use { statement ->
+                connection.prepareStatement(
+                    "INSERT INTO recovery_enrollment_request(request_id, account_id, target_device_id, request_fingerprint) " +
+                        "VALUES (?, ?, ?, ?)",
+                ).use { statement ->
                     statement.setString(1, request.requestId)
                     statement.setString(2, request.accountId)
                     statement.setString(3, request.targetDeviceId)
+                    statement.setBytes(4, fingerprint)
                     statement.executeUpdate()
                 }
                 connection.commit()
@@ -544,11 +592,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                     connection.rollback()
                     return@connection AtomicRevocationResult.SelfRevocationDenied
                 }
+                lockAccount(connection, actor.accountId)
                 if (!activeAccountDevice(connection, actor)) {
                     connection.rollback()
                     return@connection AtomicRevocationResult.NotFound
                 }
-                lockAccount(connection, actor.accountId)
                 val envelope = decodeCanonical(request.recoveryEnvelopeBase64Url, null)
                 if (envelope.isEmpty() || request.packages.isEmpty()) {
                     connection.rollback()
@@ -652,16 +700,29 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
 
     override fun saveRecoveryEnvelope(actor: AuthenticatedDevice, envelopeBytes: ByteArray): Boolean =
         dataSource.connection.use connection@{ connection ->
-            if (!activeAccountDevice(connection, actor)) return@connection false
-            connection.prepareStatement(
-                "INSERT INTO recovery_envelope(account_id, envelope_bytes) VALUES (?, ?) " +
-                    "ON CONFLICT (account_id) DO UPDATE SET envelope_bytes = EXCLUDED.envelope_bytes, updated_at = CURRENT_TIMESTAMP",
-            ).use { statement ->
-                statement.setString(1, actor.accountId)
-                statement.setBytes(2, envelopeBytes)
-                statement.executeUpdate()
+            connection.autoCommit = false
+            try {
+                lockAccount(connection, actor.accountId)
+                if (!activeAccountDevice(connection, actor)) {
+                    connection.rollback()
+                    return@connection false
+                }
+                connection.prepareStatement(
+                    "INSERT INTO recovery_envelope(account_id, envelope_bytes) VALUES (?, ?) " +
+                        "ON CONFLICT (account_id) DO UPDATE SET envelope_bytes = EXCLUDED.envelope_bytes, updated_at = CURRENT_TIMESTAMP",
+                ).use { statement ->
+                    statement.setString(1, actor.accountId)
+                    statement.setBytes(2, envelopeBytes)
+                    statement.executeUpdate()
+                }
+                connection.commit()
+                true
+            } catch (failure: Throwable) {
+                connection.rollback()
+                throw failure
+            } finally {
+                connection.autoCommit = true
             }
-            true
         }
 
     override fun fetchRecoveryEnvelope(actor: AuthenticatedDevice): ByteArray? = dataSource.connection.use { connection ->
@@ -671,43 +732,6 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
             statement.executeQuery().use { rs -> if (rs.next()) rs.getBytes(1) else null }
         }
     }
-
-    override fun revokeDevice(actor: AuthenticatedDevice, targetDeviceId: String): DeviceRevocationResult =
-        dataSource.connection.use connection@{ connection ->
-            connection.autoCommit = false
-            try {
-                val result = when {
-                    targetDeviceId == actor.deviceId -> DeviceRevocationResult.SelfRevocationDenied
-                    !activeAccountDevice(connection, actor) -> DeviceRevocationResult.NotFound
-                    else -> {
-                        val state = connection.prepareStatement("SELECT revoked_at FROM device WHERE device_id = ? AND account_id = ? FOR UPDATE").use { statement ->
-                            statement.setString(1, targetDeviceId)
-                            statement.setString(2, actor.accountId)
-                            statement.executeQuery().use { rs -> if (!rs.next()) null else rs.getTimestamp("revoked_at") != null }
-                        }
-                        when {
-                            state == null -> DeviceRevocationResult.NotFound
-                            state -> DeviceRevocationResult.AlreadyRevoked
-                            else -> {
-                                connection.prepareStatement("UPDATE device SET revoked_at = CURRENT_TIMESTAMP WHERE device_id = ? AND account_id = ?").use { statement ->
-                                    statement.setString(1, targetDeviceId)
-                                    statement.setString(2, actor.accountId)
-                                    statement.executeUpdate()
-                                }
-                                DeviceRevocationResult.Revoked
-                            }
-                        }
-                    }
-                }
-                connection.commit()
-                result
-            } catch (failure: Throwable) {
-                connection.rollback()
-                throw failure
-            } finally {
-                connection.autoCommit = true
-            }
-        }
 
     override fun authenticate(credential: String): AuthenticatedDevice? {
         val hash = credentialHashOrNull(credential) ?: return null
@@ -731,7 +755,11 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
     ): UploadOutcome = dataSource.connection.use connection@{ connection ->
         connection.autoCommit = false
         try {
-            if (!isMember(connection, actor, spaceId)) return@connection UploadOutcome.NotFound
+            lockAccount(connection, actor.accountId)
+            if (!isMember(connection, actor, spaceId)) {
+                connection.rollback()
+                return@connection UploadOutcome.NotFound
+            }
             val existing = findEnvelope(connection, spaceId, envelope.mutationId)
             if (existing != null) {
                 connection.commit()
@@ -748,7 +776,10 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
                 statement.executeQuery().use { rs ->
                     if (!rs.next()) null else rs.getLong(1) + 1
                 }
-            } ?: return@connection UploadOutcome.NotFound
+            } ?: run {
+                connection.rollback()
+                return@connection UploadOutcome.NotFound
+            }
             connection.prepareStatement("UPDATE sync_space SET next_cursor = ? WHERE sync_space_id = ?").use { statement ->
                 statement.setLong(1, nextCursor)
                 statement.setString(2, spaceId)
@@ -842,6 +873,12 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         }
     }
 
+    private fun lockAccountIfExists(connection: Connection, accountId: String): Boolean =
+        connection.prepareStatement("SELECT account_id FROM account WHERE account_id = ? FOR UPDATE").use { statement ->
+            statement.setString(1, accountId)
+            statement.executeQuery().use(ResultSet::next)
+        }
+
     private fun findEnvelope(connection: Connection, spaceId: String, mutationId: String): ExistingEnvelope? =
         connection.prepareStatement(
             "SELECT server_cursor, sender_device_id, key_epoch, ciphertext " +
@@ -909,6 +946,37 @@ class JdbcOpaqueSyncRepository(private val dataSource: DataSource) : OpaqueSyncR
         updateString(targetDeviceId)
         updateBytes(envelope)
         packages.forEach { (deviceId, bytes) -> updateString(deviceId); updateBytes(bytes) }
+        return digest.digest()
+    }
+
+    private data class CompletedRecoveryEnrollment(
+        val accountId: String,
+        val targetDeviceId: String,
+        val fingerprint: ByteArray?,
+    )
+
+    /**
+     * Stable v1 identity digest. All tuple fields, including the domain/version label,
+     * use unsigned-length-prefixed UTF-8/raw bytes and SHA-256.
+     */
+    private fun recoveryEnrollmentFingerprint(
+        accountId: String,
+        requestId: String,
+        targetDeviceId: String,
+        hpkePublicKey: ByteArray,
+        credentialHash: ByteArray,
+    ): ByteArray {
+        val digest = MessageDigest.getInstance("SHA-256")
+        fun updateLengthPrefixed(value: ByteArray) {
+            digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(value.size).array())
+            digest.update(value)
+        }
+        updateLengthPrefixed("agentic-scheduler-recovery-enrollment-v1".toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(accountId.toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(requestId.toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(targetDeviceId.toByteArray(Charsets.UTF_8))
+        updateLengthPrefixed(hpkePublicKey)
+        updateLengthPrefixed(credentialHash)
         return digest.digest()
     }
 

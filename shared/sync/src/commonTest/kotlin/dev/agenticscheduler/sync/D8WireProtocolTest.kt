@@ -35,6 +35,23 @@ class D8WireProtocolTest {
         assertEquals("FutureMutation", assertIs<PayloadDecodeResult.UnsupportedMutation>(SyncWireCodec.decodePayload(payload.replace("\"type\":\"EventPut\"", "\"type\":\"FutureMutation\""))).discriminator)
     }
 
+    @Test fun `malformed payload version and discriminator JSON types return invalid`() {
+        val payload = SyncWireCodec.encodePayload(SyncPayloadV1(operation = operation()))
+
+        assertIs<PayloadDecodeResult.Invalid>(
+            SyncWireCodec.decodePayload(payload.replace("\"payloadVersion\":1", "\"payloadVersion\":{}")),
+        )
+        assertIs<PayloadDecodeResult.Invalid>(
+            SyncWireCodec.decodePayload(payload.replace("\"payloadVersion\":1", "\"payloadVersion\":\"1\"")),
+        )
+        assertIs<PayloadDecodeResult.Invalid>(
+            SyncWireCodec.decodePayload(payload.replace("\"type\":\"EventPut\"", "\"type\":{}")),
+        )
+        assertIs<PayloadDecodeResult.Invalid>(
+            SyncWireCodec.decodePayload(payload.replace("\"type\":\"USER\"", "\"type\":[]")),
+        )
+    }
+
     private fun operation() = SyncOperation(
         mutationId = "00000000-0000-7000-8000-000000000001",
         dvv = DvvSnapshot(emptyList(), DotSnapshot("00000000-0000-7000-8000-000000000002", 1)),
