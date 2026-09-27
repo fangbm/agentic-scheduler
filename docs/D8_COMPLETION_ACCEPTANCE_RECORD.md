@@ -1,6 +1,6 @@
 # D8 Completion Acceptance Record
 
-> Status: **REOPENED — PRODUCTION RUNTIME CLOSURE IN PROGRESS**
+> Status: **REOPENED — PRODUCTION RUNTIME CLOSURE VERIFIED; FINAL REVIEW PENDING**
 > Branch: `feature/d8-production-runtime-closure`
 > Updated: 2026-09-27
 
@@ -11,11 +11,11 @@ It does not start D9.
 
 | Acceptance path | Evidence | Status |
 | --- | --- | --- |
-| Recovery enrollment request identity | Server V9 persists the domain-separated immutable request fingerprint. Under the account lock it validates the current proof before completion lookup; same identity returns `200 OK` idempotently without advancing the proof, changed identity returns `409`, and invalid proof returns `401`. Client retry retains the original durable PENDING identity, refreshes bootstrap and rebuilds its proof after an ambiguous response. | IMPLEMENTED — targeted source compilation passed locally; PostgreSQL execution pending CI because the local Docker daemon is unavailable. |
-| Foreground idle catch-up | One conflated/single-flight trigger combines startup, committed local writes, foreground/network signals and foreground-only periodic polls: Desktop/Android 60 s and Wear 180 s, each with bounded ±10% jitter. Each cycle catches rotation packages up before ordinary encrypted envelopes; transient failures back off while auth/integrity failures stop automatic retry. | IMPLEMENTED — targeted source compilation passed locally; runtime test execution pending CI because this Windows host cannot launch Gradle test workers. |
+| Recovery enrollment request identity | Server V9 persists the domain-separated immutable request fingerprint. Under the account lock it validates the current proof before completion lookup; same identity returns `200 OK` idempotently without advancing the proof, changed identity returns `409`, and invalid proof returns `401`. Client retry retains the original durable PENDING identity, refreshes bootstrap and rebuilds its proof after an ambiguous response. | PASS — PR #10 CI [#36282687998](https://github.com/fangbm/agentic-scheduler/actions/runs/36282687998) executed the Linux PostgreSQL/Secret Service build-and-test path on `b9a0935`. |
+| Foreground idle catch-up | One conflated/single-flight trigger combines startup, committed local writes, foreground/network signals and foreground-only periodic polls: Desktop/Android 60 s and Wear 180 s, each with bounded ±10% jitter. Each cycle catches rotation packages up before ordinary encrypted envelopes; transient failures back off while auth/integrity failures stop automatic retry. A terminal auth/integrity failure is observable by all app hosts and exposes an explicit user retry. | PASS — the same PR #10 CI run passed Linux build/tests plus Windows Desktop/DPAPI, Android Keystore, and Wear Keystore verification on `b9a0935`. |
 
-The rows above are deliberately not marked PASS until the pull request's PostgreSQL and
-four-platform CI evidence has completed successfully.
+These two rows are verified on the current PR #10 runtime-closure code head. This does not
+restore D8 FINAL PASS or merge the Draft PR; final review remains separate.
 
 ## Executed before the decision amendments
 
