@@ -6,6 +6,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -47,7 +49,10 @@ class ActiveSyncCatchUpTrigger(
     private var runner: Job? = null
     private var periodic: Job? = null
     private var started = false
-    private val stoppedOnNonRetryableFailure = MutableStateFlow(false)
+    private val stoppedReasonState = MutableStateFlow<String?>(null)
+
+    /** The latest terminal sync failure, cleared when the user explicitly retries. */
+    val stoppedReason: StateFlow<String?> = stoppedReasonState.asStateFlow()
 
     init {
         require(pollingIntervalMillis == null || pollingIntervalMillis > 0)
@@ -96,7 +101,7 @@ class ActiveSyncCatchUpTrigger(
     /** An explicit user retry may restart a worker stopped by an auth/integrity failure. */
     fun retryNow() {
         if (started) {
-            stoppedOnNonRetryableFailure.value = false
+            stoppedReasonState.value = null
             requests.trySend(RequestKind.EXPLICIT_RETRY)
         }
     }
@@ -110,13 +115,13 @@ class ActiveSyncCatchUpTrigger(
     }
 
     private fun requestAutomaticCatchUp() {
-        if (started && !stoppedOnNonRetryableFailure.value) requests.trySend(RequestKind.AUTOMATIC)
+        if (started && stoppedReasonState.value == null) requests.trySend(RequestKind.AUTOMATIC)
     }
 
     private suspend fun runRequests() {
         for (request in requests) {
-            if (request == RequestKind.EXPLICIT_RETRY) stoppedOnNonRetryableFailure.value = false
-            if (stoppedOnNonRetryableFailure.value) continue
+            if (request == RequestKind.EXPLICIT_RETRY) stoppedReasonState.value = null
+            if (stoppedReasonState.value != null) continue
             var retryDelayMillis = initialRetryDelayMillis
             while (currentCoroutineContext().isActive) {
                 var unexpectedFailure = false
@@ -131,7 +136,7 @@ class ActiveSyncCatchUpTrigger(
                 }
                 val failure = result.nonRetryableFailure()
                 if (failure != null) {
-                    stoppedOnNonRetryableFailure.value = true
+                    stoppedReasonState.value = failure
                     onNonRetryableFailure(failure)
                     break
                 }
@@ -139,8 +144,8 @@ class ActiveSyncCatchUpTrigger(
 
                 // A new foreground/network signal interrupts the backoff.
                 val incoming = withTimeoutOrNull(retryDelayMillis) { requests.receive() }
-                if (incoming == RequestKind.EXPLICIT_RETRY) stoppedOnNonRetryableFailure.value = false
-                if (stoppedOnNonRetryableFailure.value) break
+                if (incoming == RequestKind.EXPLICIT_RETRY) stoppedReasonState.value = null
+                if (stoppedReasonState.value != null) break
                 retryDelayMillis = (retryDelayMillis * 2).coerceAtMost(maxRetryDelayMillis)
             }
         }

@@ -5,6 +5,8 @@ import android.net.ConnectivityManager
 import android.net.Network
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Column
+import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.Text
 import androidx.compose.runtime.collectAsState
@@ -49,6 +51,7 @@ import kotlinx.datetime.toLocalDateTime
 
 class WearMainActivity : ComponentActivity() {
     private val d8StartupState = mutableStateOf(D8StartupState.Activating)
+    private val d8SyncFailure = mutableStateOf<String?>(null)
     private val database by lazy { openAndroidDatabase(this) }
     private val d8RuntimeLazy = lazy {
         RoomD8RuntimeComposition(
@@ -95,7 +98,10 @@ class WearMainActivity : ComponentActivity() {
                                 d8Scope,
                                 pollingIntervalMillis = ActiveSyncCatchUpTrigger.WEAR_POLL_INTERVAL_MILLIS,
                                 onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; transient retry remains scheduled.") },
-                                onNonRetryableFailure = { reason -> android.util.Log.e("D8Sync", "Automatic sync stopped: $reason. Check account credentials or sync integrity before retrying.") },
+                                onNonRetryableFailure = { reason ->
+                                    runOnUiThread { d8SyncFailure.value = reason }
+                                    android.util.Log.e("D8Sync", "Automatic sync stopped: $reason")
+                                },
                             )
                             d8SyncTrigger = trigger
                             trigger.start()
@@ -122,7 +128,14 @@ class WearMainActivity : ComponentActivity() {
             val startupState by d8StartupState
             MaterialTheme {
                 when (startupState) {
-                    D8StartupState.Ready -> WearAgenda(calendarQueryService)
+                    D8StartupState.Ready -> WearAgenda(
+                        calendarQueryService,
+                        d8SyncFailure.value,
+                        onRetrySync = {
+                            d8SyncFailure.value = null
+                            d8SyncTrigger?.retryNow()
+                        },
+                    )
                     D8StartupState.Activating -> Text("Connecting to your secure sync space…")
                     D8StartupState.Blocked -> Text("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
                 }
@@ -191,7 +204,11 @@ class WearMainActivity : ComponentActivity() {
 private enum class D8StartupState { Activating, Ready, Blocked }
 
 @androidx.compose.runtime.Composable
-private fun WearAgenda(service: ConflictAwareSourceFactReadService) {
+private fun WearAgenda(
+    service: ConflictAwareSourceFactReadService,
+    syncFailureReason: String?,
+    onRetrySync: () -> Unit,
+) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     val today = Clock.System.now().toLocalDateTime(displayTimeZone).date
     val viewport = remember(today, displayTimeZone) {
@@ -213,7 +230,15 @@ private fun WearAgenda(service: ConflictAwareSourceFactReadService) {
         .size
     val calendarOverlap = if (result.conflicts.isNotEmpty()) "\nCalendar overlaps: ${result.conflicts.size}" else ""
     val syncConflicts = if (syncConflictCount > 0) "\nSync conflicts: $syncConflictCount" else ""
-    Text("Today\n$todayText\nUpcoming\n$upcomingText$calendarOverlap$syncConflicts")
+    Column {
+        Text("Today\n$todayText\nUpcoming\n$upcomingText$calendarOverlap$syncConflicts")
+        if (syncFailureReason != null) {
+            Text("Sync stopped ($syncFailureReason). Check the account or sync data, then retry.")
+            Button(onClick = onRetrySync) {
+                Text("Retry sync")
+            }
+        }
+    }
 }
 
 private fun emptyProjection() = CalendarProjectionResult(

@@ -102,6 +102,7 @@ import kotlin.time.Duration
 
 class MainActivity : ComponentActivity() {
     private val d8StartupState = mutableStateOf(D8StartupState.Activating)
+    private val d8SyncStoppedReason = mutableStateOf<String?>(null)
     private val database by lazy { openAndroidDatabase(this) }
     private val events by lazy { RoomEventRepository(database) }
     private val tasks by lazy { RoomTaskRepository(database) }
@@ -151,7 +152,10 @@ class MainActivity : ComponentActivity() {
                                 d8Scope,
                                 pollingIntervalMillis = ActiveSyncCatchUpTrigger.DESKTOP_ANDROID_POLL_INTERVAL_MILLIS,
                                 onUnexpectedFailure = { android.util.Log.w("D8Sync", "Catch-up failed unexpectedly; transient retry remains scheduled.") },
-                                onNonRetryableFailure = { reason -> android.util.Log.e("D8Sync", "Automatic sync stopped: $reason. Check account credentials or sync integrity before retrying.") },
+                                onNonRetryableFailure = { reason ->
+                                    android.util.Log.e("D8Sync", "Automatic sync stopped: $reason. Check account credentials or sync integrity before retrying.")
+                                    runOnUiThread { d8SyncStoppedReason.value = reason }
+                                },
                             )
                             d8SyncTrigger = trigger
                             trigger.start()
@@ -176,10 +180,22 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val startupState by d8StartupState
+            val syncStoppedReason by d8SyncStoppedReason
             MaterialTheme {
                 Surface {
                     when (startupState) {
-                        D8StartupState.Ready -> AndroidScheduler(reads, dogfoodPlanner, profileSettings, eventEditor, taskEditor)
+                        D8StartupState.Ready -> AndroidScheduler(
+                            reads,
+                            dogfoodPlanner,
+                            profileSettings,
+                            eventEditor,
+                            taskEditor,
+                            syncStoppedReason = syncStoppedReason,
+                            onRetrySync = {
+                                d8SyncStoppedReason.value = null
+                                d8SyncTrigger?.retryNow()
+                            },
+                        )
                         D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
                         D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
                     }
@@ -265,6 +281,8 @@ private fun AndroidScheduler(
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
     taskEditor: TaskEditingService,
+    syncStoppedReason: String?,
+    onRetrySync: () -> Unit,
 ) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     var selectedDate by remember { mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date) }
@@ -291,6 +309,14 @@ private fun AndroidScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
+        if (syncStoppedReason != null) {
+            item(key = "sync-stopped") {
+                Column {
+                    Text("Automatic sync stopped ($syncStoppedReason). Check the account credentials or sync integrity, then retry.")
+                    Button(onClick = onRetrySync) { Text("Retry sync") }
+                }
+            }
+        }
         item {
             Text("Agenda / Day: $selectedDate")
             Row {

@@ -89,6 +89,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -188,10 +189,22 @@ fun main() = application {
             d8SyncTrigger.value?.setForeground(windowInfo.isWindowFocused)
         }
         val currentStartupState by startupState
+        val activeSyncTrigger = d8SyncTrigger.value
+        val syncStoppedReason by remember(activeSyncTrigger) {
+            activeSyncTrigger?.stoppedReason ?: flowOf<String?>(null)
+        }.collectAsState(initial = null)
         MaterialTheme {
             Surface {
                 when (currentStartupState) {
-                    D8StartupState.Ready -> DesktopScheduler(reads, planner, profileSettings, eventEditor, taskEditor)
+                    D8StartupState.Ready -> DesktopScheduler(
+                        reads,
+                        planner,
+                        profileSettings,
+                        eventEditor,
+                        taskEditor,
+                        syncStoppedReason,
+                        onRetrySync = { activeSyncTrigger?.retryNow() },
+                    )
                     D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
                     D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
                 }
@@ -222,6 +235,8 @@ private fun DesktopScheduler(
     profileSettings: PlanningProfileSettingsService,
     eventEditor: EventEditingService,
     taskEditor: TaskEditingService,
+    syncStoppedReason: String?,
+    onRetrySync: () -> Unit,
 ) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     var selectedDate by remember { mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date) }
@@ -246,6 +261,14 @@ private fun DesktopScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
+        if (syncStoppedReason != null) {
+            item {
+                Row {
+                    Text("Sync stopped ($syncStoppedReason). Check account credentials or sync integrity, then retry.")
+                    Button(onClick = onRetrySync) { Text("Retry sync") }
+                }
+            }
+        }
         item {
             Text("Agenda / Day: $selectedDate")
             Row {

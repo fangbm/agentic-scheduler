@@ -134,12 +134,14 @@ class ActiveSyncCatchUpTriggerTest {
             trigger.start()
             assertEquals(1, withTimeout(2_000) { calls.receive() })
             assertEquals("UNAUTHORIZED", withTimeout(2_000) { reasons.receive() })
+            assertEquals("UNAUTHORIZED", trigger.stoppedReason.value)
             trigger.setForeground(true)
             assertEquals(10L, withTimeout(2_000) { periods.receive() })
             allowTick.send(Unit)
             assertNull(withTimeoutOrNull(100) { calls.receive() })
 
             trigger.retryNow()
+            assertNull(trigger.stoppedReason.value)
             assertEquals(2, withTimeout(2_000) { calls.receive() })
         } finally {
             trigger.close()
