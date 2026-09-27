@@ -33,6 +33,10 @@ import dev.agenticscheduler.sync.MutationId
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -68,6 +72,7 @@ class AgentRunService(
     private val plannerApplyBranch: PlannerApplyBranchTool? = null,
 ) {
     private val json = Json { encodeDefaults = true; explicitNulls = true }
+    private val threadOperationLocks = ThreadOperationLocks()
     private val transcripts = AgentTranscriptAssembler(state)
     /** Planner branches are session-local proposals; only their IDs/summaries enter the Agent audit. */
     private val planBranches = mutableMapOf<Pair<AgentThreadId, String>, dev.agenticscheduler.application.planner.PlanBranch>()
@@ -91,7 +96,10 @@ class AgentRunService(
 
     suspend fun createThread(): AgentThreadId = AgentThreadId(ids.next()).also { state.saveThread(AgentThread(it, null, clock.nowEpochMillis())) }
 
-    suspend fun run(threadId: AgentThreadId, command: String): AgentRunResult {
+    suspend fun run(threadId: AgentThreadId, command: String): AgentRunResult =
+        threadOperationLocks.withLock(threadId) { runLocked(threadId, command) }
+
+    private suspend fun runLocked(threadId: AgentThreadId, command: String): AgentRunResult {
         if (command.isBlank()) return AgentRunResult.Failed("EMPTY_COMMAND")
         if (state.thread(threadId) == null) return AgentRunResult.Failed("THREAD_NOT_FOUND")
         if (state.toolCalls(threadId).any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return AgentRunResult.Failed("CONFIRMATION_PENDING")
@@ -106,7 +114,10 @@ class AgentRunService(
         return modelStep(threadId, config, tools, allowLocalRead = true)
     }
 
-    suspend fun confirm(threadId: AgentThreadId, callId: AgentToolCallId, approved: Boolean): AgentRunResult {
+    suspend fun confirm(threadId: AgentThreadId, callId: AgentToolCallId, approved: Boolean): AgentRunResult =
+        threadOperationLocks.withLock(threadId) { confirmLocked(threadId, callId, approved) }
+
+    private suspend fun confirmLocked(threadId: AgentThreadId, callId: AgentToolCallId, approved: Boolean): AgentRunResult {
         val call = state.toolCalls(threadId).firstOrNull { it.id == callId && it.state == AgentToolCallState.WAITING_CONFIRMATION }
             ?: return AgentRunResult.Failed("CONFIRMATION_NOT_FOUND")
         val action = state.actions(threadId).firstOrNull { call.id in it.toolCallIds }
@@ -939,4 +950,32 @@ class AgentRunService(
         val taskId: String, val mutationKind: String, val criteria: List<String>,
     )
     @Serializable private data class StatusSnapshot(val status: String)
+}
+
+/** Serializes the complete orchestration operation for one thread, without blocking other threads. */
+internal class ThreadOperationLocks {
+    private data class Entry(val mutex: Mutex, var users: Int)
+
+    private val entriesMutex = Mutex()
+    private val entries = mutableMapOf<AgentThreadId, Entry>()
+
+    suspend fun <T> withLock(threadId: AgentThreadId, operation: suspend () -> T): T {
+        val entry = entriesMutex.withLock {
+            (entries[threadId] ?: Entry(Mutex(), 0).also { entries[threadId] = it }).also { it.users++ }
+        }
+        var acquired = false
+        try {
+            entry.mutex.lock()
+            acquired = true
+            return operation()
+        } finally {
+            if (acquired) entry.mutex.unlock()
+            withContext(NonCancellable) {
+                entriesMutex.withLock {
+                    entry.users--
+                    if (entry.users == 0 && entries[threadId] === entry) entries.remove(threadId)
+                }
+            }
+        }
+    }
 }
