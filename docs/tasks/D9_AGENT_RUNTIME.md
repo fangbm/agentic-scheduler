@@ -49,19 +49,18 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   `WAITING_CONFIRMATION` call when its conversation is selected, rather than
   relying only on in-memory dialog state. Session-local PlanBranch proposals
   are scoped to their AgentThread.
-- Verification status: rebased head `44b99f4` passed all four jobs (Linux,
-  Windows, Android Keystore, and Wear Keystore) in CI run `36384016695`. The
-  Android narrow-screen UI fix `2b48ad0` has since been pushed; its fresh CI is
-  pending.
+- Verification status: documented head `b7f5eb2` passed all four jobs
+  (Linux build/tests, Windows Desktop, Android Keystore, and Wear Keystore) in
+  CI run `36385286041`.
 - Android device evidence covers the provider configuration surface,
   missing-field error, responsive action rows, and thread-deletion confirmation
   content. No provider is configured, so Tool preview/confirmation execution
   remains unverified. Desktop visible UI acceptance also remains pending.
 
 Full D9-01 acceptance remains open, including configured-provider Tool
-preview/confirmation execution, Desktop visible UI acceptance, fresh CI for
-`2b48ad0`, and the remaining required acceptance criteria below. The PR
-remains Draft; passing CI does not close D9-01.
+preview/confirmation execution, Desktop visible UI acceptance, and the
+remaining required acceptance criteria below. The PR remains Draft; passing CI
+does not close D9-01.
 
 ---
 
