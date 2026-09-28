@@ -15,9 +15,9 @@
 
 ## 1. 参考资料与视觉方向
 
-代码仓库当前**没有提交图片格式的概念板素材**；可查文字依据：`docs/ROADMAP_D5_D9.md` 中 D10 Visual/product reference。若最终参考图在聊天附件、Figma 或外部资源中，后续仅调整样式，不阻塞当前冲刺。
+已从用户**此前 ChatGPT 会话文件**找回三张原始概念图（尚未提交到 GitHub）：`一体化智能日程应用界面概念板.png`（A/B/C/D 四风格）、`智能日历应用界面概念展板.png`（Native & Integrated / Command-Centric / Contextual Intelligence）、`AI 日历应用双主题设计板.png`（Calm & Modern AI First / Dark & Focus AI Command Center）。它们是本次 Web UI 的实际视觉参考；`docs/ROADMAP_D5_D9.md` D10 文字规范为结构性补充。因原始图片位于历史聊天文件，不把未入仓库的图片虚构成 repo asset。
 
-沿用文档约定：现代简洁、柔和留白、圆角分区、清晰的 Event/Task/FocusBlock 语义色、明暗主题、可见的 Agent 和独立的变更预览。此冲刺暂用仓库当前技术名 `Agentic Scheduler`；Temvio 公共品牌切换另受命名审查计划约束，不能在未经审查时当作最终公开商标。
+明确混合参考：以第三张的 **A. Calm & Modern — AI First** 为默认浅色主视觉，右侧 Agent 固定面板与日历时间轴；第二张 **A. Native & Integrated** 作为日程选中后的上下文操作/顶栏 Ask Agent 依据；第三张 **B. Dark & Focus** 定义可切换的深色模式与紧凑提示块。沿用圆角分区、清晰的 Event/Task/FocusBlock 语义色、可见的 Agent 和独立的变更预览。此冲刺暂用仓库当前技术名 `Agentic Scheduler`；Temvio 公共品牌切换另受命名审查计划约束，不能在未经审查时当作最终公开商标。
 
 首屏信息架构（Desktop-first，移动端自动堆叠）：
 1. 左侧窄导航：Today、Calendar、Tasks、Agent、状态与运行模式；
