@@ -51,17 +51,26 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   are scoped to their AgentThread.
 - Verification status: head `f2a333e` passed all four jobs (Linux
   build/tests, Windows Desktop, Android Keystore, and Wear Keystore) in CI run
-  `36395340410`.
-- Android device evidence covers the provider configuration surface,
+  `36395340410`. Later provider-adapter changes have separate focused desktop
+  tests; this CI result is not evidence for those later commits.
+- Android 16 physical-device read-only Provider E2E was exercised with
+  DeepSeek Flash. The credential was resolved from Android secure storage,
+  requests used HTTPS at `api.deepseek.com`, and the structured-tool capability
+  probe succeeded. The Agent made a structured `history.timeline` call
+  (`limit: 20`), persisted/displayed the Tool call and Tool result (`[]`), sent
+  that result back to the model, and received a final response reporting no
+  changes. No business data mutation was made. This is read-only runtime
+  evidence only; it does not establish write preview, user confirmation, or
+  write execution acceptance.
+- Other Android device evidence covers the provider configuration surface,
   missing-field error, responsive action rows, and thread-deletion confirmation
-  content. No provider is configured, so Tool preview/confirmation execution
-  remains unverified. Desktop visible UI acceptance also remains pending.
+  content. Desktop visible UI acceptance remains pending.
 - Non-blocking P2 Android Provider configuration follow-ups: make saved
   credential removal and replacement mutually exclusive in the UI, and reject
   credentialed HTTP Provider URLs during save with a clear validation error.
 
-Full D9-01 acceptance remains open, including configured-provider Tool
-preview/confirmation execution, Desktop visible UI acceptance, and the
+Full D9-01 acceptance remains open, including write Tool preview/confirmation
+execution, Desktop visible UI acceptance, and the
 remaining required acceptance criteria below. The PR remains Draft; passing CI
 does not close D9-01.
 

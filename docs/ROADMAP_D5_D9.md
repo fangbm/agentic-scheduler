@@ -250,14 +250,20 @@ not yet been accepted.
 
 Agent-origin business writes use the D8 inner-payload-v2 compatibility gate and
 device-local all-devices-upgraded opt-in; synchronized Agent writes remain
-disabled by default. Head `f2a333e` passed all four CI jobs (Linux build/tests,
-Windows Desktop, Android Keystore, and Wear Keystore) in run `36395340410`.
-Android device evidence covers the provider configuration surface,
-missing-field error, responsive action rows, and deletion confirmation
-content. No provider is configured, so Tool preview/confirmation execution
-remains unverified; Desktop visible UI acceptance remains pending. D9-01
-remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no frozen
-decision is changed by this progress update.
+disabled by default. The recorded CI run `36395340410` passed all four jobs on
+head `f2a333e`; later provider-adapter changes have separate focused desktop
+tests, so that CI result does not certify those later commits.
+
+Android 16 physical-device read-only Provider E2E was exercised with DeepSeek
+Flash. The credential was resolved from Android secure storage, requests used
+HTTPS at `api.deepseek.com`, and the structured-tool capability probe
+succeeded. The Agent made a structured `history.timeline` call (`limit: 20`),
+persisted/displayed the Tool call and Tool result (`[]`), returned that result
+to the model, and received a final response reporting no changes. No business
+data mutation was made. This evidence covers the read-only Tool round trip
+only; write preview/confirmation/execution and Desktop visible UI acceptance
+remain pending. D9-01 remains IN PROGRESS and its PR remains Draft. Full D9
+remains open; no frozen decision is changed by this progress update.
 
 Non-blocking P2 Android Provider configuration follow-ups remain: make saved
 credential removal and replacement mutually exclusive, and reject a
