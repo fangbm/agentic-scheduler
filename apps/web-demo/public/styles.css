@@ -264,13 +264,13 @@ html[data-theme="dark"] .error-box{color:#ffc2d0;background:#402733;border-color
 .timeline-scroll{height:380px}
 .side-cards{grid-template-columns:1fr 1fr;grid-template-rows:auto}
 .agent-panel{min-height:520px;max-height:none;border-left:0;border-top:1px solid var(--line)}
-.agent-scroll{max-height:560px}
+.agent-scroll{max-height:none;overflow:visible}
 .agent-topbar{height:61px;flex-basis:61px}
 .agent-welcome{padding-top:7px}
 .orb{width:63px;height:63px;margin-bottom:13px}
 .orb i{width:6px;height:7px}
 .agent-welcome h2{font-size:20px}
-.agent-compose{position:sticky;bottom:0;z-index:4}
+.agent-compose{position:static}
 .main-footer{padding-bottom:18px}
 }
 
