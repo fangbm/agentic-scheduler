@@ -74,7 +74,24 @@ class OpenAiCompatibleProviderTest {
         client.close()
     }
 
-    @Test fun `unknown or canonical dotted provider response name fails closed`() = runBlocking {
+    @Test fun `unknown wire tool name fails closed with redacted code`() = runBlocking {
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond("""{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"d9_deadbeef","arguments":"{}"}}]}}]}""")
+        } } }
+        val provider = OpenAiCompatibleProvider(client, ProviderCredentialResolver { null })
+
+        val result = provider.complete(
+            config(credential = null),
+            listOf(ProviderChatMessage("user", "List tasks")),
+            listOf(ProviderToolDefinition("task.list", "List tasks", JsonObject(emptyMap()))),
+        )
+
+        assertEquals(ProviderCallResult.Failure("UNKNOWN_PROVIDER_TOOL_NAME"), result)
+        assertFalse(result.toString().contains("d9_deadbeef"), "Failure diagnostics must not expose provider-supplied names")
+        client.close()
+    }
+
+    @Test fun `canonical dotted response name is not accepted as a provider wire name`() = runBlocking {
         val client = HttpClient(MockEngine) { engine { addHandler {
             respond("""{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call-1","type":"function","function":{"name":"task.list","arguments":"{}"}}]}}]}""")
         } } }
@@ -86,7 +103,25 @@ class OpenAiCompatibleProviderTest {
             listOf(ProviderToolDefinition("task.list", "List tasks", JsonObject(emptyMap()))),
         )
 
-        assertEquals(ProviderCallResult.Failure("INVALID_TOOL_CALL"), result)
+        assertEquals(ProviderCallResult.Failure("UNKNOWN_PROVIDER_TOOL_NAME"), result)
+        assertFalse(result.toString().contains("task.list"))
+        client.close()
+    }
+
+    @Test fun `malformed provider tool call returns a distinct redacted code`() = runBlocking {
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond("""{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"","type":"function","function":{"name":"d9_7461736b2e6c697374","arguments":"{}"}}]}}]}""")
+        } } }
+        val provider = OpenAiCompatibleProvider(client, ProviderCredentialResolver { null })
+
+        val result = provider.complete(
+            config(credential = null),
+            listOf(ProviderChatMessage("user", "List tasks")),
+            listOf(ProviderToolDefinition("task.list", "List tasks", JsonObject(emptyMap()))),
+        )
+
+        assertEquals(ProviderCallResult.Failure("MALFORMED_PROVIDER_TOOL_CALL"), result)
+        assertFalse(result.toString().contains("task.list"))
         client.close()
     }
 

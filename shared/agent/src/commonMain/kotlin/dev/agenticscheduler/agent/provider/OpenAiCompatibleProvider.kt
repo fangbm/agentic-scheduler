@@ -126,7 +126,7 @@ class OpenAiCompatibleProvider(
         val wireMessages = messages.map { message ->
             val calls = message.toolCalls?.map { call ->
                 val externalName = toExternalToolName(call.function.name)
-                    ?: return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+                    ?: return ProviderCallResult.Failure("INVALID_INTERNAL_TOOL_NAME")
                 call.copy(function = call.function.copy(name = externalName))
             }
             message.copy(toolCalls = calls)
@@ -173,7 +173,7 @@ class OpenAiCompatibleProvider(
             val message = choice.message
             if (message.role != "assistant") return ProviderCallResult.Failure("INVALID_ROLE")
             if (message.toolCalls.orEmpty().any { it.id.isBlank() || it.type != "function" || it.function.name.isBlank() }) {
-                return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+                return ProviderCallResult.Failure("MALFORMED_PROVIDER_TOOL_CALL")
             }
             restoreInternalToolNames(ProviderCallResult.Success(message), externalNames)
         } catch (_: SerializationException) {
@@ -214,7 +214,7 @@ class OpenAiCompatibleProvider(
         if (result !is ProviderCallResult.Success) return result
         val calls = result.message.toolCalls?.map { call ->
             val internalName = externalNames[call.function.name]
-                ?: return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+                ?: return ProviderCallResult.Failure("UNKNOWN_PROVIDER_TOOL_NAME")
             call.copy(function = call.function.copy(name = internalName))
         }
         return ProviderCallResult.Success(result.message.copy(toolCalls = calls))
@@ -253,7 +253,7 @@ class OpenAiCompatibleProvider(
             seenChoice = true
             delta.content?.let(content::append)
             delta.toolCalls.orEmpty().forEach { piece ->
-                if (piece.index < 0) return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+                if (piece.index < 0) return ProviderCallResult.Failure("MALFORMED_PROVIDER_TOOL_CALL")
                 val call = calls.getOrPut(piece.index) { PartialCall() }
                 piece.id?.let { call.id.append(it) }
                 piece.type?.let { call.type = it }
@@ -263,7 +263,7 @@ class OpenAiCompatibleProvider(
         }
         if (!seenChoice) return ProviderCallResult.Failure("EMPTY_RESPONSE")
         val completedCalls = calls.toSortedMap().values.map { call ->
-            if (call.id.isEmpty() || call.name.isEmpty() || call.type != "function") return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+            if (call.id.isEmpty() || call.name.isEmpty() || call.type != "function") return ProviderCallResult.Failure("MALFORMED_PROVIDER_TOOL_CALL")
             ProviderToolCall(call.id.toString(), function = ProviderFunctionCall(call.name.toString(), call.arguments.toString()))
         }
         return ProviderCallResult.Success(ProviderChatMessage("assistant", content.toString().ifEmpty { null }, toolCalls = completedCalls.ifEmpty { null }))

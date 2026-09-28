@@ -449,9 +449,7 @@ class AgentRunService(
 
     private suspend fun handleResponse(threadId: AgentThreadId, response: ProviderChatMessage, tools: List<ProviderToolDefinition>, allowLocalRead: Boolean, config: ProviderConfig): AgentRunResult {
         val calls = response.toolCalls.orEmpty()
-        if (calls.size > 1 || calls.any { it.id.isBlank() || it.function.name.isBlank() || it.function.arguments.isBlank() }) {
-            return AgentRunResult.Failed("INVALID_TOOL_CALL")
-        }
+        invalidProviderToolCallCode(calls)?.let { return AgentRunResult.Failed(it) }
         val message = AgentMessage(AgentMessageId(ids.next()), threadId, state.messages(threadId).maxOfOrNull { it.ordinal }?.plus(1) ?: 0,
             AgentMessageRole.ASSISTANT, response.content.orEmpty(), clock.nowEpochMillis())
         state.appendMessage(message)
@@ -950,6 +948,14 @@ class AgentRunService(
         val taskId: String, val mutationKind: String, val criteria: List<String>,
     )
     @Serializable private data class StatusSnapshot(val status: String)
+}
+
+/** Stable, content-free diagnostics for response shapes the bounded runtime cannot execute. */
+internal fun invalidProviderToolCallCode(calls: List<ProviderToolCall>): String? = when {
+    calls.size > 1 -> "MULTIPLE_TOOL_CALLS_UNSUPPORTED"
+    calls.any { it.id.isBlank() || it.function.name.isBlank() || it.function.arguments.isBlank() } ->
+        "INVALID_TOOL_CALL_FIELDS"
+    else -> null
 }
 
 /** Serializes the complete orchestration operation for one thread, without blocking other threads. */
