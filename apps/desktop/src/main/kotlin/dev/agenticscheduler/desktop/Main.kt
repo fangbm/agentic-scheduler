@@ -457,12 +457,15 @@ private fun AgentCommandPanel(
         Text("Effective device-local Tool policy")
         effectivePolicy.forEach { (capability, mode) -> Text("${capability.name}: $mode") }
         val pending = calls.lastOrNull { it.state == AgentToolCallState.WAITING_CONFIRMATION }
+        val threadSwitchEnabled = !busy && pending == null
         val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
         Row {
             if (selectedProvider == null) Text("Provider not configured") else Text("Provider: ${selectedProvider.model}")
             Button(onClick = { editingProvider = selectedProvider; providerDialog = true }) { Text(if (selectedProvider == null) "Configure provider" else "Provider settings") }
-            Button(onClick = {
+            Button(enabled = threadSwitchEnabled, onClick = {
+                if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@Button
                 scope.launch {
+                    if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@launch
                     val id = runService.createThread()
                     refreshThread(id)
                     runState = "New AgentThread created."
@@ -485,7 +488,17 @@ private fun AgentCommandPanel(
         if (threads.size > 1) {
             Text("Conversations")
             threads.forEach { thread ->
-                Button(onClick = { scope.launch { refreshThread(thread.id); runState = null } }) {
+                Button(
+                    enabled = threadSwitchEnabled && thread.id != selectedThread,
+                    onClick = {
+                        if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@Button
+                        scope.launch {
+                            if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@launch
+                            refreshThread(thread.id)
+                            runState = null
+                        }
+                    },
+                ) {
                     Text(if (thread.id == selectedThread) "Current: ${thread.title ?: thread.id.value}" else thread.title ?: thread.id.value)
                 }
             }
