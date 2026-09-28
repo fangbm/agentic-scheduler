@@ -13,6 +13,7 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Url
 import io.ktor.http.contentType
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -74,7 +75,9 @@ class OpenAiCompatibleProvider(
             config,
             listOf(ProviderChatMessage("user", "Call d9_capability_probe now.")),
             listOf(probe),
-            toolChoice = "required",
+            // The explicit prompt and exact returned-call validation prove support
+            // without depending on provider-specific tool_choice behavior.
+            toolChoice = null,
         )) {
             is ProviderCallResult.Failure -> ProviderProbeResult.Unavailable(result.redactedCode)
             is ProviderCallResult.Success -> if (result.message.toolCalls?.singleOrNull()?.let { call ->
@@ -101,6 +104,22 @@ class OpenAiCompatibleProvider(
         if (config.credentialReference != null && !config.baseUrl.startsWith("https://", ignoreCase = true)) {
             return ProviderCallResult.Failure("INSECURE_CREDENTIAL_TRANSPORT")
         }
+        val externalNames = mutableMapOf<String, String>()
+        for (tool in tools) {
+            val externalName = toExternalToolName(tool.name)
+                ?: return ProviderCallResult.Failure("INVALID_TOOL_SCHEMA")
+            if (externalNames.put(externalName, tool.name) != null) {
+                return ProviderCallResult.Failure("INVALID_TOOL_SCHEMA")
+            }
+        }
+        val wireMessages = messages.map { message ->
+            val calls = message.toolCalls?.map { call ->
+                val externalName = toExternalToolName(call.function.name)
+                    ?: return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+                call.copy(function = call.function.copy(name = externalName))
+            }
+            message.copy(toolCalls = calls)
+        }
         val credential = try {
             config.credentialReference?.let { credentials.resolve(it) }
         } catch (cancelled: CancellationException) {
@@ -111,20 +130,26 @@ class OpenAiCompatibleProvider(
         if (config.credentialReference != null && credential == null) return ProviderCallResult.Failure("MISSING_CREDENTIAL")
         val payload = ChatRequest(
             model = config.model,
-            messages = messages,
-            tools = tools.map { ApiTool(it.name, it.description, it.parameters) }.takeIf { it.isNotEmpty() },
+            messages = wireMessages,
+            tools = tools.map { tool ->
+                ApiTool(toExternalToolName(tool.name)!!, tool.description, tool.parameters)
+            }.takeIf { it.isNotEmpty() },
             toolChoice = toolChoice,
             stream = streaming,
+            thinking = if (isOfficialDeepSeekApi(config.baseUrl)) Thinking("disabled") else null,
         )
         return try {
-            if (streaming) return client.preparePost(config.baseUrl.trimEnd('/') + "/chat/completions") {
-                contentType(ContentType.Application.Json)
-                header(HttpHeaders.Accept, "text/event-stream")
-                credential?.let { header(HttpHeaders.Authorization, "Bearer $it") }
-                setBody(json.encodeToString(ChatRequest.serializer(), payload))
-            }.execute { response ->
-                if (response.status != HttpStatusCode.OK) ProviderCallResult.Failure("HTTP_${response.status.value}")
-                else readStream(response.bodyAsChannel())
+            if (streaming) {
+                val streamed = client.preparePost(config.baseUrl.trimEnd('/') + "/chat/completions") {
+                    contentType(ContentType.Application.Json)
+                    header(HttpHeaders.Accept, "text/event-stream")
+                    credential?.let { header(HttpHeaders.Authorization, "Bearer $it") }
+                    setBody(json.encodeToString(ChatRequest.serializer(), payload))
+                }.execute { response ->
+                    if (response.status != HttpStatusCode.OK) ProviderCallResult.Failure("HTTP_${response.status.value}")
+                    else readStream(response.bodyAsChannel())
+                }
+                return restoreInternalToolNames(streamed, externalNames)
             }
             val response = client.post(config.baseUrl.trimEnd('/') + "/chat/completions") {
                 contentType(ContentType.Application.Json)
@@ -139,7 +164,7 @@ class OpenAiCompatibleProvider(
             if (message.toolCalls.orEmpty().any { it.id.isBlank() || it.type != "function" || it.function.name.isBlank() }) {
                 return ProviderCallResult.Failure("INVALID_TOOL_CALL")
             }
-            ProviderCallResult.Success(message)
+            restoreInternalToolNames(ProviderCallResult.Success(message), externalNames)
         } catch (_: SerializationException) {
             ProviderCallResult.Failure("INVALID_RESPONSE")
         } catch (_: IllegalArgumentException) {
@@ -149,6 +174,50 @@ class OpenAiCompatibleProvider(
         } catch (_: Exception) {
             ProviderCallResult.Failure("NETWORK_FAILURE")
         }
+    }
+
+    /**
+     * OpenAI-compatible APIs constrain function names to ASCII letters, digits,
+     * underscores, and hyphens. Hex-encoding the UTF-8 bytes is injective, keeps
+     * canonical dotted Tool names private to the application contract, and gives
+     * the provider a stable, reversible-safe identifier.
+     */
+    private fun toExternalToolName(internalName: String): String? {
+        if (internalName.isBlank()) return null
+        val bytes = internalName.encodeToByteArray()
+        val externalName = buildString(3 + bytes.size * 2) {
+            append("d9_")
+            bytes.forEach { byte ->
+                val value = byte.toInt() and 0xff
+                append(HEX_DIGITS[value ushr 4])
+                append(HEX_DIGITS[value and 0x0f])
+            }
+        }
+        return externalName.takeIf { it.length <= MAX_EXTERNAL_TOOL_NAME_LENGTH }
+    }
+
+    private fun restoreInternalToolNames(
+        result: ProviderCallResult,
+        externalNames: Map<String, String>,
+    ): ProviderCallResult {
+        if (result !is ProviderCallResult.Success) return result
+        val calls = result.message.toolCalls?.map { call ->
+            val internalName = externalNames[call.function.name]
+                ?: return ProviderCallResult.Failure("INVALID_TOOL_CALL")
+            call.copy(function = call.function.copy(name = internalName))
+        }
+        return ProviderCallResult.Success(result.message.copy(toolCalls = calls))
+    }
+
+    private fun isOfficialDeepSeekApi(baseUrl: String): Boolean = runCatching {
+        val url = Url(baseUrl)
+        url.protocol.name.equals("https", ignoreCase = true) &&
+            url.host.equals("api.deepseek.com", ignoreCase = true)
+    }.getOrDefault(false)
+
+    private companion object {
+        const val MAX_EXTERNAL_TOOL_NAME_LENGTH = 128
+        const val HEX_DIGITS = "0123456789abcdef"
     }
 
     private suspend fun readStream(channel: io.ktor.utils.io.ByteReadChannel): ProviderCallResult {
@@ -195,6 +264,7 @@ class OpenAiCompatibleProvider(
         val tools: List<ApiTool>? = null,
         @SerialName("tool_choice") val toolChoice: String? = null,
         val stream: Boolean = false,
+        val thinking: Thinking? = null,
     )
 
     @Serializable private data class ApiTool(val type: String = "function", val function: ApiFunction) {
@@ -202,6 +272,7 @@ class OpenAiCompatibleProvider(
     }
 
     @Serializable private data class ApiFunction(val name: String, val description: String, val parameters: JsonObject)
+    @Serializable private data class Thinking(val type: String)
     @Serializable private data class ChatResponse(val choices: List<ChatChoice>)
     @Serializable private data class ChatChoice(val message: ProviderChatMessage)
     @Serializable private data class StreamChunk(val choices: List<StreamChoice>)
