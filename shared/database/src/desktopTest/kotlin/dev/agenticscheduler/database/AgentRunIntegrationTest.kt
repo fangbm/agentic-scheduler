@@ -442,6 +442,9 @@ class AgentRunIntegrationTest {
     @Test fun `prose unknown tools and failed capability probe cannot bypass registry`() = runBlocking {
         val cases = listOf(
             Triple(true, ProviderChatMessage("assistant", "I created it."), true),
+            // These negative fixtures intentionally preserve raw/non-advertised
+            // names. The strict provider adapter must reject them before the
+            // Agent runtime can dispatch a Tool.
             Triple(true, ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("bad-1", function = ProviderFunctionCall("database.execute", "{}")))), false),
             Triple(false, ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("bad-2", function = ProviderFunctionCall(AgentToolNames.TASK_CREATE, "{}")))), false),
         )
@@ -450,7 +453,7 @@ class AgentRunIntegrationTest {
             val requests = mutableListOf<HttpRequestData>()
             val replies = mutableListOf(
                 reply(if (probeSupported) ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}")))) else ProviderChatMessage("assistant", "No tools")),
-                reply(modelMessage),
+                if (prose) reply(modelMessage) else replyRaw(modelMessage),
             )
             val client = HttpClient(MockEngine) { engine { addHandler { request ->
                 requests += request
@@ -470,7 +473,11 @@ class AgentRunIntegrationTest {
                     TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 })
                 val threadId = runtime.createThread()
                 val outcome = runtime.run(threadId, "Create a task")
-                if (prose) assertIs<AgentRunResult.Completed>(outcome) else assertEquals(AgentRunResult.Failed("UNREGISTERED_TOOL"), outcome)
+                if (prose) {
+                    assertIs<AgentRunResult.Completed>(outcome)
+                } else {
+                    assertEquals(AgentRunResult.Failed("UNKNOWN_PROVIDER_TOOL_NAME"), outcome)
+                }
                 assertTrue(tasks.observeTasks().first().isEmpty())
                 assertTrue(history.timeline().isEmpty())
                 if (!probeSupported) assertTrue(!(requests.last().body as TextContent).text.contains("\"tools\""))
@@ -698,6 +705,27 @@ class AgentRunIntegrationTest {
         }
     }
 
-    private fun reply(message: ProviderChatMessage): String = """{"choices":[{"message":${json.encodeToString(message)}}]}"""
+    /**
+     * MockEngine replies model the provider wire protocol: canonical dotted
+     * application Tool names are encoded exactly as OpenAiCompatibleProvider
+     * advertises them. Negative raw-name cases use [replyRaw] explicitly.
+     */
+    private fun reply(message: ProviderChatMessage): String = replyRaw(message.copy(
+        toolCalls = message.toolCalls?.map { call ->
+            call.copy(function = call.function.copy(name = providerWireToolName(call.function.name)))
+        },
+    ))
+
+    private fun replyRaw(message: ProviderChatMessage): String =
+        """{"choices":[{"message":${json.encodeToString(message)}}]}"""
+
+    private fun providerWireToolName(canonicalName: String): String = buildString(3 + canonicalName.encodeToByteArray().size * 2) {
+        append("d9_")
+        canonicalName.encodeToByteArray().forEach { byte ->
+            val value = byte.toInt() and 0xff
+            append("0123456789abcdef"[value ushr 4])
+            append("0123456789abcdef"[value and 0x0f])
+        }
+    }
     private fun id(number: Int) = "00000000-0000-7000-8000-${number.toString().padStart(12, '0')}"
 }
