@@ -470,6 +470,7 @@ private fun AndroidAgentPanel(
     var toolCalling by remember { mutableStateOf<Boolean?>(null) }
     var streaming by remember { mutableStateOf<Boolean?>(null) }
     var credential by remember { mutableStateOf("") }
+    var removeSavedCredential by remember { mutableStateOf(false) }
     var command by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Configure a provider to begin.") }
     var pendingConfirmation by remember { mutableStateOf<Pair<dev.agenticscheduler.agent.history.AgentToolCallId, String>?>(null) }
@@ -545,6 +546,8 @@ private fun AndroidAgentPanel(
                 RadioButton(selected = config.id == selectedConfigId, onClick = {
                     selectedConfigId = config.id
                     configId = config.id
+                    credential = ""
+                    removeSavedCredential = false
                     scope.launch { state.selectProviderConfig(config.id); reloadConfig() }
                 })
                 Text("${config.model} · ${config.baseUrl}")
@@ -566,11 +569,31 @@ private fun AndroidAgentPanel(
         }
         OutlinedTextField(
             value = credential,
-            onValueChange = { credential = it },
+            onValueChange = {
+                credential = it
+                if (it.isNotEmpty()) removeSavedCredential = false
+            },
             label = { Text("Optional API credential (stored in Android secure storage)") },
             visualTransformation = PasswordVisualTransformation(),
         )
-        Text("Leave the credential blank to keep the selected secure-store credential, or configure this endpoint without one. Credentialed endpoints require HTTPS.")
+        val selectedCredentialReference = configId?.let { selectedId ->
+            configChoices.firstOrNull { it.id == selectedId }?.credentialReference
+        }
+        if (selectedCredentialReference != null) {
+            Row {
+                Checkbox(
+                    checked = removeSavedCredential,
+                    onCheckedChange = { removeSavedCredential = it },
+                    enabled = !busy,
+                )
+                Text("Remove saved credential")
+            }
+        }
+        Text(if (removeSavedCredential && credential.isBlank()) {
+            "Saving will remove the selected credential from Android secure storage."
+        } else {
+            "Leave the credential blank to keep the selected secure-store credential. Enter a value to replace it. Credentialed endpoints require HTTPS."
+        })
         Text("A credential-free HTTP endpoint on another device or host can expose prompts and schedule data in transit.")
         configurationError?.let { Text(it) }
         Button(enabled = !busy, onClick = {
@@ -592,7 +615,7 @@ private fun AndroidAgentPanel(
                         try {
                             secureStore.importSecret(AndroidAgentCredential(secretBytes)).also { newReference = it }
                         } finally { secretBytes.fill(0) }
-                    } else previousCredential
+                    } else if (removeSavedCredential) null else previousCredential
                     val config = ProviderConfig(
                         id = configId ?: ProviderConfigId(ids.next()),
                         baseUrl = baseUrl.trim(),
@@ -608,6 +631,7 @@ private fun AndroidAgentPanel(
                     state.selectProviderConfig(config.id)
                     supersededCredential = previousCredential?.takeIf { it != ref }
                     credential = ""
+                    removeSavedCredential = false
                     configId = config.id
                     selectedConfigId = config.id
                     status = "Provider configuration saved. The runtime probes structured tool support before enabling Tools."
@@ -630,7 +654,7 @@ private fun AndroidAgentPanel(
 
         Text("Agent conversation")
         Row(Modifier.fillMaxWidth()) {
-            Button(modifier = Modifier.weight(1f), enabled = !busy, onClick = {
+            Button(modifier = Modifier.weight(1f), enabled = !busy && pendingConfirmation == null, onClick = {
                 scope.launch {
                     threadId = runService.createThread()
                     reloadConfig()
@@ -638,12 +662,14 @@ private fun AndroidAgentPanel(
                     status = "New application-owned AgentThread created."
                 }
             }) { Text("New conversation") }
-            Button(modifier = Modifier.weight(1f), enabled = !busy && threadId != null, onClick = { confirmThreadDeletion = true }) {
+            Button(modifier = Modifier.weight(1f), enabled = !busy && pendingConfirmation == null && threadId != null, onClick = { confirmThreadDeletion = true }) {
                 Text("Delete conversation")
             }
         }
         threadChoices.forEach { thread ->
-            Button(onClick = { threadId = thread.id }) { Text(if (thread.id == threadId) "Current conversation" else "Conversation ${thread.id.value.take(8)}") }
+            Button(enabled = !busy && pendingConfirmation == null && thread.id != threadId, onClick = { threadId = thread.id }) {
+                Text(if (thread.id == threadId) "Current conversation" else "Conversation ${thread.id.value.take(8)}")
+            }
         }
         OutlinedTextField(command, { command = it }, label = { Text("Ask, query, or request a typed action") })
         Button(enabled = !busy && threadId != null && selectedConfigId != null && command.isNotBlank(), onClick = {
