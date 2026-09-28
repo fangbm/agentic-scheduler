@@ -250,9 +250,10 @@ not yet been accepted.
 
 Agent-origin business writes use the D8 inner-payload-v2 compatibility gate and
 device-local all-devices-upgraded opt-in; synchronized Agent writes remain
-disabled by default. Verification is pending final focused compilation and CI
-on the combined branch. D9-01 and full D9 remain open; no frozen decision is
-changed by this progress update.
+disabled by default. Combined head `61ec719` passed all four jobs in CI run
+`36382816698`. Android/Desktop interactive surface acceptance remains pending,
+so D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
+frozen decision is changed by this progress update.
 
 Frozen D9-01 baseline:
 

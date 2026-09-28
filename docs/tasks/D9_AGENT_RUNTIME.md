@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **D9-01 IN PROGRESS — D8 COMPLETE**
+> Status: **D9-01 IN PROGRESS — PR Draft — D8 COMPLETE**
 > Date: 2026-09-12  
 > Decision source: `docs/AGENT_DECISIONS.md`
 
@@ -49,13 +49,13 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   `WAITING_CONFIRMATION` call when its conversation is selected, rather than
   relying only on in-memory dialog state. Session-local PlanBranch proposals
   are scoped to their AgentThread.
-- Verification status: pending final focused compilation and CI on the
-  combined branch. Do not infer verification success from the implementation
-  inventory above.
+- Verification status: combined head `61ec719` passed all four jobs in CI run
+  `36382816698`. This records CI verification only; Android/Desktop interactive
+  surface acceptance remains pending.
 
-Full D9-01 acceptance remains open, including combined-branch verification,
-Android/Desktop surface acceptance, and the remaining required acceptance
-criteria below.
+Full D9-01 acceptance remains open, including Android/Desktop interactive
+surface acceptance and the remaining required acceptance criteria below. The
+PR remains Draft; passing CI does not close D9-01.
 
 ---
 
