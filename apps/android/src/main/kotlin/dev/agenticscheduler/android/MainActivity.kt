@@ -7,6 +7,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
@@ -26,6 +27,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarItem
@@ -402,11 +404,19 @@ private fun AndroidScheduler(
         }
         item {
             Text("Agenda / Day: $selectedDate")
-            Row {
-                Button(onClick = { selectedDate = selectedDate.plus(-1, DateTimeUnit.DAY) }) { Text("Previous") }
-                Button(onClick = { selectedDate = selectedDate.plus(1, DateTimeUnit.DAY) }) { Text("Next") }
-                Button(onClick = { creatingEvent = true }) { Text("New Event") }
-                Button(onClick = { creatingTask = true }) { Text("New Task") }
+            Row(Modifier.fillMaxWidth()) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = { selectedDate = selectedDate.plus(-1, DateTimeUnit.DAY) },
+                ) { Text("Previous") }
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = { selectedDate = selectedDate.plus(1, DateTimeUnit.DAY) },
+                ) { Text("Next") }
+            }
+            Row(Modifier.fillMaxWidth()) {
+                Button(modifier = Modifier.weight(1f), onClick = { creatingEvent = true }) { Text("New Event") }
+                Button(modifier = Modifier.weight(1f), onClick = { creatingTask = true }) { Text("New Task") }
             }
         }
         item { Text("All-day / date-only") }
@@ -618,9 +628,9 @@ private fun AndroidAgentPanel(
             }
         }) { Text("Save provider configuration") }
 
-        Row {
-            Text("Agent conversation")
-            Button(enabled = !busy, onClick = {
+        Text("Agent conversation")
+        Row(Modifier.fillMaxWidth()) {
+            Button(modifier = Modifier.weight(1f), enabled = !busy, onClick = {
                 scope.launch {
                     threadId = runService.createThread()
                     reloadConfig()
@@ -628,7 +638,7 @@ private fun AndroidAgentPanel(
                     status = "New application-owned AgentThread created."
                 }
             }) { Text("New conversation") }
-            Button(enabled = !busy && threadId != null, onClick = { confirmThreadDeletion = true }) {
+            Button(modifier = Modifier.weight(1f), enabled = !busy && threadId != null, onClick = { confirmThreadDeletion = true }) {
                 Text("Delete conversation")
             }
         }
