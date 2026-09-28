@@ -60,9 +60,9 @@ The authoritative code and current GitHub configuration must be rechecked immedi
 
 ### 2.2 Product presentation (presentation-only files/resources)
 
-1. Update only visible product names, app launcher labels where supplied via resources, desktop window title, About content, splash/icon resources, screenshots and marketing copy.
+1. Update visible product names only where controlled by non-source-code resources or marketing assets: app launcher labels where resource-based, splash/icon resources, screenshots and documentation. Desktop window titles or About text hard-coded in Kotlin are deferred to Phase 2.
 2. Keep all internal class names, package declarations, Android application IDs and existing database/credential identifiers unchanged. A user-visible label is not the same thing as application identity.
-3. Do not move Kotlin/Java files or make functional UI/Planner/Agent changes. User-facing literals in UI resources or strictly presentation-only UI code may be changed after a narrow diff review.
+3. Make **no Kotlin/Java source edits at all in Phase 1**, including presentation-only string literals hard-coded in source. Update resource-controlled labels/assets only; defer hard-coded text to Phase 2.
 4. Preserve old identifiers in existing archives, changelogs, migration notes and technical configuration where rewriting them could invalidate instructions or reproducibility.
 
 ### 2.3 Public identity and repository rename
@@ -86,10 +86,10 @@ The authoritative code and current GitHub configuration must be rechecked immedi
 
 ### Phase 1 verification / exit gate
 
-- Diff contains only approved docs, branding assets, visible presentation resources and narrowly scoped display literals; repository rename is a separate tracked administrative action.
+- Diff contains only approved docs, branding assets and visible presentation resource files; **no Kotlin/Java source changes**. Repository rename is a separate tracked administrative action.
 - The entire existing build/CI matrix remains green: Linux, Windows, Android/Wear relevant tests, server tests and CIFleet smoke where available.
 - Android and Wear retain the **same** applicationId. Existing development installs still update as before; old local SQLite state and secure-store data remain readable.
-- Desktop and Android dogfood screenshots show the selected brand while background persistence/sync behavior is unchanged.
+- Desktop and Android dogfood screenshots show the selected brand wherever presentation can be updated through resources/assets. Any hard-coded legacy UI text remains explicitly documented until Phase 2; persistence/sync behavior is unchanged.
 - Old GitHub link redirects and new origin URLs are checked; Actions/checks, external apps and self-hosted runner triggering are verified, rather than merely assuming GitHub redirects cover them.
 - Record a Phase 1 release/commit and link to selected approved brand assets. Explicitly state: technical migration has **not** happened.
 
