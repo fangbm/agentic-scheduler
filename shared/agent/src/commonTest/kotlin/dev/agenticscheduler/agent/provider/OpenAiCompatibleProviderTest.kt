@@ -39,6 +39,12 @@ class OpenAiCompatibleProviderTest {
         val requestBody = (requests.single().body as TextContent).text
         assertFalse(requestBody.contains("\"tool_choice\""), "The capability probe must avoid tool_choice=required for providers that reject it in thinking mode")
         assertTrue(!requestBody.contains("secret-token"))
+        val probeParameters = Json.parseToJsonElement(requestBody).jsonObject["tools"]!!.jsonArray.single()
+            .jsonObject["function"]!!.jsonObject["parameters"]!!.jsonObject
+        assertEquals("object", probeParameters["type"]!!.jsonPrimitive.content)
+        assertEquals(0, probeParameters["properties"]!!.jsonObject.size)
+        assertTrue(probeParameters["required"]!!.jsonArray.isEmpty())
+        assertEquals("false", probeParameters["additionalProperties"]!!.jsonPrimitive.content)
         client.close()
     }
 

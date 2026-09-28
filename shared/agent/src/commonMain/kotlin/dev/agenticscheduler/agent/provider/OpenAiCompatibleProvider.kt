@@ -19,7 +19,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.coroutines.CancellationException
 import io.ktor.utils.io.readUTF8Line
 
@@ -70,7 +72,16 @@ class OpenAiCompatibleProvider(
 
     suspend fun probe(config: ProviderConfig): ProviderProbeResult {
         if (!config.toolCallingSupported) return ProviderProbeResult.Unsupported
-        val probe = ProviderToolDefinition("d9_capability_probe", "Return a structured function call.", JsonObject(emptyMap()))
+        val probe = ProviderToolDefinition(
+            "d9_capability_probe",
+            "Return a structured function call.",
+            JsonObject(mapOf(
+                "type" to JsonPrimitive("object"),
+                "properties" to JsonObject(emptyMap()),
+                "required" to JsonArray(emptyList()),
+                "additionalProperties" to JsonPrimitive(false),
+            )),
+        )
         return when (val result = request(
             config,
             listOf(ProviderChatMessage("user", "Call d9_capability_probe now.")),
