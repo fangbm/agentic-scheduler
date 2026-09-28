@@ -62,6 +62,22 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   changes. No business data mutation was made. This is read-only runtime
   evidence only; it does not establish write preview, user confirmation, or
   write execution acceptance.
+- Android 16 physical-device write acceptance was subsequently completed with
+  DeepSeek Flash. An initial response containing multiple proposed Tool calls
+  was rejected by the runtime and produced no business write. A later single
+  `task.create` proposal displayed a confirmation preview for
+  `D9 confirmation execution test`: `LOW` priority, five-minute estimated and
+  remaining effort, and no deadline. After explicit user confirmation, the
+  app persisted the Task as `OPEN` / `LOW` with five-minute estimated and
+  remaining effort and no deadline. The ToolResult was `SUCCESS`; the linked
+  AgentAction was `SUCCEEDED` with `REQUIRE_CONFIRMATION`. The same MutationId
+  linked that action to a `MutationRecord` with origin `AGENT:<action>`, a
+  `ChangeLog` `TaskPut`, and a sync journal entry. No active SyncSpace was
+  present, so this write remained local and was not synchronized to a server.
+  This verifies the Android provider → typed Tool → preview → explicit
+  confirmation → application write → audit/journal path for this Task create.
+  It does not establish Desktop visible UI acceptance or broader write-tool
+  acceptance.
 - Other Android device evidence covers the provider configuration surface,
   missing-field error, responsive action rows, and thread-deletion confirmation
   content. Desktop visible UI acceptance remains pending.
@@ -69,8 +85,8 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   credential removal and replacement mutually exclusive in the UI, and reject
   credentialed HTTP Provider URLs during save with a clear validation error.
 
-Full D9-01 acceptance remains open, including write Tool preview/confirmation
-execution, Desktop visible UI acceptance, and the
+Full D9-01 acceptance remains open, including Desktop visible UI acceptance,
+broader write-tool acceptance, and the
 remaining required acceptance criteria below. The PR remains Draft; passing CI
 does not close D9-01.
 

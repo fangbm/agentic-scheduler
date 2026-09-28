@@ -261,9 +261,24 @@ succeeded. The Agent made a structured `history.timeline` call (`limit: 20`),
 persisted/displayed the Tool call and Tool result (`[]`), returned that result
 to the model, and received a final response reporting no changes. No business
 data mutation was made. This evidence covers the read-only Tool round trip
-only; write preview/confirmation/execution and Desktop visible UI acceptance
-remain pending. D9-01 remains IN PROGRESS and its PR remains Draft. Full D9
-remains open; no frozen decision is changed by this progress update.
+only.
+
+Android 16 physical-device write acceptance was subsequently completed with
+DeepSeek Flash. An initial multi-Tool proposal was rejected by the runtime
+without a business write. A later single `task.create` proposal showed a
+confirmation preview for `D9 confirmation execution test` (`LOW`, five-minute
+estimated and remaining effort, no deadline). Following explicit user
+confirmation, the Task was persisted as `OPEN` / `LOW`, with five-minute
+estimated and remaining effort and no deadline. The ToolResult was `SUCCESS`;
+the linked AgentAction was `SUCCEEDED` with `REQUIRE_CONFIRMATION`. Its
+MutationId linked the `MutationRecord` (`AGENT:<action>` origin), `ChangeLog`
+`TaskPut`, and sync journal entry. No active SyncSpace was present, so the
+write remained local and was not synchronized to a server. This verifies the
+Android task-create path through provider, typed Tool, preview, explicit
+confirmation, application write, and audit/journal evidence. It does not
+establish Desktop visible UI acceptance or broader write-tool acceptance.
+D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
+frozen decision is changed by this progress update.
 
 Non-blocking P2 Android Provider configuration follow-ups remain: make saved
 credential removal and replacement mutually exclusive, and reject a
