@@ -40,7 +40,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 
 fun interface AgentClock { fun nowEpochMillis(): Long }
@@ -602,7 +604,7 @@ class AgentRunService(
             return modelStep(threadId, config, tools, allowLocalRead = false)
         }
         if (call.name == AgentToolNames.TASK_LIST && allowLocalRead && taskList != null) {
-            val input = runCatching { json.decodeFromString(TaskListInput.serializer(), call.argumentsJson) }.getOrNull()
+            val input = decodeTaskListInput(call.argumentsJson)
             val status = input?.status?.let { name -> TaskStatus.entries.firstOrNull { it.name == name } }
             val result = if (input == null || (input.status != null && status == null)) {
                 AgentToolResultStatus.INVALID_INPUT to "INVALID_INPUT"
@@ -891,7 +893,22 @@ class AgentRunService(
         is CalendarSourceRef.Exam -> CalendarSourceSnapshot("EXAM", id.value)
         is CalendarSourceRef.CourseSession -> CalendarSourceSnapshot("COURSE_SESSION", key.scheduleRuleId.value, key.academicWeekNumber.value)
     }
-    @Serializable private data class TaskListInput(val status: String?)
+    /**
+     * DeepSeek Flash has emitted the literal string `"null"` for this nullable,
+     * read-only filter despite receiving a schema that calls for JSON null. Normalize
+     * only that exact interop defect before typed decoding. The raw provider arguments
+     * remain in the immutable ToolCall audit record; every other value stays strict.
+     */
+    private fun decodeTaskListInput(argumentsJson: String): TaskListInput? = runCatching {
+        val root = json.parseToJsonElement(argumentsJson).jsonObject
+        val normalized = root["status"]
+            ?.takeIf { value -> value is JsonPrimitive && value.isString && value.content == "null" }
+            ?.let { JsonObject(root.toMutableMap().apply { put("status", JsonNull) }) }
+            ?: root
+        json.decodeFromJsonElement(TaskListInput.serializer(), normalized)
+    }.getOrNull()
+
+    @Serializable private data class TaskListInput(val status: String? = null)
     @Serializable private data class TimelineInput(val limit: Int?)
     @Serializable private data class MutationInput(val mutationId: String)
     @Serializable private data class EntityChangesInput(val entityKind: String, val entityId: String, val limit: Int?)

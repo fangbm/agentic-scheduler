@@ -491,6 +491,7 @@ class AgentRunIntegrationTest {
     @Test fun `task list and history timeline stay read only in the provider registry`() = runBlocking {
         for ((toolName, arguments, expectedStatus) in listOf(
             Triple(AgentToolNames.TASK_LIST, "{\"status\":null}", AgentToolResultStatus.SUCCESS),
+            Triple(AgentToolNames.TASK_LIST, "{\"status\":\"null\"}", AgentToolResultStatus.SUCCESS),
             Triple(AgentToolNames.HISTORY_TIMELINE, "{\"limit\":10}", AgentToolResultStatus.SUCCESS),
             Triple(AgentToolNames.HISTORY_GET_MUTATION, "{\"mutationId\":\"${id(92)}\"}", AgentToolResultStatus.NOT_FOUND),
             Triple(AgentToolNames.HISTORY_GET_ENTITY_CHANGES, "{\"entityKind\":\"TASK\",\"entityId\":\"${id(93)}\",\"limit\":10}", AgentToolResultStatus.SUCCESS),
