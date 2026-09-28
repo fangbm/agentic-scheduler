@@ -280,9 +280,10 @@ establish Desktop visible UI acceptance or broader write-tool acceptance.
 D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
 frozen decision is changed by this progress update.
 
-Non-blocking P2 Android Provider configuration follow-ups remain: make saved
-credential removal and replacement mutually exclusive, and reject a
-credentialed HTTP Provider URL during save with a clear validation error.
+The Android Provider form makes credential removal and replacement mutually
+exclusive, and rejects credentialed HTTP URLs before resolving or importing a
+credential. These are local validation safeguards; they do not change the
+frozen Provider transport contract.
 
 Frozen D9-01 baseline:
 

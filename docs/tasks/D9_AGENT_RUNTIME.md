@@ -81,9 +81,11 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
 - Other Android device evidence covers the provider configuration surface,
   missing-field error, responsive action rows, and thread-deletion confirmation
   content. Desktop visible UI acceptance remains pending.
-- Non-blocking P2 Android Provider configuration follow-ups: make saved
-  credential removal and replacement mutually exclusive in the UI, and reject
-  credentialed HTTP Provider URLs during save with a clear validation error.
+- The Android Provider form now makes credential removal and replacement
+  mutually exclusive: selecting removal clears and disables the credential
+  field. It also rejects credentialed HTTP URLs before resolving or importing
+  a credential. This is local UI validation; end-to-end Android/Provider
+  acceptance remains covered by the broader D9-01 gate.
 
 Full D9-01 acceptance remains open, including Desktop visible UI acceptance,
 broader write-tool acceptance, and the

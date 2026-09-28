@@ -575,6 +575,7 @@ private fun AndroidAgentPanel(
             },
             label = { Text("Optional API credential (stored in Android secure storage)") },
             visualTransformation = PasswordVisualTransformation(),
+            enabled = !busy && !removeSavedCredential,
         )
         val selectedCredentialReference = configId?.let { selectedId ->
             configChoices.firstOrNull { it.id == selectedId }?.credentialReference
@@ -583,7 +584,10 @@ private fun AndroidAgentPanel(
             Row {
                 Checkbox(
                     checked = removeSavedCredential,
-                    onCheckedChange = { removeSavedCredential = it },
+                    onCheckedChange = { remove ->
+                        removeSavedCredential = remove
+                        if (remove) credential = ""
+                    },
                     enabled = !busy,
                 )
                 Text("Remove saved credential")
@@ -601,6 +605,11 @@ private fun AndroidAgentPanel(
             val output = reservedOutput.toLongOrNull()
             if (baseUrl.isBlank() || model.isBlank() || max == null || output == null || output <= 0 || max <= output || toolCalling == null || streaming == null) {
                 configurationError = "Enter URL, model, positive context/output capacities, and choose tool-calling and streaming support."
+            } else if (
+                (credential.isNotEmpty() || (!removeSavedCredential && selectedCredentialReference != null)) &&
+                !baseUrl.trim().startsWith("https://", ignoreCase = true)
+            ) {
+                configurationError = "A provider with an API credential must use HTTPS."
             } else scope.launch {
                 busy = true
                 configurationError = null
