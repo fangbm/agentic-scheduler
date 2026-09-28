@@ -463,6 +463,7 @@ private fun AndroidAgentPanel(
     var command by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("Configure a provider to begin.") }
     var pendingConfirmation by remember { mutableStateOf<Pair<dev.agenticscheduler.agent.history.AgentToolCallId, String>?>(null) }
+    var confirmThreadDeletion by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var configurationError by remember { mutableStateOf<String?>(null) }
     var effectivePolicy by remember { mutableStateOf<dev.agenticscheduler.agent.permission.AgentPermissionPolicy?>(null) }
@@ -627,6 +628,9 @@ private fun AndroidAgentPanel(
                     status = "New application-owned AgentThread created."
                 }
             }) { Text("New conversation") }
+            Button(enabled = !busy && threadId != null, onClick = { confirmThreadDeletion = true }) {
+                Text("Delete conversation")
+            }
         }
         threadChoices.forEach { thread ->
             Button(onClick = { threadId = thread.id }) { Text(if (thread.id == threadId) "Current conversation" else "Conversation ${thread.id.value.take(8)}") }
@@ -671,7 +675,33 @@ private fun AndroidAgentPanel(
         }
     }
 
-    pendingConfirmation?.let { (callId, preview) ->
+    if (confirmThreadDeletion) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirmThreadDeletion = false },
+            title = { Text("Delete this conversation?") },
+            text = { Text("This removes its local messages, Tool calls and results, and summaries. Committed AgentAction and ChangeLog audit facts remain. Deletion does not erase every historical encrypted copy.") },
+            confirmButton = { Button(enabled = !busy, onClick = {
+                val id = threadId ?: return@Button
+                scope.launch {
+                    busy = true
+                    try {
+                        state.deleteThread(id)
+                        confirmThreadDeletion = false
+                        pendingConfirmation = null
+                        messages.clear(); toolCalls.clear(); toolResults.clear()
+                        threadId = null
+                        reloadConfig()
+                        status = "Conversation deleted. Committed audit facts remain."
+                    } catch (_: Exception) {
+                        status = "Conversation could not be deleted."
+                    } finally { busy = false }
+                }
+            }) { Text("Delete") } },
+            dismissButton = { Button(enabled = !busy, onClick = { confirmThreadDeletion = false }) { Text("Cancel") } },
+        )
+    }
+
+    pendingConfirmation?.takeUnless { confirmThreadDeletion }?.let { (callId, preview) ->
         AlertDialog(
             onDismissRequest = { },
             title = { Text("Confirm Agent action") },
@@ -693,22 +723,25 @@ private fun AndroidAgentPanel(
                     finally { busy = false }
                 }
             }) { Text("Confirm") } },
-            dismissButton = { Button(enabled = !busy, onClick = {
-                val id = threadId ?: return@Button
-                scope.launch {
-                    busy = true
-                    pendingConfirmation = null
-                    try {
-                        when (val result = runService.confirm(id, callId, approved = false)) {
-                            is AgentRunResult.Completed -> status = "Denied. No write was authorized."
-                            is AgentRunResult.AwaitingConfirmation -> { pendingConfirmation = result.callId to result.previewJson; status = "Confirmation required" }
-                            is AgentRunResult.Failed -> status = agentFailureMessage(result.redactedCode)
-                        }
-                        reloadThread(id)
-                    } catch (_: Exception) { status = "Denial could not be recorded." }
-                    finally { busy = false }
-                }
-            }) { Text("Deny") } },
+            dismissButton = { Row {
+                Button(enabled = !busy, onClick = {
+                    val id = threadId ?: return@Button
+                    scope.launch {
+                        busy = true
+                        pendingConfirmation = null
+                        try {
+                            when (val result = runService.confirm(id, callId, approved = false)) {
+                                is AgentRunResult.Completed -> status = "Denied. No write was authorized."
+                                is AgentRunResult.AwaitingConfirmation -> { pendingConfirmation = result.callId to result.previewJson; status = "Confirmation required" }
+                                is AgentRunResult.Failed -> status = agentFailureMessage(result.redactedCode)
+                            }
+                            reloadThread(id)
+                        } catch (_: Exception) { status = "Denial could not be recorded." }
+                        finally { busy = false }
+                    }
+                }) { Text("Deny") }
+                Button(enabled = !busy, onClick = { confirmThreadDeletion = true }) { Text("Delete conversation") }
+            } },
         )
     }
 }

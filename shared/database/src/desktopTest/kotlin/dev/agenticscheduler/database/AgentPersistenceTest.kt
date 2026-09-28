@@ -245,6 +245,13 @@ class AgentPersistenceTest {
             assertEquals(listOf(created.value), tasks.observeTasks().first())
             assertEquals(1, history.timeline().size)
             assertEquals(1, agent.toolResults(thread.id).size)
+
+            agent.deleteThread(thread.id)
+            assertNull(agent.thread(thread.id))
+            assertEquals(action.id, agent.action(action.id)?.id)
+            assertEquals(AgentActionStatus.SUCCEEDED, agent.action(action.id)?.status)
+            assertEquals(1, history.timeline().size)
+            assertEquals(created.value.id, tasks.getTask(created.value.id)?.id)
         } finally {
             database.close()
         }

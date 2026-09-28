@@ -423,18 +423,19 @@ private fun AgentCommandPanel(
     var command by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var providerDialog by remember { mutableStateOf(false) }
+    var confirmThreadDeletion by remember { mutableStateOf(false) }
     var editingProvider by remember { mutableStateOf<ProviderConfig?>(null) }
     var runState by remember { mutableStateOf<String?>(null) }
     var activeEnrollment by remember { mutableStateOf<LocalEnrollmentState.Active?>(null) }
     var allowSyncedAgentWrites by remember { mutableStateOf(false) }
     var effectivePolicy by remember { mutableStateOf<List<Pair<AgentToolCapability, String>>>(emptyList()) }
 
-    suspend fun refreshThread(threadId: AgentThreadId?) {
+    suspend fun refreshThread(threadId: AgentThreadId?, createIfMissing: Boolean = true) {
         threads = state.threads().sortedByDescending { it.createdAtEpochMillis }
         selectedProviderId = state.selectedProviderConfigId()
         providers = state.providerConfigs().sortedBy { it.model }
         if (threadId == null) {
-            selectedThread = threads.firstOrNull()?.id ?: runService.createThread().also { selectedThread = it }
+            selectedThread = threads.firstOrNull()?.id ?: if (createIfMissing) runService.createThread().also { selectedThread = it } else null
         } else selectedThread = threadId
         val current = selectedThread
         messages = current?.let { state.messages(it).sortedBy { item -> item.ordinal } }.orEmpty()
@@ -467,6 +468,9 @@ private fun AgentCommandPanel(
                     runState = "New AgentThread created."
                 }
             }) { Text("New conversation") }
+            Button(enabled = !busy && selectedThread != null, onClick = { confirmThreadDeletion = true }) {
+                Text("Delete conversation")
+            }
         }
         providers.forEach { provider ->
             Button(onClick = { scope.launch {
@@ -545,7 +549,7 @@ private fun AgentCommandPanel(
         }
     }
 
-    pendingOrNull(calls)?.let { call ->
+    pendingOrNull(calls)?.takeUnless { confirmThreadDeletion }?.let { call ->
         AlertDialog(
             onDismissRequest = { /* A pending preview must be explicitly confirmed or denied. */ },
             title = { Text("Confirm ${call.name}") },
@@ -566,21 +570,47 @@ private fun AgentCommandPanel(
                     finally { busy = false }
                 }
             }) { Text("Confirm") } },
-            dismissButton = { Button(enabled = !busy, onClick = {
+            dismissButton = { Row {
+                Button(enabled = !busy, onClick = {
+                    val threadId = selectedThread ?: return@Button
+                    busy = true
+                    scope.launch {
+                        try {
+                            when (val result = runService.confirm(threadId, call.id, false)) {
+                                is AgentRunResult.Completed -> runState = "Denied. No write was performed."
+                                is AgentRunResult.AwaitingConfirmation -> runState = "Another Tool requires confirmation."
+                                is AgentRunResult.Failed -> runState = failureLabel(result.redactedCode)
+                            }
+                            refreshThread(threadId)
+                        } catch (_: Exception) { runState = "Denial could not be recorded." }
+                        finally { busy = false }
+                    }
+                }) { Text("Deny") }
+                Button(enabled = !busy, onClick = { confirmThreadDeletion = true }) { Text("Delete conversation") }
+            } },
+        )
+    }
+
+    if (confirmThreadDeletion) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirmThreadDeletion = false },
+            title = { Text("Delete this conversation?") },
+            text = { Text("This removes its local messages, Tool calls and results, and summaries. Committed AgentAction and ChangeLog audit facts remain. Deletion does not erase every historical encrypted copy.") },
+            confirmButton = { Button(enabled = !busy, onClick = {
                 val threadId = selectedThread ?: return@Button
                 busy = true
                 scope.launch {
                     try {
-                        when (val result = runService.confirm(threadId, call.id, false)) {
-                            is AgentRunResult.Completed -> runState = "Denied. No write was performed."
-                            is AgentRunResult.AwaitingConfirmation -> runState = "Another Tool requires confirmation."
-                            is AgentRunResult.Failed -> runState = failureLabel(result.redactedCode)
-                        }
-                        refreshThread(threadId)
-                    } catch (_: Exception) { runState = "Denial could not be recorded." }
-                    finally { busy = false }
+                        state.deleteThread(threadId)
+                        confirmThreadDeletion = false
+                        runState = "Conversation deleted. Committed audit facts remain."
+                        refreshThread(null, createIfMissing = false)
+                    } catch (_: Exception) {
+                        runState = "Conversation could not be deleted."
+                    } finally { busy = false }
                 }
-            }) { Text("Deny") } },
+            }) { Text("Delete") } },
+            dismissButton = { Button(enabled = !busy, onClick = { confirmThreadDeletion = false }) { Text("Cancel") } },
         )
     }
 
