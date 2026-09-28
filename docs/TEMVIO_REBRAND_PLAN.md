@@ -1,9 +1,9 @@
 # Temvio — Staged Rebranding and Technical Rename Plan
 
-> Status: PROPOSED / DOCUMENTATION ONLY  
+> Status: PRODUCT NAME SELECTED BY OWNER / LEGAL AND MARKET CLEARANCE PENDING / DOCUMENTATION ONLY  
 > Date: 2026-09-28  
 > Project: fangbm/agentic-scheduler (current repository name when this plan was written)  
-> Proposed product name: Temvio (NOT YET CLEARED)  
+> Selected product name: Temvio (owner-confirmed 2026-09-28; NOT YET CLEARED)  
 > Governing principle: brand presentation and repository identity first; technical identity later, through separately gated changes.
 
 ## 0. Naming clearance — mandatory gate before public rebrand
@@ -17,7 +17,7 @@ A preliminary name check surfaced:
 
 These findings are **not** a legal conclusion, but the software-industry collision is material. Before proceeding, perform a documented search of target-market trademarks, appropriate classes, GitHub repository names, app stores, domains and social handles. Review potential confusion with the existing software product; obtain qualified legal advice if a commercial launch is contemplated. Record available names/handles and the final go/no-go decision. If Temvio does not clear, choose a new brand **before** Phase 1; the technical migration structure below still applies.
 
-Logo studies and this plan are provisional. Do not publish a logo or buy brand-specific assets on the assumption that name ownership is established.
+Temvio is the owner's selected product name; its availability remains unverified. Logo studies and this plan remain provisional for external/public use. Do not publish a logo or buy brand-specific assets on the assumption that name ownership is established.
 
 ## 1. Objectives and non-negotiable boundaries
 
@@ -167,4 +167,4 @@ Only if there is a compelling product reason and a separate spec: Android/Wear a
 | Phase 2 implementation | Module owners | full target matrix + old-data/mixed-client regression |
 | Optional external identity | Security/data compatibility review | dedicated spec and explicit owner approval |
 
-**Current action authorized by this document:** record a proposed plan and explore logos. **Not authorized yet:** actual public repository rename, any package/namespace migration, or a declaration that “Temvio” is trademark-clear.
+**Current action authorized by this document:** use Temvio as the selected working product brand in planning and explore logos. **Not authorized yet:** actual public repository rename, any package/namespace migration, or a declaration that “Temvio” is trademark-clear.
