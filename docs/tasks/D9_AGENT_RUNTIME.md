@@ -49,13 +49,16 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   `WAITING_CONFIRMATION` call when its conversation is selected, rather than
   relying only on in-memory dialog state. Session-local PlanBranch proposals
   are scoped to their AgentThread.
-- Verification status: documented head `b7f5eb2` passed all four jobs
-  (Linux build/tests, Windows Desktop, Android Keystore, and Wear Keystore) in
-  CI run `36385286041`.
+- Verification status: head `f2a333e` passed all four jobs (Linux
+  build/tests, Windows Desktop, Android Keystore, and Wear Keystore) in CI run
+  `36395340410`.
 - Android device evidence covers the provider configuration surface,
   missing-field error, responsive action rows, and thread-deletion confirmation
   content. No provider is configured, so Tool preview/confirmation execution
   remains unverified. Desktop visible UI acceptance also remains pending.
+- Non-blocking P2 Android Provider configuration follow-ups: make saved
+  credential removal and replacement mutually exclusive in the UI, and reject
+  credentialed HTTP Provider URLs during save with a clear validation error.
 
 Full D9-01 acceptance remains open, including configured-provider Tool
 preview/confirmation execution, Desktop visible UI acceptance, and the
