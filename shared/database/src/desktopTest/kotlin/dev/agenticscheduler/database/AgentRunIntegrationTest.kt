@@ -117,9 +117,19 @@ class AgentRunIntegrationTest {
             releaseFirstProbe.complete(Unit)
             assertIs<AgentRunResult.AwaitingConfirmation>(firstRun.await())
             assertEquals(AgentRunResult.Failed("CONFIRMATION_PENDING"), secondRun.await())
-            assertEquals(listOf(0L), state.messages(threadId).map { it.ordinal })
+            // The first run persists its USER request plus the provider's TOOL
+            // response.  The serialised second run must not add another USER
+            // message while that confirmation is pending.
+            assertEquals(listOf(0L, 1L), state.messages(threadId).map { it.ordinal })
+            assertEquals(1, state.messages(threadId).count { it.role == AgentMessageRole.USER })
             assertEquals(1, state.toolCalls(threadId).count { it.state == AgentToolCallState.WAITING_CONFIRMATION })
             assertEquals(2, requestIndex)
+            val pendingCall = state.toolCalls(threadId).single { it.state == AgentToolCallState.WAITING_CONFIRMATION }
+            state.deleteThread(threadId)
+            assertTrue(state.thread(threadId) == null)
+            assertTrue(state.messages(threadId).isEmpty())
+            assertTrue(state.toolCalls(threadId).isEmpty())
+            assertEquals(AgentRunResult.Failed("CONFIRMATION_NOT_FOUND"), runtime.confirm(threadId, pendingCall.id, approved = true))
         } finally {
             releaseFirstProbe.complete(Unit)
             client.close()
