@@ -250,10 +250,15 @@ not yet been accepted.
 
 Agent-origin business writes use the D8 inner-payload-v2 compatibility gate and
 device-local all-devices-upgraded opt-in; synchronized Agent writes remain
-disabled by default. Combined head `61ec719` passed all four jobs in CI run
-`36382816698`. Android/Desktop interactive surface acceptance remains pending,
-so D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
-frozen decision is changed by this progress update.
+disabled by default. Rebased head `44b99f4` passed all four CI jobs (Linux,
+Windows, Android Keystore, and Wear Keystore) in run `36384016695`. The Android
+narrow-screen UI fix `2b48ad0` is pushed and its fresh CI is pending. Android
+device evidence covers the provider configuration surface, missing-field
+error, responsive action rows, and deletion confirmation content. No provider
+is configured, so Tool preview/confirmation execution remains unverified;
+Desktop visible UI acceptance remains pending. D9-01 remains IN PROGRESS and
+its PR remains Draft. Full D9 remains open; no frozen decision is changed by
+this progress update.
 
 Frozen D9-01 baseline:
 
