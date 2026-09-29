@@ -21,6 +21,8 @@ dependencies {
     implementation(compose.desktop.currentOs)
     @Suppress("DEPRECATION")
     implementation(compose.material3)
+    testImplementation(compose.desktop.uiTestJUnit4)
+    testImplementation(compose.desktop.currentOs)
 }
 
 compose.desktop {

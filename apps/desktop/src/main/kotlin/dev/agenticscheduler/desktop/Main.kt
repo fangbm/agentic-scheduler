@@ -3,6 +3,7 @@ package dev.agenticscheduler.desktop
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -388,13 +389,18 @@ private fun DesktopScheduler(
         }
         // Calendar source facts above can add or remove lazy items. Keep the pending
         // PlanBranch preview attached to this semantic panel rather than its list index.
-        item(key = "planner-dogfood") { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
+        plannerDogfoodItem { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
     if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
     editingEvent?.let { EventEditorDialog(it, selectedDate, displayTimeZone, eventEditor, { editingEvent = null }, { editingEvent = null }) }
     if (creatingTask) TaskEditorDialog(null, taskEditor, { creatingTask = false }, { creatingTask = false })
     editingTask?.let { TaskEditorDialog(it, taskEditor, { editingTask = null }, { editingTask = null }) }
+}
+
+/** Keeps the remembered preview state stable while rows above it change. */
+internal fun LazyListScope.plannerDogfoodItem(content: @Composable () -> Unit) {
+    item(key = "planner-dogfood") { content() }
 }
 
 @Composable
