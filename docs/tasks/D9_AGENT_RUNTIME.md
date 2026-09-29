@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **D9-01 IN PROGRESS — PR Draft — D8 COMPLETE**
+> Status: **D9-01 FINAL CI PENDING — PR Draft — D8 COMPLETE**
 > Date: 2026-09-12  
 > Acceptance evidence updated: 2026-09-29
 > Decision source: `docs/AGENT_DECISIONS.md`
@@ -28,7 +28,9 @@ Android/Desktop Agent surface / universal command entry
 
 D9-02 adds synchronized Agent history. D9-03 adds Wear provider provisioning/capability integration.
 
-Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
+Current implementation inventory on this branch (D9-01 has completed its
+code/test review and representative live acceptance; final branch CI and merge
+remain pending):
 
 - Shared Agent state/persistence and bounded provider-run orchestration are
   present, including persisted messages, ToolCalls, ToolResults, AgentActions,
@@ -101,20 +103,31 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   rejected the retained proposal with `PlanBranch is stale; preview again
   before Apply.` No Provider secret, credential value, or sensitive transcript
   is recorded in this evidence.
+- The four final representative paths were exercised on Android 16 on
+  2026-09-29 with the configured real HTTPS DeepSeek Flash Provider and the
+  visible local Planner UI. A confirmation-gated `task.update` completed
+  against the current Task and a separate supported `history.undo` restored
+  the prior state; a confirmation-gated `event.update` and its supported Undo
+  were also exercised. Local Reflow produced a real session-scoped PlanBranch
+  from the current persisted FocusBlock, including the stale-branch retry
+  behavior before an actionable preview was produced. A
+  `planningProfile.update` proposal displayed its confirmation preview and
+  completed after explicit confirmation. The evidence contains no Provider
+  credential, secret, or sensitive transcript.
 - The Android Provider form now makes credential removal and replacement
   mutually exclusive: selecting removal clears and disables the credential
   field. It also rejects credentialed HTTP URLs before resolving or importing
   a credential. This is local UI validation; end-to-end Android/Provider
   acceptance remains covered by the broader D9-01 gate.
 
-Full D9-01 acceptance remains open. The recorded Desktop evidence covers the
-representative read, confirmation, denial, error, deletion, restart, and
-Planner paths above; it is not a claim that every Typed Tool has been exercised
-against a live Provider. In particular, the full AGT-017 matrix remains gated
-by its repository tests and review, Agent-origin synchronized writes remain
-disabled without the D8 all-devices-upgraded acknowledgement, and D9-02/D9-03
-remain out of scope. The PR remains Draft; passing CI and this focused runtime
-evidence do not close D9-01.
+The recorded evidence is intentionally representative rather than a claim that
+every Typed Tool was manually exercised against a live Provider. The complete
+AGT-017 deterministic matrix is reviewed below, and the final four required
+live representative paths are now recorded above. Agent-origin synchronized
+writes remain disabled without the D8 all-devices-upgraded acknowledgement;
+D9-02/D9-03 remain out of scope. The only remaining D9-01 release gate is a
+green repository-wide CI run on the final rebased PR head, followed by review
+and merge.
 
 ---
 
@@ -436,17 +449,18 @@ passing fake Provider test.
 | `calendar.list`, `task.get`, `task.list` | Unit + Provider-registry integration | Desktop `task.list` exercised; remaining read variants not individually live-tested |
 | `history.timeline`, `history.getMutation`, `history.getEntityChanges` | Unit + Provider-registry integration | Android `history.timeline` exercised; remaining variants not individually live-tested |
 | `event.create`, `task.create` | Unit + Provider-to-Room confirmation integration | Desktop confirmed Event/Task create exercised |
-| `event.update`, `task.update` | Unit/Room coverage; Task Update runtime stale/commit integration | Not individually live-tested |
-| Full Replan, Local Reflow preview | Unit + Provider-registry integration | Desktop Full Replan exercised; Local Reflow not yet live-tested |
+| `event.update`, `task.update` | Unit/Room coverage; Task Update runtime stale/commit integration | Android real-Provider confirmation-gated Task Update; separate Event Update also confirmed |
+| Full Replan, Local Reflow preview | Unit + Provider-registry integration | Desktop Full Replan exercised; Android Local Reflow produced a real session-scoped PlanBranch and handled stale-preview retry |
 | `planner.applyBranch` | Unit + Provider-registry confirmation integration | Desktop preview, apply and stale rejection exercised |
-| `planningProfile.update` | Unit/Room coverage | Not yet live-tested |
-| `history.undo` | Unit/Room coverage plus unsupported runtime result | Successful supported Undo not yet live-tested |
+| `planningProfile.update` | Unit/Room coverage | Android real-Provider proposal, visible confirmation, and confirmed update exercised |
+| `history.undo` | Unit/Room coverage plus unsupported runtime result | Android supported Undo exercised after confirmed Task Update; separate Event Update Undo also exercised |
 
-Therefore D9-01 remains **IN PROGRESS / Draft**.  Before marking it ready, run
-the four remaining live representative paths (`event.update` or `task.update`,
-Local Reflow, PlanningProfile update, and supported Undo), then re-run
-repository CI on the final commit.  These are acceptance work, not a reason to
-relax AGT-017 or the independent OD-012 production-data gate.
+The four required live representative paths (`event.update` or `task.update`,
+Local Reflow, PlanningProfile update, and supported Undo) are complete. The
+AGT-017 code/test review and live representative acceptance are therefore
+complete; final repository CI on the rebased PR head remains required before
+marking the PR Ready. This does not relax AGT-017, the independent OD-012
+production-data gate, or the separate D9-02/D9-03 scope gates.
 
 ---
 
