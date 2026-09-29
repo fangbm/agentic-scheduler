@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **D9-01 COMPLETE — PR #9 MERGED — D8 COMPLETE**
+> Status: **D9-01 COMPLETE / MERGED — D9-02 ARCHITECTURE FROZEN 2026-09-30, IMPLEMENTATION PENDING — D8 COMPLETE**
 > Date: 2026-09-12  
 > Acceptance evidence updated: 2026-09-29
 > Decision source: `docs/AGENT_DECISIONS.md`
@@ -333,7 +333,9 @@ Do not copy provider secrets or complete system prompts into AgentAction.
 
 ---
 
-# 13. D9-02 sync amendment
+# 13. D9-02 sync amendment — ARCHITECTURE FROZEN 2026-09-30
+
+Maintainer explicitly approved all seven W1/W2/P1/D1/W4/W5/L1 first-alpha architectural decisions. See AGT-013, SYN-003B, `docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md` and the explanatory D9-02 protocol v0.2 document. Exact V3 JSON fixtures, non-destructive Room migration, compatible D8 worker updates, and Android/Desktop E2E evidence are **pending implementation gates**; D9-02 is NOT implementation-complete.
 
 After D9-01 local behavior is stable, extend sync for conversation/history:
 
