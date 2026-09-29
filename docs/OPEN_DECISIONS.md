@@ -144,9 +144,18 @@ Source: docs/PERSISTENCE_DECISIONS.md
 ## OD-012 — Local database encryption at rest
 
 ```text
-Status: PENDING
-Must resolve by: before claiming production-sensitive local-data readiness
-Impact: SECURITY / PRIVACY
+Status: BLOCKED_BY_PLATFORM_COMPATIBILITY
+Decision: SQLCipher Android 4.19.0 supplies an Android/Wear Room 3 SQLiteDriver
+          candidate, but no production-ready, format-compatible Room 3/KMP
+          SQLiteDriver has been verified for JVM Desktop (Windows/Linux). Do not
+          replace BundledSQLiteDriver, use field-level encryption, or create a
+          custom encryption driver without an approved ADR.
+Evidence: docs/OD-012_LOCAL_DATABASE_ENCRYPTION.md;
+          Room3SqlCipherCompatibilityPocTest
+Must resolve by: before claiming production-sensitive local-data readiness;
+                 select a vendor-supported cross-platform Room 3 driver or approve
+                 an alternate persistence architecture/custom-driver ADR.
+Impact: SECURITY / PRIVACY / PERSISTENCE COMPATIBILITY
 ```
 
 D8 secure key storage/E2EE does not automatically encrypt ordinary local SQLite rows.
