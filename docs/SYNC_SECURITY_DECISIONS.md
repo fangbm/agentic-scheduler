@@ -100,6 +100,52 @@ No Domain class receives serialization annotations merely for transport. Dedicat
 
 Wire JSON byte ordering is not a security primitive and is not signed/hashed. Idempotency uses typed IDs, not ciphertext hashes.
 
+### SYN-003B — D9-02 Agent history inner-payload amendment / APPROVED 2026-09-30
+
+This amendment adds independently versioned **inner payload V3** to the D8
+v1 transport. The original D8 `SyncPayloadV1` and the D9-01
+Agent-origin **business** `SyncPayloadV2` retain their exact meaning,
+routing, encoding and compatibility behavior. V3 wraps one immutable
+typed `AgentSyncOperation` (historical Agent fact, never D7
+`SyncOperation`). Its UUIDv7 `operationId` equals the authenticated
+outer envelope `mutationId` routing value for unchanged server
+idempotency. The outer envelope remains **v1**, with the original exact
+UTF-8 AAD string, Tink AES256_GCM and key epochs; server stores only
+opaque ciphertext/routing metadata and never inspects Agent contents.
+
+V3 has **independent per-SyncSpace Agent replica IDs/DVV/handled-dot
+frontier**. V1/V2 business dots and V3 Agent dots MUST NOT enter each
+other's DVV context. AgentAction links to D7 mutations are separate
+typed immutable MutationId references, and cannot reexecute business
+writes. The legacy D8 codec must still quarantine an unknown V3
+*whole envelope ID* without partial apply; this must not make later
+independent V1 business operations depend on quarantined Agent dots.
+When an old client upgrades after advancing its D8 cursor over V3,
+perform distinct Agent backfill from its earliest relevant quarantined
+cursor minus one; do not rewind or reapply D7 history. Missing retained
+ciphertext or historical decryption keys is incomplete recovery.
+
+The first-alpha V3 authoring/receive contract is the seven **FROZEN**
+W1/W2/P1/D1/W4/W5/L1 choices in AGT-013 and
+`docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md`: manifest-sealed complete
+turns; immutable terminal history only; explicit conflicts/causal
+tombstones and audited deletion; independent per-space user opt-in OFF
+by default and active-device upgrade acknowledgment; business outbox
+dependency holds without blocking independent inbound catch-up; and
+**one V3 event/envelope with encoded inner plaintext <=262144 UTF-8
+bytes**, also bounded by deployment ciphertext/request limits.
+Oversized events explicitly fail; there is no implicit fragmentation,
+plaintext downgrade or server-side Agent execution.
+
+Exact V3 JSON DTO/normalization fixtures, deletion-resolution event
+encoding, state migration and old-/new-client test vectors MUST be
+committed and reviewed before production V3 transmission. No change
+to frozen SYN-004 AAD, server trust boundary or SYN-016 no-compaction
+policy is authorized by this amendment. Unknown inner versions and
+discriminators continue whole-envelope durable quarantine.
+
+
+
 ---
 
 # SYN-004 — E2EE primitive / OD-040

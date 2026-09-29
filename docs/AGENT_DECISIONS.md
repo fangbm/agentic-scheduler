@@ -439,49 +439,119 @@ Local-only writes still obey normal Tool validation and permission rules.
 
 ---
 
-# AGT-013 — D9-02 synchronization amendment
+# AGT-013 — D9-02 synchronized Agent history / APPROVED AMENDMENT
 
-D9-02 extends D8 for Agent conversation/history operations only after D9-01
-local Agent behavior is stable. The Agent-origin business payload v2 above is
-the narrow D9-01 compatibility amendment.
+Status: **FROZEN — maintainer approved 2026-09-30**, D9-02-00.
+Recorded approval: the seven W1/W2/P1/D1/W4/W5/L1 policies in
+`docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md`. This is an architectural
+policy freeze; exact V3 serializer/fixture and migration implementation
+acceptance are separate mandatory gates, not silent discretionary changes.
+D9-01's local Agent runtime and Agent-origin **business** SyncPayloadV2
+compatibility gate remain unchanged.
 
-Synchronized Agent concepts:
+Synchronized historical concepts: `AgentThread` metadata, immutable
+`AgentMessage`, terminal `AgentToolCall`/`AgentToolResult` snapshots,
+finalized `AgentAction`, `TurnFinalized` and causal
+`AgentThreadDelete` tombstones. Never synchronize `ContextSummary`,
+local permission policy, `ProviderConfig`/credentials/SecretRefs,
+provider call/session/cache IDs, or executable remote confirmation state.
+Receiving any historical record never executes a Tool or business mutation.
 
-```text
-AgentThread metadata
-AgentMessage
-AgentToolCall
-AgentToolResult
-AgentAction
-AgentThreadDelete tombstone
-```
+W1 — **separately versioned Agent SyncPayloadV3** holds one immutable typed
+`AgentSyncOperation`. Preserve outer `EncryptedEnvelopeV1`, exact v1
+AAD, Tink AEAD/key epochs, opaque D8 server and V1/V2 business semantics.
+The authenticated outer routing `mutationId` equals the V3 unique UUIDv7
+`operationId`, but it is **not** a D7 business MutationRecord. Each
+device/SyncSpace persists a **distinct Agent replica UUIDv7, Agent-only
+DVV/handled-dot ledger and pending graph**. Never mix Agent dots into D7
+business causal context or vice versa; refer to D7 business operations
+only by explicit immutable MutationIds. Unknown V3 is whole-ID quarantined
+by old D8. After upgrade, backfill quarantined V3 from the earliest
+quarantined server cursor minus one, without replaying business effects;
+report missing ciphertext/key as incomplete history. Existing D9-01
+Agent-origin V2 **business** all-devices-upgraded gate still applies.
 
-Not synchronized:
+W2 — Only final immutable snapshots of ToolCall/ToolResult/AgentAction are
+transmitted; pending confirmation remains local to its origin device.
+Each completed (including explicitly failed) turn has immutable
+`TurnFinalized(turnId, parentTurnIds, ordered manifest, terminal outcome)`.
+Stage incoming members invisibly and expose the **whole** verified,
+causally eligible turn atomically to Agent transcripts and context.
+Concurrent sibling turns are explicit forks: stable UI-only ordering is
+permitted, but no merged-thread Provider continuation before approved
+explicit reconciliation. HLC, UUID and server cursor never select a
+semantic dialogue winner.
 
-```text
-ContextSummary
-permission policy
-ProviderConfig/API credentials
-provider session/cache IDs
-```
+P1 — Migrate Room v12 non-destructively to immutable Agent inbox/outbox,
+Agent causal/frontier, manifest/staging/projection, tombstone, audit-link,
+conflict and backfill state; preserve old local pending confirmations and
+audit. Existing local message ordinals are **not** globally unique; never
+insert remote ordinal into the unique local (thread_id, ordinal) constraint.
+Immutable identity equality uses canonical **versioned typed wire DTO
+fields**, not Room rows or ciphertext hashes. Same ID/equal value dedupes;
+same ID/different value is an integrity conflict. A separate typed Agent
+conflict reference must not silently extend D8's business EntityKind.
+Dialogue ancestry determines semantic sequence; HLC/ID are merely stable
+presentation tie-breakers for incomparable branches.
 
-Merge rules:
+D1 — Retain causal `AgentThreadDelete` tombstones and handled-dot/ID
+metadata; purge **active** message/call/result/summary content after
+accepted deletion, retain sanitized finalized `AgentAction` and committed
+D7 audit. Older late appends cannot resurrect; concurrent delete/append
+produces an explicit durable semantic conflict and blocks Provider runs
+on the disputed thread. Explicit owner resolution supports **keep
+deletion** or importing competing content into a **new thread ID**, never
+silent revival of the deleted ID. Resolution must observe all conflicting
+Agent dots; exact resolution-event DTO must be fixed in canonical fixtures.
+References to intentionally deleted raw parents may be marked
+`PARENT_REMOVED_BY_TOMBSTONE`; unrelated missing parents remain pending
+or fail integrity. Competing raw content stays outside active transcripts
+in restricted conflict storage, with OD-012 at-rest caveats. A delete
+cannot discard unpublished causal predecessors or silently upload erased
+private content after deletion: if a causally complete safe upload is
+unavailable, mark remote deletion propagation explicitly pending until
+approved consented completion or an independently approved gap mechanism.
+OD-032 still forbids physical tombstone/history compaction; deletion is
+not retroactive cryptographic erasure of old ciphertext/backups.
 
-```text
-AgentMessage / ToolCall / ToolResult / AgentAction
-    append-only by immutable ID
-    same ID + same value -> dedupe
-    same ID + different value -> integrity conflict
+W4 — Agent conversation sync is **separately user-controlled per
+SyncSpace**, OFF by default and independent of the V2 business-write
+upgrade acknowledgement. Initial rollout requires owner acknowledgement
+that all active enrolled devices are V3 capable. This is **not**
+cryptographic client-version attestation by the opaque server. Without
+conversation consent, never project inbound V3 to readable active
+conversation; retain only approved protocol/quarantine/backfill state for
+later explicit consent. No automatic retrospective upload of D9-01
+conversation history: offer distinct opt-in export of **completed,
+sanitized** historical turns; origin-device pending confirmations stay
+local. Upgrade and new-device recovery use retained encrypted history
+and the existing historical decrypt keyring; missing history/key must
+surface explicit incomplete recovery.
 
-AgentThread metadata
-    title group
-    lifecycle/delete group
+W5 — Held/unauthorized Agent-origin V2 business mutations **and every
+causally dependent D7 business successor** remain pending until eligible;
+never skip dots, rewrite DVVs or bypass existing consent. Refactor worker
+scheduling so held outbound does **not block independent authenticated
+inbound fetch and receive**, which reports status independently. A
+completed V3 turn depending on unshared D7 business MutationIds is held
+as a **whole**, including final audit/manifest. Unrelated consented V3
+turns may progress. Received Agent audit never fabricates a remote
+business write: verify referenced facts exclusively in D7 state.
 
-AgentThreadDelete concurrent with new message
-    -> explicit SyncConflict; no silent resurrection
-```
+L1 — First alpha carries **one V3 event per envelope** and permits at
+most **262144 encoded V3 plaintext UTF-8 bytes** before encryption, also
+respecting potentially lower configured server ciphertext/HTTP bounds.
+Oversized event is an explicit `AGENT_SYNC_PAYLOAD_TOO_LARGE` failure;
+no silent truncation or implicit fragmentation. Preserve exact durable
+ciphertext for idempotent retries.
 
-D9-02 bumps protocol/payload schema version and adds explicit compatibility fixtures. D8 implementations must quarantine unknown D9 operation kinds rather than partially applying them.
+**Implementation prerequisites after this policy freeze:** freeze exact
+typed event/manifest/resolution DTO serializations and JSON compatibility
+fixtures; specify non-destructive migration and bounded receive paths;
+verify old-D8 quarantine then independent V1 processing, historical
+backfill, partial-turn barriers, held-outbound/inbound progress, causally
+safe deletion and adversarial multi-device E2EE tests. These technical
+fixtures cannot silently amend the frozen choices above.
 
 ---
 

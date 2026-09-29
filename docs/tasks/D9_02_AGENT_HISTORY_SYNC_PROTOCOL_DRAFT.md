@@ -1,8 +1,8 @@
 # D9-02 — Agent conversation/history E2EE sync protocol
 
-> Status: **REVISED PROPOSAL v0.2 — REVIEW REQUIRED / NOT FROZEN**  
+> Status: **ARCHITECTURE APPROVED/FROZEN 2026-09-30 — EXACT WIRE FIXTURES AND IMPLEMENTATION PENDING**  
 > Basis: D9-01 merged in `fangbm/temvio` at `1b273b1`, with AGT-011–013, SYN-003/004/012/013/016 and HST-001/006/007 as binding prior decisions.  
-> Supersedes: D9-02 draft in PR #18; explicitly addresses four review findings. Do not treat this proposal as authorization for new cross-device security or merge policies before the maintainer freezes W1/W2/P1/D1/W4/W5/L1.
+> Approval: maintainer explicitly approved all seven design choices W1/W2/P1/D1/W4/W5/L1; normative freeze is recorded in AGT-013, SYN-003B and the companion [sign-off packet](D9_02_PROTOCOL_FREEZE_PACKET.md). This document remains explanatory; exact DTO/fixture and migration review are next gates.
 
 ## 0. Goal, ownership and exclusions
 
@@ -102,9 +102,9 @@ Freeze exact V3 serializers, normalization, canonical equality, limits and versi
 | Security & wire | V1/V2 unchanged; V3 old-client whole-ID quarantine; unknown discriminator; outer/inner ID mismatch; AEAD tamper/wrong key/AAD; excluded credentials/provider metadata; bound size. |
 | Devices & migration | Real v12 migration, local ordinal collision, Android/Desktop offline/reconnect, historical keyring, PostgreSQL restart, exact ciphertext retry and fresh-install parity. |
 
-## 8. Implementation slices after protocol approval
+## 8. Implementation slices after approved architecture; exact wire fixtures first
 
-1. **D9-02-00 protocol freeze:** approve W1/W2/P1/D1/W4/W5/L1, amend canonical AGT-013/SYN-003 and freeze versioned wire fixtures.
+1. **D9-02-00 architecture freeze complete:** AGT-013/SYN-003B and all seven choices approved. **Next separately review exact** V3 event/resolution JSON and old-D8 compatibility fixtures before production encode/send.
 2. **D9-02-01 typed wire/clock:** separate V3 Agent DVV and codec, frozen outer v1 encryption, old/new client compatibility tests.
 3. **D9-02-02 database:** immutable event inbox/outbox, Agent clock, turn sealing, tombstone/conflict/audit links, backfill, real v12 migration.
 4. **D9-02-03 merge/projection:** canonical dedupe, causal/dependency retry, turn fork, title/delete conflicts, accepted explicit resolution and visibility gate.
@@ -113,9 +113,9 @@ Freeze exact V3 serializers, normalization, canonical equality, limits and versi
 
 No new crypto, plaintext server Agent storage, remote execution or D9-03 credential transfer.
 
-## 9. Decisions still requiring maintainer approval
+## 9. Approved architectural decisions and outstanding implementation gates
 
-| ID | Proposed policy | Fail-closed state until approved |
+| ID | Approved first-alpha policy | Required implementation gate |
 | --- | --- | --- |
 | **W1** | V3 event DTO + separate Agent per-space replica DVV/handled frontier; unchanged outer v1/AAD; explicit D7 MutationId references | No V3 production transmission. |
 | **W2** | Terminal immutable Tool/Action snapshots + `TurnFinalized` manifest, source-local pending confirmations and explicit concurrent turn conflict | No partial remote transcript projection. |
@@ -125,4 +125,4 @@ No new crypto, plaintext server Agent storage, remote execution or D9-03 credent
 | **W5** | Hold unsupported V2 plus dependent business closure while permitting independent inbound; hold dependent turns until D7 facts shareable | No V2 bypass or false remote success. |
 | **L1** | Bound message/tool/manifest size against existing envelope limits, explicit oversize failure or separately approved bounded fragmentation | No truncation or unbounded events. |
 
-**Implementation status:** This revision fixes the four **protocol-design contradictions**. It does **not** claim the existing `SyncTransportWorker` early-return bug, production codec, Room schema or transcript assembler have already been modified. Those are separately reviewable implementation requirements after the decisions above are frozen.
+**Approval status:** all seven architectural policies were explicitly frozen by the maintainer on 2026-09-30. **Implementation status:** This revision fixes the four **protocol-design contradictions**. It does **not** claim the existing `SyncTransportWorker` early-return bug, production codec, Room schema or transcript assembler have already been modified. Those are separately reviewable implementation requirements after the decisions above are frozen.

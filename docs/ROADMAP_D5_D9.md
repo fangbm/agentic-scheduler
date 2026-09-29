@@ -220,99 +220,51 @@ OD-012 local database encryption remains a separate production-sensitive-data ga
 
 # D9 — Agent Runtime
 
-Decision source:
-
-```text
-docs/AGENT_DECISIONS.md
-```
+Decision source: `docs/AGENT_DECISIONS.md`. D9-02 architecture
+source: AGT-013, SYN-003B and `docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md`.
 
 Status:
 
 ```text
 D9-00 decisions                        FROZEN
-D9-01 Android/Desktop Agent core       IN PROGRESS
-D9-02 synchronized Agent history       AFTER D9-01
-D9-03 Wear Agent/provider provisioning AFTER D9-01
+D9-01 Android/Desktop Agent core       COMPLETE / PR #9 MERGED
+D9-02 synchronized Agent history       ARCHITECTURE FROZEN 2026-09-30 / IMPLEMENTATION PENDING
+D9-03 Wear Agent/provider provisioning AFTER D9-01 / SEPARATE SCOPE
 ```
 
-D9-01 remains IN PROGRESS. The current branch contains local Agent state and
-provider-run persistence, transcript reconstruction, context assembly/budgeting
-and compaction, plus a bounded provider orchestration path that persists
-ToolCall/ToolResult/AgentAction state. Its shared typed Tool inventory now
-covers calendar/task/history reads; Event create/update; Task create/update;
-Full Replan and Local Reflow previews; PlanBranch apply; PlanningProfile
-update; and history Undo.
+D9-01 finished Android/Desktop local Agent runtime, persistent local
+thread/tool/action history, typed confirmation-gated Tools and audited
+business mutations. Real Android/Desktop provider and representative
+write/update/reflow/profile/Undo paths were recorded in
+`docs/tasks/D9_AGENT_RUNTIME.md`. Final rebased D9-01 PR #9 head
+`21f9c6a` passed four CI jobs in
+[run 36565045414](https://github.com/fangbm/temvio/actions/runs/36565045414)
+and merged as `1b273b1` on 2026-09-29.
 
-Android and Desktop contain Universal Command surfaces wired to the persistent
-Agent runtime, including provider configuration, conversation, permission
-display, and confirmation handling. Android physical-device evidence covers a
-real DeepSeek Flash read and a confirmed Task write. Windows Desktop visible
-acceptance on 2026-09-29 covers a real Provider read, confirmed Task creation,
-denied and invalid Event writes, structured Provider failure/recovery, durable
-confirmation recovery after restart, local conversation deletion, and
-PlanBranch Preview/Cancel/Apply/stale rejection. This is representative runtime
-evidence, not a replacement for the complete D9-01 test/review gate.
+The maintainer explicitly froze **seven D9-02 first-alpha
+architectural policies** on 2026-09-30: inner V3 Agent history over
+unchanged outer D8 E2EE transport; independent Agent-only causal
+namespace; terminal snapshot and sealed-turn visibility; immutable
+non-destructive projections and explicit conflicts; safe causal
+tombstone/delete and retained audit; per-space user opt-in and
+backfill; held business V2/dependent writes without blocking inbound;
+and one event/envelope with 256 KiB encoded plaintext limit.
 
-Agent-origin business writes use the D8 inner-payload-v2 compatibility gate and
-device-local all-devices-upgraded opt-in; synchronized Agent writes remain
-disabled by default. PR #9 head `a96cc04` passed all four CI jobs in run
-[`36523454147`](https://github.com/fangbm/agentic-scheduler/actions/runs/36523454147):
-Linux build/tests, Windows Desktop, Android Keystore, and Wear Keystore.
+**Implementation remains in progress:** freeze exact canonical V3
+wire/deletion-resolution fixtures and migration contract, then add
+Agent V3 codec, separate causal state, Room staging/projection,
+conflict/tombstone resolution, existing D8 transport integration
+and adversarial Android/Desktop old/new client tests. No production
+V3 emission is authorized by the architecture freeze alone.
 
-Android 16 physical-device read-only Provider E2E was exercised with DeepSeek
-Flash. The credential was resolved from Android secure storage, requests used
-HTTPS at `api.deepseek.com`, and the structured-tool capability probe
-succeeded. The Agent made a structured `history.timeline` call (`limit: 20`),
-persisted/displayed the Tool call and Tool result (`[]`), returned that result
-to the model, and received a final response reporting no changes. No business
-data mutation was made. This evidence covers the read-only Tool round trip
-only.
-
-Android 16 physical-device write acceptance was subsequently completed with
-DeepSeek Flash. An initial multi-Tool proposal was rejected by the runtime
-without a business write. A later single `task.create` proposal showed a
-confirmation preview for `D9 confirmation execution test` (`LOW`, five-minute
-estimated and remaining effort, no deadline). Following explicit user
-confirmation, the Task was persisted as `OPEN` / `LOW`, with five-minute
-estimated and remaining effort and no deadline. The ToolResult was `SUCCESS`;
-the linked AgentAction was `SUCCEEDED` with `REQUIRE_CONFIRMATION`. Its
-MutationId linked the `MutationRecord` (`AGENT:<action>` origin), `ChangeLog`
-`TaskPut`, and sync journal entry. No active SyncSpace was present, so the
-write remained local and was not synchronized to a server. This verifies the
-Android task-create path through provider, typed Tool, preview, explicit
-confirmation, application write, and audit/journal evidence. It does not
-establish Desktop visible UI acceptance or broader write-tool acceptance.
-D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
-frozen decision is changed by this progress update. The remaining D9-01 gate is
-the complete AGT-017 test/review matrix; D9-02 synchronized Agent history and
-D9-03 Wear Agent/provider provisioning remain later, separately scoped work.
-
-The Android Provider form makes credential removal and replacement mutually
-exclusive, and rejects credentialed HTTP URLs before resolving or importing a
-credential. These are local validation safeguards; they do not change the
-frozen Provider transport contract.
-
-Frozen D9-01 baseline:
-
-```text
-:shared:agent
-LLM -> typed Tool only
-reads/previews direct by default; writes require confirmation
-permission policy is device-local and Agent-inaccessible
-first provider = strict OpenAI-compatible tool-calling subset over Ktor
-provider/model settings device-local; secrets in PlatformSecretStore
-provider-independent truth/context authority
-explicit deterministic context budget
-persistent non-authoritative compaction summaries
-no automatic raw-thread purge
-AgentAction audit linked to MutationIds
-no embeddings/MCP requirement for first alpha
-```
-
-D9-02 explicitly amends D8; D8 does not pre-invent AgentThread merge behavior.
+Existing D9-01 `SyncPayloadV2` covers Agent-origin **business**
+mutations only and still requires the owner-controlled all-devices-
+upgraded gate. Conversation V3 has separate per-SyncSpace consent,
+OFF by default. Provider credentials, ContextSummary and local
+permission policy never enter ordinary sync; server stays opaque.
+D9-03 Wear Agent/provider provisioning remains separate.
 
 ---
-
 # D10 — Final Product UI / UX
 
 D10 turns the completed product capabilities from D5-D9 into the final coherent cross-platform product experience. It is the first milestone whose acceptance explicitly includes final visual language and complete product-level interaction polish.
