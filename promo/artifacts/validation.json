@@ -1,9 +1,9 @@
 {
   "path": "Temvio-promo.mp4",
-  "durationSeconds": 90.0,
+  "durationSeconds": 60.0,
   "resolution": "1920x1080",
   "frameRate": 30,
-  "frameCount": 2700,
+  "frameCount": 1800,
   "video": {
     "codec": "h264",
     "profile": "High",
@@ -13,20 +13,29 @@
   "audio": {
     "codec": "aac",
     "sampleRateHz": 48000,
-    "durationSeconds": 90.0
+    "channels": 2,
+    "durationSeconds": 60.0,
+    "source": "Original procedural composition; no third-party samples; public-use rights not cleared"
   },
   "finalFrameDecoded": true,
   "blackFrameGapsOver400ms": [],
   "approvedStillSsim": {
-    "frame-4-50.png": 0.995977,
-    "frame-14-50.png": 0.996738,
-    "frame-25-50.png": 0.995728,
-    "frame-36-50.png": 0.996903,
-    "frame-47-50.png": 0.99695,
-    "frame-60-00.png": 0.995877,
-    "frame-72-00.png": 0.997828,
-    "frame-80-50.png": 0.996846,
-    "frame-87-00.png": 0.996863,
-    "frame-89-90.png": 0.996867
+    "frame-2-00.png": 0.974643,
+    "frame-5-60.png": 0.993796,
+    "frame-6-50.png": 0.992962,
+    "frame-7-90.png": 0.992968,
+    "frame-8-90.png": 0.993019,
+    "frame-9-60.png": 0.993976,
+    "frame-10-10.png": 0.994268,
+    "frame-15-80.png": 0.992462,
+    "frame-19-00.png": 0.992144,
+    "frame-22-00.png": 0.992221,
+    "frame-27-50.png": 0.99365,
+    "frame-30-80.png": 0.994064,
+    "frame-37-80.png": 0.996245,
+    "frame-46-50.png": 0.994599,
+    "frame-49-40.png": 0.994599,
+    "frame-53-20.png": 0.994885,
+    "frame-57-80.png": 0.973855
   }
 }
