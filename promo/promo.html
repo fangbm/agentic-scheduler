@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1920,initial-scale=1" />
+  <title>Agentic Scheduler — 项目宣传片</title>
+  <style>
+    :root { font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; color:#18211f; font-synthesis:none; --ink:#18211f; --muted:#687571; --line:#dfe7e3; --green:#187b68; --mint:#e8f4ef; --paper:#f4f6f3; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; width:100%; height:100%; overflow:hidden; background:#f4f6f3; }
+    #stage { position:relative; width:1920px; height:1080px; overflow:hidden; background:#f4f6f3; }
+    .scene { position:absolute; inset:0; padding:78px 112px 72px; opacity:0; transform:translateY(14px); overflow:hidden; }
+    .scene.dark { color:#f5f7f4; background:#101a18; }
+    .scene.light { background:#f4f6f3; }
+    .topline { display:flex; align-items:center; justify-content:space-between; color:#71807a; font-size:21px; letter-spacing:.02em; }
+    .dark .topline { color:#9caea7; }
+    .brand { display:flex; align-items:center; gap:13px; font-weight:700; color:inherit; }
+    .mark { width:30px; height:30px; border:2px solid currentColor; border-radius:10px 10px 10px 3px; position:relative; color:var(--green); }
+    .dark .mark { color:#8ed5bd; }
+    .mark:before { content:""; position:absolute; width:10px; height:10px; border-right:2px solid currentColor; border-bottom:2px solid currentColor; right:5px; bottom:5px; transform:rotate(-45deg); }
+    .eyebrow { font-size:22px; color:var(--green); font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
+    .dark .eyebrow { color:#8ed5bd; }
+    h1,h2,p { margin:0; }
+    .hero-title { font-size:106px; line-height:1.13; letter-spacing:0; font-weight:740; }
+    .headline { font-size:70px; line-height:1.18; letter-spacing:0; font-weight:720; }
+    .sub { margin-top:23px; max-width:700px; color:var(--muted); font-size:31px; line-height:1.55; }
+    .dark .sub { color:#afbeb8; }
+    .copy { position:absolute; left:130px; top:275px; width:710px; }
+    .copy .eyebrow { margin-bottom:24px; }
+    .product { position:absolute; right:105px; top:190px; width:880px; height:700px; }
+    .ui { width:100%; height:100%; border:1px solid #d9e1dc; border-radius:26px; background:#fff; box-shadow:0 28px 70px rgba(25,48,40,.10); overflow:hidden; color:#23302b; }
+    .uihead { height:68px; padding:0 27px; display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid #e8eeea; background:#fbfcfb; font-size:19px; color:#77837e; }
+    .uihead strong { color:#293631; font-size:20px; }
+    .body { padding:28px 34px; }
+    .pill { display:inline-flex; align-items:center; gap:8px; border-radius:99px; background:var(--mint); color:var(--green); padding:8px 13px; font-size:17px; font-weight:700; }
+    .dot { width:9px;height:9px;border-radius:50%;background:currentColor; }
+    .row { display:flex; align-items:center; gap:18px; min-height:82px; border-bottom:1px solid #edf1ee; font-size:20px; }
+    .time { width:92px; color:#77837e; font-size:18px; }
+    .bar { width:4px; height:43px; border-radius:4px; background:#4b9c83; }
+    .bar.amber { background:#d89b55; }
+    .bar.blue { background:#7292bb; }
+    .rowmain { flex:1; }
+    .rowmain b { display:block; font-size:20px; font-weight:650; }
+    .rowmain small { display:block; color:#82908a; font-size:16px; margin-top:5px; }
+    .taskrow { display:flex; gap:13px; align-items:center; padding:16px 0; border-bottom:1px solid #edf1ee; font-size:18px; }
+    .check { width:22px;height:22px;border:1.5px solid #b7c6bf;border-radius:7px; }
+    .micro { color:#84918b; font-size:16px; }
+    .planner { display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+    .column { border:1px solid #e4ebe7; border-radius:15px; padding:19px; min-height:380px; }
+    .column h3 { margin:0 0 18px; font-size:20px; }
+    .slot { padding:15px 14px; margin:12px 0; border-radius:11px; font-size:17px; background:#f1f4f2; }
+    .slot.focus { background:#e5f3ec; border-left:4px solid #3b9a76; }
+    .slot.proposed { background:#f3f8f4; outline:1px dashed #68a98e; }
+    .footerbar { display:flex; justify-content:space-between; align-items:center; margin-top:18px; color:#75827c; font-size:16px; }
+    .button { display:inline-block; padding:11px 18px; border-radius:10px; background:#187b68; color:white; font-size:16px; font-weight:650; }
+    .history { display:grid; grid-template-columns:62px 1fr auto; align-items:center; min-height:87px; border-bottom:1px solid #edf1ee; gap:12px; font-size:18px; }
+    .history .num { color:#9aa7a1; font-size:16px; }
+    .history small { display:block; color:#82908a; margin-top:5px; font-size:15px; }
+    .tag { font-size:14px; border:1px solid #dfe8e3; border-radius:8px; padding:7px 9px; color:#65746d; }
+    .sync { height:100%; display:flex; align-items:center; justify-content:center; gap:34px; }
+    .device { width:200px; text-align:center; }
+    .devicebox { height:238px; border:2px solid #dfe7e3; border-radius:28px; padding:18px; background:#fff; color:#24332d; }
+    .devicebox.phone { width:154px; height:265px; margin:auto; border-radius:29px; }
+    .screenline { height:11px; border-radius:6px; background:#e9efeb; margin:13px 0; }
+    .screenline.green { background:#a9d7c2; width:70%; }
+    .device label { display:block; color:#71807a; font-size:17px; margin-top:15px; }
+    .arrow { color:#7f938a; font-size:31px; }
+    .cipher { width:240px; border:1px solid #dce7e1; border-radius:18px; padding:22px 18px; text-align:center; background:#fff; color:#3e5148; }
+    .cipher strong { display:block; font-size:20px; margin-bottom:8px; }
+    .cipher code { font:14px ui-monospace,monospace; color:#74837b; }
+    .chat { padding:25px 31px; }
+    .bubble { max-width:560px; padding:16px 20px; margin:8px 0 17px; border-radius:17px; font-size:18px; line-height:1.5; }
+    .bubble.user { margin-left:auto; background:#edf2ef; }
+    .bubble.agent { background:#f4f7f5; border:1px solid #e4ebe7; }
+    .preview { margin-top:18px; border:1px solid #dce7e1; border-radius:15px; overflow:hidden; }
+    .previewhead { padding:13px 17px; background:#f7faf8; color:#597066; font-size:15px; display:flex; justify-content:space-between; }
+    .previewbody { padding:17px; font-size:17px; }
+    .previewbody b { font-size:19px; }
+    .previewbuttons { display:flex; gap:10px; margin-top:15px; }
+    .outlinebtn { border:1px solid #cbd8d1; border-radius:9px; padding:9px 14px; color:#52665c; font-size:15px; }
+    .steps { position:absolute; left:900px; top:305px; width:880px; display:flex; align-items:center; justify-content:center; gap:0; margin:0; }
+    .step { width:190px; text-align:center; }
+    .stepicon { width:86px;height:86px;margin:0 auto 18px;border:1px solid #dbe5df;border-radius:24px;display:grid;place-items:center;color:#187b68;font-size:26px;font-weight:700;background:#fff; }
+    .step b { font-size:19px; }
+    .step small { display:block;color:#75827c;font-size:15px;margin-top:8px; }
+    .connector { width:40px;height:1px;background:#bdcec5;margin-top:-34px; }
+    .roadmap { position:absolute; left:130px; right:130px; top:306px; display:grid; grid-template-columns:repeat(5,1fr); gap:20px; }
+    .mile { border-top:3px solid #dce6e0; padding-top:18px; }
+    .mile.done { border-color:#328d71; }
+    .mile.active { border-color:#d8a75e; }
+    .mile strong { display:block; font-size:18px; }
+    .mile p { font-size:15px; line-height:1.5; margin-top:9px; color:#7e8c85; }
+    .mile span { display:inline-block; margin-top:13px; font-size:13px; color:#68766f; background:#e9efeb; border-radius:99px; padding:5px 9px; }
+    .roadnote { position:absolute; left:130px; bottom:142px; font-size:24px; color:#52655b; }
+    .endmark { width:118px;height:118px;border:2px solid #8ed5bd;border-radius:35px 35px 35px 8px; margin:auto; position:relative; }
+    .endmark:after { content:"";position:absolute; width:39px;height:39px; border-right:4px solid #8ed5bd;border-bottom:4px solid #8ed5bd; right:19px;bottom:19px;transform:rotate(-45deg); }
+    .endstack { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; gap:23px; }
+    .endstack h2 { font-size:65px; }
+    .endstack p { font-size:26px; color:#a8b8b1; }
+    .smallmeta { color:#81928a; font-size:16px; margin-top:4px; }
+  </style>
+  <script id="promo-metadata" type="application/json">
+    {"duration":90,"cues":{"reveal":9.0,"planner":20.0,"history":31.0,"sync":42.0,"agent":53.0,"guardrails":67.0,"roadmap":77.0,"endcard":84.0}}
+  </script>
+</head>
+<body>
+<main id="stage">
+  <section class="scene dark" data-start="0" data-end="9">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>PRODUCT FILM · 2026</span></div>
+    <div class="endstack" style="gap:25px">
+      <div class="eyebrow">一个正在构建的个人时间系统</div>
+      <h1 class="hero-title">把计划，<br>变成可执行的日常。</h1>
+      <p class="sub">从可信的日历，到可控的智能助理。</p>
+      <div class="smallmeta">Local-first · Deterministic planning · Encrypted sync</div>
+    </div>
+  </section>
+  <section class="scene light" data-start="9" data-end="20">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>01 / 看清今天</span></div>
+    <div class="copy"><div class="eyebrow">A CLEAR VIEW OF YOUR DAY</div><h2 class="headline">日程与任务，<br>各有其位。</h2><p class="sub">事件占据时间；任务承载待完成的工作。日历把当天安排放在同一张视图里。</p></div>
+    <div class="product"><div class="ui"><div class="uihead"><strong>Agenda / Day</strong><span>2026年 9月 29日　　‹　›</span></div><div class="body">
+      <div class="pill"><i class="dot"></i> 今日安排</div>
+      <div class="row"><span class="time">09:00</span><i class="bar blue"></i><div class="rowmain"><b>项目例会</b><small>事件 · 09:00 — 10:00</small></div></div>
+      <div class="row"><span class="time">11:30</span><i class="bar amber"></i><div class="rowmain"><b>完成研究提纲</b><small>任务 · 尚未分配时段</small></div></div>
+      <div class="row"><span class="time">14:00</span><i class="bar"></i><div class="rowmain"><b>研究提纲 · 专注时段</b><small>FocusBlock · 14:00 — 15:30</small></div></div>
+      <div style="height:25px"></div><div class="micro" style="font-weight:700;margin-bottom:6px">任务</div>
+      <div class="taskrow"><span class="check"></span><span>整理访谈记录</span><span class="micro" style="margin-left:auto">开放</span></div>
+      <div class="taskrow"><span class="check"></span><span>提交课程阅读札记</span><span class="micro" style="margin-left:auto">开放</span></div>
+    </div></div></div>
+  </section>
+  <section class="scene light" data-start="20" data-end="31">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>02 / 先预览，再决定</span></div>
+    <div class="copy"><div class="eyebrow">DETERMINISTIC PLANNER</div><h2 class="headline">规划是一份提案。<br>应用权仍在你手里。</h2><p class="sub">确定性 Planner 根据明确的安排生成 PlanBranch。先检查变化，再选择应用或取消。</p></div>
+    <div class="product"><div class="ui"><div class="uihead"><strong>Planner · PlanBranch preview</strong><span>未应用　·　可取消</span></div><div class="body"><div class="planner">
+      <div class="column"><h3>当前安排</h3><div class="slot">09:00　课程阅读</div><div class="slot">13:00　空闲时间</div><div class="slot focus">16:00　整理访谈 · 30 分钟</div><div class="slot">18:00　个人安排</div></div>
+      <div class="column"><h3>建议安排 <span style="color:#26815f;font-size:14px">+ 新提案</span></h3><div class="slot">09:00　课程阅读</div><div class="slot proposed">13:00　整理访谈 · 60 分钟</div><div class="slot focus">16:00　专注时段 · 保留</div><div class="slot">18:00　个人安排</div></div>
+    </div><div class="footerbar"><span>变化 1 项　·　依据当前计划生成</span><span><i class="outlinebtn">取消</i>　<i class="button">应用提案</i></span></div></div></div></div>
+  </section>
+  <section class="scene light" data-start="31" data-end="42">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>03 / 每次改变，都留下来</span></div>
+    <div class="copy"><div class="eyebrow">HISTORY & UNDO</div><h2 class="headline">改变有记录。<br>需要时，可以撤销。</h2><p class="sub">操作日志把一次业务变更作为完整单元记录。Undo 通过补偿操作恢复可恢复的状态。</p></div>
+    <div class="product"><div class="ui"><div class="uihead"><strong>操作历史</strong><span>本机记录　·　最近</span></div><div class="body">
+      <div class="history"><span class="num">09:41</span><div><b>调整专注时段</b><small>FocusBlock　·　已完成</small></div><span class="tag">1 项变更</span></div>
+      <div class="history"><span class="num">09:18</span><div><b>更新任务：整理访谈记录</b><small>Task　·　已完成</small></div><span class="tag">可撤销</span></div>
+      <div class="history"><span class="num">08:52</span><div><b>应用周计划提案</b><small>一次操作　·　原子提交</small></div><span class="tag">3 项变更</span></div>
+      <div style="margin-top:22px;padding:19px 20px;border:1px solid #dfe8e3;border-radius:14px;background:#f9fbfa;display:flex;align-items:center;justify-content:space-between">
+        <div><b style="font-size:18px">撤销最近一次任务调整？</b><div class="micro" style="margin-top:7px">将记录为一条补偿操作</div></div><span class="outlinebtn">预览撤销</span>
+      </div>
+    </div></div></div>
+  </section>
+  <section class="scene light" data-start="42" data-end="53">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>04 / 让设备协作，让内容保持私密</span></div>
+    <div class="copy"><div class="eyebrow">END-TO-END ENCRYPTED SYNC</div><h2 class="headline">数据由设备持有。<br>服务器只转发密文。</h2><p class="sub">客户端加密后再同步。服务器保存加密信封，不读取日程内容；同步不改变本地业务真相。</p></div>
+    <div class="product"><div class="ui"><div class="uihead"><strong>Personal SyncSpace</strong><span><i class="dot" style="display:inline-block;color:#328d71"></i> 已加密同步</span></div><div class="sync">
+      <div class="device"><div class="devicebox"><div class="screenline green"></div><div class="screenline"></div><div class="screenline"></div><div class="screenline green" style="width:55%"></div><div class="screenline"></div></div><label>Android · 本地明文</label></div>
+      <div class="arrow">→</div><div class="cipher"><strong>加密信封</strong><code>7f3a ·· 91c2<br>a84d ·· e110<br>••••••••••••</code></div><div class="arrow">→</div>
+      <div class="device"><div class="devicebox phone"><div class="screenline green"></div><div class="screenline"></div><div class="screenline green" style="width:60%"></div><div class="screenline"></div><div class="screenline"></div></div><label>Desktop · 解密后使用</label></div>
+    </div></div></div>
+  </section>
+  <section class="scene light" data-start="53" data-end="67">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>05 / 对话可以提出，执行仍由你掌控</span></div>
+    <div class="copy"><div class="eyebrow">AGENT · D9 IN PROGRESS</div><h2 class="headline">说出下一步。<br>先看清，再确认。</h2><p class="sub">Agent 通过类型明确的工具读取与提出操作。写入经过权限判断、变更预览和用户确认。</p></div>
+    <div class="product"><div class="ui"><div class="uihead"><strong>Universal command</strong><span>本地权限策略 · 新任务需确认</span></div><div class="chat">
+      <div class="bubble user">帮我创建一个任务：整理访谈记录，预估 45 分钟，优先级 LOW。</div>
+      <div class="bubble agent">我准备创建任务。请检查内容后确认。</div>
+      <div class="preview"><div class="previewhead"><span>任务创建 · 变更预览</span><span>等待确认</span></div><div class="previewbody"><b>整理访谈记录</b><div style="margin-top:9px;color:#748179">状态：开放　·　优先级：LOW　·　预估：45 分钟</div><div class="previewbuttons"><span class="outlinebtn">拒绝</span><span class="button">确认并创建</span></div></div></div>
+    </div></div></div>
+  </section>
+  <section class="scene light" data-start="67" data-end="77">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>06 / 助理不越过业务规则</span></div>
+    <div class="copy" style="top:230px"><div class="eyebrow">ONE TRUSTED PATH</div><h2 class="headline">模型提出工具调用。<br>规则决定能否执行。</h2><p class="sub">Agent 不直接写入数据库。所有业务改动走相同的验证、权限和事务路径。</p></div>
+    <div class="steps">
+      <div class="step"><div class="stepicon">01</div><b>结构化提议</b><small>typed Tool call</small></div><div class="connector"></div>
+      <div class="step"><div class="stepicon">02</div><b>校验与预览</b><small>应用规则 · Planner</small></div><div class="connector"></div>
+      <div class="step"><div class="stepicon">03</div><b>本地权限</b><small>直接 / 确认 / 拒绝</small></div><div class="connector"></div>
+      <div class="step"><div class="stepicon">04</div><b>原子提交</b><small>历史与结果可追溯</small></div>
+    </div>
+  </section>
+  <section class="scene light" data-start="77" data-end="84">
+    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>PROJECT ROADMAP · D5—D10</span></div>
+    <div class="copy" style="top:145px;width:1200px"><div class="eyebrow">从坚实内核，到完整体验</div><h2 class="headline" style="font-size:56px">每一步，都为下一步建立可信基础。</h2></div>
+    <div class="roadmap">
+      <div class="mile done"><strong>D5　日历与任务</strong><p>Agenda / Day<br>事件与任务编辑</p><span>已实现</span></div>
+      <div class="mile done"><strong>D6—D8　规划、历史、同步</strong><p>确定性 Planner<br>操作历史与加密同步</p><span>已完成</span></div>
+      <div class="mile active"><strong>D9　Agent</strong><p>类型化工具<br>预览、确认与审计</p><span>进行中</span></div>
+      <div class="mile"><strong>D9 后续</strong><p>Agent 历史同步<br>Wear Agent 与凭据配置</p><span>后续阶段</span></div>
+      <div class="mile"><strong>D10　完整体验</strong><p>跨端统一设计<br>自适应与交互打磨</p><span>规划中</span></div>
+    </div>
+    <div class="roadnote">先把时间安排好，再让智能能力在清晰边界内参与。</div>
+  </section>
+  <section class="scene dark" data-start="84" data-end="90">
+    <div class="endstack"><div class="endmark"></div><h2>Agentic Scheduler</h2><p>把计划，变成可执行的日常。</p><div class="smallmeta">LOCAL-FIRST　·　DETERMINISTIC　·　PRIVATE BY DESIGN</div></div>
+  </section>
+</main>
+<script>
+  const scenes = [...document.querySelectorAll('.scene')];
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const ease = v => { const x = clamp(v, 0, 1); return 1 - Math.pow(1 - x, 3); };
+  window.renderAt = (timeInSeconds) => {
+    const t = clamp(Number(timeInSeconds) || 0, 0, 90 - 1 / 30);
+    for (const scene of scenes) {
+      const start = Number(scene.dataset.start), end = Number(scene.dataset.end);
+      const fade = .72;
+      const ending = scene === scenes[scenes.length - 1];
+      const opacity = Math.min(ease((t - start) / fade), ending ? 1 : ease((end - t) / fade));
+      scene.style.opacity = String(clamp(opacity, 0, 1));
+      scene.style.transform = `translateY(${(1 - opacity) * 14}px)`;
+      scene.style.visibility = opacity > .001 ? 'visible' : 'hidden';
+    }
+    document.documentElement.dataset.time = t.toFixed(3);
+  };
+  document.fonts.ready.then(() => window.renderAt(0));
+  window.renderAt(0);
+</script>
+</body>
+</html>
