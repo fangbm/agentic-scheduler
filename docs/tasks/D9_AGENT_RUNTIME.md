@@ -386,6 +386,70 @@ D9-02/03 add their own protocol/Wear tests from `AGENT_DECISIONS.md`.
 
 ---
 
+# 15A. AGT-017 review record — 2026-09-29
+
+This is a code-and-test review record, not a replacement for the required
+visible Android/Desktop acceptance.  It keeps the completion gate honest by
+separating deterministic/fake-Provider evidence from an exercised Provider
+and platform UI path.
+
+| AGT-017 criterion | Deterministic evidence | Review result |
+| --- | --- | --- |
+| Fake Provider cannot bypass the Tool layer | `AgentRunIntegrationTest` — `prose unknown tools and failed capability probe cannot bypass registry` | Covered |
+| Model prose cannot create an implicit write | Same test; it leaves Tasks and history empty | Covered |
+| Read Tools perform zero writes | `TaskReadToolsTest`, `HistoryReadToolsTest`, `CalendarListToolTest`, and provider-registry integration cases | Covered |
+| Default write policy requires confirmation | `AgentPermissionPolicyTest`; typed write Tool tests | Covered |
+| Denied/dismissed confirmation performs zero writes | `AgentRunIntegrationTest` — `denied and stale model proposals never write` | Covered |
+| Stale PlanBranch cannot apply through Agent | `AgentRunIntegrationTest` — cross-thread rejection; Planner Tool stale tests | Covered |
+| ToolResult truth matches transaction truth | `AgentPersistenceTest` and Task/Event provider-to-Room integrations | Covered |
+| AgentAction references committed MutationIds | Task/Event provider-to-Room integrations and Planner Apply callback test | Covered |
+| ContextSummary cannot override current facts | `ContextAssemblerTest` plus current-fact integration assertion | Covered |
+| Deterministic budget caps/priorities | `ContextAssemblerTest` mandatory/cap ordering cases | Covered |
+| Compaction failure preserves raw history | `ContextCompactionTest` and runtime compaction integration | Covered |
+| Provider switch preserves AgentThread continuity | `AgentPersistenceTest` — provider switch transcript/tool pairing | Covered |
+| Secrets never enter logs/context/sync payloads | `OpenAiCompatibleProviderTest` credential/HTTP/redaction cases | Covered |
+| Thread deletion preserves committed audit history | `AgentPersistenceTest` fresh-v12 retention case | Covered |
+| Repository CI is green | CI `36533149712` passed for commit `5835a40`; any later code/test commit must re-run CI | Pending rerun after later commit |
+
+Focused local execution on 2026-09-29 also added two missing Provider-registry
+integration assertions:
+
+```text
+same AgentThread Full Replan preview -> confirmation -> Planner Apply callback
+Local Reflow Provider call -> typed registry -> session-scoped PlanBranch, zero writes
+```
+
+Both are in `AgentRunIntegrationTest` and passed locally with the database
+desktop test target.  The Planner Apply fixture proves runtime routing,
+confirmation, AgentAction and ToolResult wiring; the existing D6 application
+and Desktop manual path remain the proof of the real Planner transaction.
+
+## Typed Tool acceptance matrix
+
+The required Tool unit matrix is present for the complete D9-01 surface.  The
+following distinguishes its implementation/automated coverage from live
+Provider/platform exercise; an untested live row must not be inferred from a
+passing fake Provider test.
+
+| Tool | Typed/automated coverage | Real Provider + visible platform evidence |
+| --- | --- | --- |
+| `calendar.list`, `task.get`, `task.list` | Unit + Provider-registry integration | Desktop `task.list` exercised; remaining read variants not individually live-tested |
+| `history.timeline`, `history.getMutation`, `history.getEntityChanges` | Unit + Provider-registry integration | Android `history.timeline` exercised; remaining variants not individually live-tested |
+| `event.create`, `task.create` | Unit + Provider-to-Room confirmation integration | Desktop confirmed Event/Task create exercised |
+| `event.update`, `task.update` | Unit/Room coverage; Task Update runtime stale/commit integration | Not individually live-tested |
+| Full Replan, Local Reflow preview | Unit + Provider-registry integration | Desktop Full Replan exercised; Local Reflow not yet live-tested |
+| `planner.applyBranch` | Unit + Provider-registry confirmation integration | Desktop preview, apply and stale rejection exercised |
+| `planningProfile.update` | Unit/Room coverage | Not yet live-tested |
+| `history.undo` | Unit/Room coverage plus unsupported runtime result | Successful supported Undo not yet live-tested |
+
+Therefore D9-01 remains **IN PROGRESS / Draft**.  Before marking it ready, run
+the four remaining live representative paths (`event.update` or `task.update`,
+Local Reflow, PlanningProfile update, and supported Undo), then re-run
+repository CI on the final commit.  These are acceptance work, not a reason to
+relax AGT-017 or the independent OD-012 production-data gate.
+
+---
+
 # 16. Explicit exclusions
 
 D9-01 does not add:

@@ -285,13 +285,22 @@ class AgentRunIntegrationTest {
                 PLANNER_APPLY_BRANCH_TOOL_NAME,
                 "{\"planBranchId\":\"$branchId\",\"applyNow\":\"$now\"}",
             ))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-owner-apply", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("apply-owner", function = ProviderFunctionCall(
+                PLANNER_APPLY_BRANCH_TOOL_NAME,
+                "{\"planBranchId\":\"$branchId\",\"applyNow\":\"$now\"}",
+            ))))),
+            reply(ProviderChatMessage("assistant", "Applied after confirmation.")),
         )
         val client = HttpClient(MockEngine) { engine { addHandler {
             respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
         } } }
         try {
-            var seed = 0
-            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            // This scenario crosses the 256-byte boundary.  Use a deterministic
+            // monotonic timestamp rather than a byte counter that wraps and
+            // fabricates duplicate UUIDv7 values in the test fixture.
+            var nextEpochMillis = 1_700_000_000_000
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { nextEpochMillis++ }, RandomBytes { size -> ByteArray(size) })
             val state = RoomAgentStateRepository(database)
             val tasks = RoomTaskRepository(database)
             val history = RoomMutationJournalRepository(database)
@@ -317,9 +326,11 @@ class AgentRunIntegrationTest {
                     onCommitted: suspend (MutationExecution<dev.agenticscheduler.application.planner.PlanBranchApplyResult>) -> Unit,
                 ): dev.agenticscheduler.application.planner.PlanBranchApplyResult {
                     applyCalls++
-                    return dev.agenticscheduler.application.planner.PlanBranchApplyResult.Applied(
+                    val result = dev.agenticscheduler.application.planner.PlanBranchApplyResult.Applied(
                         branch.copy(status = dev.agenticscheduler.application.planner.PlanBranchStatus.APPLIED),
                     )
+                    onCommitted(MutationExecution(result, dev.agenticscheduler.sync.MutationId(id(171))))
+                    return result
                 }
             }
             val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
@@ -343,6 +354,104 @@ class AgentRunIntegrationTest {
             assertEquals(AgentToolResultStatus.STALE, state.toolResults(otherThread).single().status)
             assertEquals(0, applyCalls, "A thread must not obtain another thread's cached branch for Apply.")
             assertTrue(history.timeline().isEmpty())
+
+            val applyPending = assertIs<AgentRunResult.AwaitingConfirmation>(runtime.run(ownerThread, "Apply my preview"))
+            assertEquals("Applied after confirmation.", assertIs<AgentRunResult.Completed>(runtime.confirm(ownerThread, applyPending.callId, true)).assistantText)
+            assertEquals(1, applyCalls)
+            val applyAction = state.actions(ownerThread).last()
+            assertEquals(AgentActionStatus.SUCCEEDED, applyAction.status)
+            assertEquals(dev.agenticscheduler.sync.MutationId(id(171)), applyAction.mutationIds.single())
+            assertEquals(AgentToolResultStatus.SUCCESS, state.toolResults(ownerThread).last().status)
+        } finally {
+            client.close()
+            database.close()
+        }
+    }
+
+    @Test fun `local Reflow preview is dispatched through the Provider registry without writes`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val branchId = id(172)
+        val profileId = PlanningProfileId(id(173))
+        val now = Instant.parse("2026-09-27T08:00:00Z")
+        val horizon = dev.agenticscheduler.planner.PlanningHorizon(now, Instant.parse("2026-09-28T08:00:00Z"))
+        val localReflowRequest = dev.agenticscheduler.planner.LocalReflowRequest(
+            affectedFocusBlockIds = persistentListOf(dev.agenticscheduler.domain.id.FocusBlockId(id(174))),
+            disruptedRanges = persistentListOf(),
+            searchWindow = dev.agenticscheduler.domain.time.ZonedTimeRange(
+                start = Instant.parse("2026-09-27T09:00:00Z"),
+                endExclusive = Instant.parse("2026-09-27T10:00:00Z"),
+                timeZone = kotlinx.datetime.TimeZone.of("Asia/Shanghai"),
+            ),
+        )
+        val branch = dev.agenticscheduler.application.planner.PlanBranch(
+            id = PlanBranchId(branchId),
+            originalRequest = dev.agenticscheduler.application.planner.PlanningRequest.LocalReflow(localReflowRequest),
+            baseFacts = dev.agenticscheduler.planner.PlanningSnapshot(
+                referenceNow = now,
+                horizon = horizon,
+                profile = PlanningProfile(profileId, "Study", PlanningProfileConfiguration.Unconfigured),
+                tasks = persistentListOf(), dependencies = persistentListOf(), focusBlocks = persistentListOf(),
+                events = persistentListOf(), courseSessions = persistentListOf(), exams = persistentListOf(),
+                constraints = persistentListOf(), askOverflowAuthorizedTaskIds = persistentListOf(),
+            ),
+            mutations = persistentListOf(), issues = persistentListOf(), explanations = persistentListOf(),
+        )
+        val input = PlannerLocalReflowInput(
+            planningProfileId = profileId.value,
+            referenceNow = now.toString(),
+            horizonStart = horizon.start.toString(),
+            horizonEndExclusive = horizon.endExclusive.toString(),
+            affectedFocusBlockIds = listOf(id(174)),
+            disruptedRanges = emptyList(),
+            searchWindow = PlannerZonedRangeInput(
+                start = "2026-09-27T09:00:00Z",
+                endExclusive = "2026-09-27T10:00:00Z",
+                timeZone = "Asia/Shanghai",
+            ),
+        )
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-local", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("local-reflow", function = ProviderFunctionCall(
+                PlannerToolNames.PREVIEW_LOCAL_REFLOW, json.encodeToString(input),
+            ))))),
+            reply(ProviderChatMessage("assistant", "Local Reflow preview ready.")),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler {
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val config = ProviderConfig(ProviderConfigId(id(175)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val preview = object : PlannerPreviewApplication {
+                override suspend fun fullReplan(profileId: PlanningProfileId, referenceNow: Instant, horizon: dev.agenticscheduler.planner.PlanningHorizon) =
+                    error("This test must dispatch Local Reflow, not Full Replan")
+                override suspend fun localReflow(
+                    profileId: PlanningProfileId,
+                    referenceNow: Instant,
+                    horizon: dev.agenticscheduler.planner.PlanningHorizon,
+                    request: dev.agenticscheduler.planner.LocalReflowRequest,
+                ) = dev.agenticscheduler.application.planner.PlannerPreview.Applicable(branch)
+            }
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val runtime = AgentRunService(
+                state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)),
+                ids, AgentClock { 6 }, plannerLocalReflow = PlannerPreviewLocalReflowTool(preview),
+            )
+            val threadId = runtime.createThread()
+
+            assertEquals("Local Reflow preview ready.", assertIs<AgentRunResult.Completed>(runtime.run(threadId, "Repair this focus block")).assistantText)
+            val action = state.actions(threadId).single()
+            assertEquals(branchId, action.planBranchReference)
+            assertEquals(AgentToolResultStatus.SUCCESS, state.toolResults(threadId).single().status)
+            assertTrue(history.timeline().isEmpty())
+            assertTrue(tasks.observeTasks().first().isEmpty())
         } finally {
             client.close()
             database.close()
