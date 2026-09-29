@@ -24,6 +24,7 @@ import dev.agenticscheduler.application.history.UndoService
 import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.RandomBytes
 import dev.agenticscheduler.application.id.RfcUuidV7Generator
+import dev.agenticscheduler.application.planner.PlanningProfileSettingsService
 import dev.agenticscheduler.database.repository.RoomAgentStateRepository
 import dev.agenticscheduler.database.repository.RoomApplicationTransactionRunner
 import dev.agenticscheduler.database.repository.RoomMutationJournalRepository
@@ -715,6 +716,52 @@ class AgentRunIntegrationTest {
             val agentMutation = history.timeline().last().operation
             val agentOrigin = assertIs<MutationOrigin.Agent>(agentMutation.origin)
             assertEquals(agentMutation.mutationId, state.action(AgentActionId(agentOrigin.agentActionId))?.mutationIds?.single()?.value)
+        } finally {
+            client.close()
+            database.close()
+        }
+    }
+
+    @Test fun `planning profile update advertises domain all-day policy values`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val requests = mutableListOf<HttpRequestData>()
+        val replies = mutableListOf(
+            reply(ProviderChatMessage("assistant", toolCalls = listOf(ProviderToolCall("probe-1", function = ProviderFunctionCall("d9_capability_probe", "{}"))))),
+            reply(ProviderChatMessage("assistant", "Ready.")),
+        )
+        val client = HttpClient(MockEngine) { engine { addHandler { request ->
+            requests += request
+            respond(replies.removeAt(0), headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()))
+        } } }
+        try {
+            var seed = 0
+            val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1_700_000_000_000 }, RandomBytes { size -> ByteArray(size) { (seed++).toByte() } })
+            val state = RoomAgentStateRepository(database)
+            val tasks = RoomTaskRepository(database)
+            val profiles = RoomPlanningProfileRepository(database)
+            val history = RoomMutationJournalRepository(database)
+            val profile = PlanningProfile(PlanningProfileId(id(98)), "Profile", PlanningProfileConfiguration.Unconfigured)
+            profiles.upsert(profile)
+            val config = ProviderConfig(ProviderConfigId(id(99)), "https://model.example/v1", "chosen-model", 8192, 2048, false, true, null)
+            state.saveProviderConfig(config)
+            state.selectProviderConfig(config.id)
+            val coordinator = MutationCoordinator(RoomApplicationTransactionRunner(database), history, ids, MutationWallClock { 5 }, AgentOriginWriteGate { true })
+            val profileTool = PlanningProfileUpdateTool(
+                PlanningProfileSettingsService(profiles, ids, coordinator, NoActiveSyncSpaceWritePolicy),
+            )
+            val runtime = AgentRunService(
+                state, OpenAiCompatibleProvider(client, ProviderCredentialResolver { null }),
+                TaskGetTool(tasks), TaskCreateTool(TaskEditingService(tasks, ids, coordinator, NoActiveSyncSpaceWritePolicy)), ids, AgentClock { 6 },
+                planningProfileUpdate = profileTool,
+            )
+
+            assertEquals("Ready.", assertIs<AgentRunResult.Completed>(runtime.run(runtime.createThread(), "Show available tools.")).assistantText)
+
+            val advertisedTools = (requests[1].body as TextContent).text
+            assertTrue(advertisedTools.contains("NON_BLOCKING"))
+            assertTrue(advertisedTools.contains("BLOCK_WHOLE_LOCAL_DAY"))
+            assertTrue(!advertisedTools.contains("TREAT_AS_BUSY"))
+            assertTrue(!advertisedTools.contains("AVOID"))
         } finally {
             client.close()
             database.close()
