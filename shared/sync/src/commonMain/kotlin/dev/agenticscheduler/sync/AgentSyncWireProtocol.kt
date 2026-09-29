@@ -46,6 +46,9 @@ data class AgentDvvSnapshot(val context: List<AgentVersionComponent>, val dot: A
     init {
         require(context == context.sortedBy { it.replicaId.value }) { "Agent DVV context must be sorted by AgentReplicaId." }
         require(context.map { it.replicaId }.distinct().size == context.size) { "Agent DVV context replica IDs must be unique." }
+        require(context.singleOrNull { it.replicaId == dot.replicaId }?.counter?.let { it < dot.counter } != false) {
+            "Agent DVV author context must precede its dot."
+        }
     }
 }
 
@@ -61,7 +64,9 @@ data class AgentSyncOperation(
     val agentDvv: AgentDvvSnapshot,
     val hlc: AgentHlcSnapshot,
     val agentEvent: AgentSyncEvent,
-)
+) {
+    init { require(hlc.replicaId == agentDvv.dot.replicaId) { "Agent HLC author must match the Agent DVV dot replica." } }
+}
 
 @Serializable
 data class SyncPayloadV3(
@@ -137,13 +142,20 @@ enum class AgentToolResultStatusV3 {
 @SerialName("ActionFinalized")
 data class ActionFinalized(
     val actionId: AgentActionSyncId,
+    val turnId: AgentTurnSyncId?,
     val threadId: AgentThreadSyncId?,
     val sourceMessageId: AgentMessageSyncId?,
     val toolCallIds: List<AgentToolCallSyncId>,
     val toolResultIds: List<AgentToolResultSyncId>,
     val businessMutationIds: List<MutationId>,
     val status: FinalAgentActionStatus,
-) : AgentSyncEvent
+) : AgentSyncEvent {
+    init {
+        if (turnId != null) require(threadId != null && sourceMessageId != null) {
+            "A turn-member Action must identify its thread and source message."
+        }
+    }
+}
 
 @Serializable
 enum class FinalAgentActionStatus { SUCCEEDED, FAILED, DENIED, STALE }
@@ -172,6 +184,67 @@ enum class AgentTurnOutcome { SUCCEEDED, FAILED }
 @Serializable
 @SerialName("ThreadDeleted")
 data class ThreadDeleted(val threadId: AgentThreadSyncId) : AgentSyncEvent
+
+sealed interface AgentTurnLinkValidation {
+    data object Valid : AgentTurnLinkValidation
+    data class MissingAction(val actionId: AgentActionSyncId) : AgentTurnLinkValidation
+    data class MissingSourceMessage(val messageId: AgentMessageSyncId) : AgentTurnLinkValidation
+    data class MissingToolCall(val callId: AgentToolCallSyncId) : AgentTurnLinkValidation
+    data class MissingToolResult(val resultId: AgentToolResultSyncId) : AgentTurnLinkValidation
+    data class InvalidAssociation(val actionId: AgentActionSyncId, val reason: String) : AgentTurnLinkValidation
+    data class DuplicateMember(val member: TurnMemberReference) : AgentTurnLinkValidation
+}
+
+/** Checks the explicit Action -> turn/thread/source-message chain before a manifest can be exposed. */
+object AgentTurnLinkValidator {
+    fun validate(
+        manifest: TurnFinalized,
+        actions: Map<AgentActionSyncId, ActionFinalized>,
+        messages: Map<AgentMessageSyncId, MessageAppended>,
+        calls: Map<AgentToolCallSyncId, ToolCallFinalized> = emptyMap(),
+        results: Map<AgentToolResultSyncId, ToolResultAppended> = emptyMap(),
+    ): AgentTurnLinkValidation {
+        val duplicate = manifest.orderedMembers.groupingBy { it }.eachCount().entries.firstOrNull { it.value > 1 }?.key
+        if (duplicate != null) return AgentTurnLinkValidation.DuplicateMember(duplicate)
+        for (member in manifest.orderedMembers.filterIsInstance<ActionMember>()) {
+            val action = actions[member.id] ?: return AgentTurnLinkValidation.MissingAction(member.id)
+            if (action.turnId != manifest.turnId) {
+                return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action turnId does not match the manifest.")
+            }
+            if (action.threadId != manifest.threadId) {
+                return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action threadId does not match the manifest.")
+            }
+            val sourceId = action.sourceMessageId
+                ?: return AgentTurnLinkValidation.InvalidAssociation(member.id, "Turn-member Action has no source message.")
+            if (manifest.orderedMembers.none { it == MessageMember(sourceId) }) {
+                return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action source message is absent from the manifest.")
+            }
+            val source = messages[sourceId] ?: return AgentTurnLinkValidation.MissingSourceMessage(sourceId)
+            if (source.threadId != manifest.threadId || source.turnId != manifest.turnId) {
+                return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action source message belongs to another thread or turn.")
+            }
+            for (callId in action.toolCallIds) {
+                if (manifest.orderedMembers.none { it == ToolCallMember(callId) }) {
+                    return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action tool call is absent from the manifest.")
+                }
+                val call = calls[callId] ?: return AgentTurnLinkValidation.MissingToolCall(callId)
+                if (call.threadId != manifest.threadId || call.turnId != manifest.turnId || call.sourceMessageId != sourceId) {
+                    return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action tool call belongs to another thread, turn, or source message.")
+                }
+            }
+            for (resultId in action.toolResultIds) {
+                if (manifest.orderedMembers.none { it == ToolResultMember(resultId) }) {
+                    return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action tool result is absent from the manifest.")
+                }
+                val result = results[resultId] ?: return AgentTurnLinkValidation.MissingToolResult(resultId)
+                if (result.threadId != manifest.threadId || result.turnId != manifest.turnId || result.callId !in action.toolCallIds) {
+                    return AgentTurnLinkValidation.InvalidAssociation(member.id, "Action tool result belongs to another thread, turn, or call.")
+                }
+            }
+        }
+        return AgentTurnLinkValidation.Valid
+    }
+}
 
 sealed interface AgentPayloadDecodeResult {
     data class Supported(val payload: SyncPayloadV3) : AgentPayloadDecodeResult
@@ -222,6 +295,7 @@ object AgentSyncWireCodec {
         }
         val eventType = eventTypePrimitive?.contentOrNull
         if (eventType != null && eventType !in knownEventTypes) return AgentPayloadDecodeResult.UnsupportedEvent(eventType)
+        if (containsForbiddenMetadata(root)) return AgentPayloadDecodeResult.Invalid("V3 payload contains prohibited provider or local-only metadata.")
         return try {
             val payload = json.decodeFromJsonElement(SyncPayloadV3.serializer(), root)
             if (payload.operation.operationId != authenticatedMutationId) {
@@ -240,4 +314,16 @@ object AgentSyncWireCodec {
         "ThreadCreated", "ThreadTitleSet", "MessageAppended", "ToolCallFinalized",
         "ToolResultAppended", "ActionFinalized", "TurnFinalized", "ThreadDeleted",
     )
+
+    private val forbiddenMetadataKeys = setOf(
+        "providerConfigId", "providerCallId", "providerSessionId", "providerCacheId",
+        "credentialReference", "apiKey", "secretRef", "permissionDecision",
+        "confirmationReference", "planBranchReference", "contextSummary",
+    )
+
+    private fun containsForbiddenMetadata(value: JsonElement): Boolean = when (value) {
+        is JsonObject -> value.any { (key, child) -> key in forbiddenMetadataKeys || containsForbiddenMetadata(child) }
+        is kotlinx.serialization.json.JsonArray -> value.any(::containsForbiddenMetadata)
+        else -> false
+    }
 }

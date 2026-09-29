@@ -48,6 +48,17 @@ class AgentSyncWireProtocolTest {
                 AgentDot(agentReplica, 2),
             )
         }
+        assertFailsWith<IllegalArgumentException> {
+            AgentDvvSnapshot(listOf(AgentVersionComponent(agentReplica, 2)), AgentDot(agentReplica, 2))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            AgentSyncOperation(
+                operationId,
+                AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 1)),
+                AgentHlcSnapshot(100, 0, AgentReplicaId(id(4))),
+                ThreadCreated(AgentThreadSyncId(id(3)), "Planning", 90),
+            )
+        }
     }
 
     @Test fun `outer authenticated routing ID must equal the V3 operation ID`() {
@@ -62,15 +73,53 @@ class AgentSyncWireProtocolTest {
         assertEquals("FutureEvent", assertIs<AgentPayloadDecodeResult.UnsupportedEvent>(AgentSyncWireCodec.decodePayload(fixture, operationId)).discriminator)
     }
 
-    @Test fun `legacy D8 quarantines entire unknown V3 envelope and still decodes independent V1 business operation`() {
+    @Test fun `unknown turn member discriminator is rejected as invalid payload`() {
+        val fixture = """{"payloadVersion":3,"operation":{"operationId":"${id(11)}","agentDvv":{"context":[],"dot":{"replicaId":"${id(2)}","counter":1}},"hlc":{"physicalMillis":100,"logical":0,"replicaId":"${id(2)}"},"agentEvent":{"type":"TurnFinalized","turnId":"${id(13)}","threadId":"${id(3)}","parentTurnIds":[],"orderedMembers":[{"type":"FUTURE_MEMBER","id":"${id(14)}"}],"outcome":"SUCCEEDED"}}}"""
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(fixture, MutationId(id(11))))
+    }
+
+    @Test fun `prohibited provider metadata is rejected before projection`() {
+        val fixture = """{"payloadVersion":3,"operation":{"operationId":"${id(1)}","agentDvv":{"context":[],"dot":{"replicaId":"${id(2)}","counter":1}},"hlc":{"physicalMillis":100,"logical":0,"replicaId":"${id(2)}"},"agentEvent":{"type":"ThreadCreated","threadId":"${id(3)}","title":"Planning","createdAtEpochMillis":90,"providerSessionId":"private"}}}"""
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(fixture, operationId))
+    }
+
+    @Test fun `turn Action references must match its turn thread and source message`() {
+        val threadId = AgentThreadSyncId(id(3))
+        val turnId = AgentTurnSyncId(id(40))
+        val sourceId = AgentMessageSyncId(id(41))
+        val actionId = AgentActionSyncId(id(42))
+        val callId = AgentToolCallSyncId(id(43))
+        val resultId = AgentToolResultSyncId(id(44))
+        val manifest = TurnFinalized(turnId, threadId, emptyList(), listOf(MessageMember(sourceId), ToolCallMember(callId), ToolResultMember(resultId), ActionMember(actionId)), AgentTurnOutcome.SUCCEEDED)
+        val source = MessageAppended(sourceId, threadId, turnId, AgentMessageRoleV3.ASSISTANT, "Done", 99)
+        val call = ToolCallFinalized(callId, threadId, turnId, sourceId, "task.read", kotlinx.serialization.json.buildJsonObject {}, FinalAgentToolCallStatus.COMPLETED)
+        val result = ToolResultAppended(resultId, callId, threadId, turnId, AgentToolResultStatusV3.SUCCESS, kotlinx.serialization.json.JsonPrimitive("ok"), emptyList())
+        val valid = ActionFinalized(actionId, turnId, threadId, sourceId, listOf(callId), listOf(resultId), emptyList(), FinalAgentActionStatus.SUCCEEDED)
+        assertEquals(AgentTurnLinkValidation.Valid, AgentTurnLinkValidator.validate(manifest, mapOf(actionId to valid), mapOf(sourceId to source), mapOf(callId to call), mapOf(resultId to result)))
+
+        val otherTurn = valid.copy(turnId = AgentTurnSyncId(id(43)))
+        assertIs<AgentTurnLinkValidation.InvalidAssociation>(AgentTurnLinkValidator.validate(manifest, mapOf(actionId to otherTurn), mapOf(sourceId to source), mapOf(callId to call), mapOf(resultId to result)))
+        val otherThread = valid.copy(threadId = AgentThreadSyncId(id(44)))
+        assertIs<AgentTurnLinkValidation.InvalidAssociation>(AgentTurnLinkValidator.validate(manifest, mapOf(actionId to otherThread), mapOf(sourceId to source), mapOf(callId to call), mapOf(resultId to result)))
+        val otherSourceTurn = source.copy(turnId = AgentTurnSyncId(id(43)))
+        assertIs<AgentTurnLinkValidation.InvalidAssociation>(AgentTurnLinkValidator.validate(manifest, mapOf(actionId to valid), mapOf(sourceId to otherSourceTurn), mapOf(callId to call), mapOf(resultId to result)))
+        val otherCallTurn = call.copy(turnId = AgentTurnSyncId(id(45)))
+        assertIs<AgentTurnLinkValidation.InvalidAssociation>(AgentTurnLinkValidator.validate(manifest, mapOf(actionId to valid), mapOf(sourceId to source), mapOf(callId to otherCallTurn), mapOf(resultId to result)))
+    }
+
+    @Test fun `standalone audit Action cannot be included as a turn member`() {
+        val action = ActionFinalized(AgentActionSyncId(id(42)), null, null, null, emptyList(), emptyList(), emptyList(), FinalAgentActionStatus.SUCCEEDED)
+        val manifest = TurnFinalized(AgentTurnSyncId(id(40)), AgentThreadSyncId(id(3)), emptyList(), listOf(ActionMember(action.actionId)), AgentTurnOutcome.SUCCEEDED)
+        assertIs<AgentTurnLinkValidation.InvalidAssociation>(AgentTurnLinkValidator.validate(manifest, mapOf(action.actionId to action), emptyMap()))
+    }
+
+    @Test fun `legacy D8 payload decoder marks unknown V3 while accepting independent V1 business operation`() {
         val v3 = AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = AgentSyncOperation(
             operationId, AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 1)), AgentHlcSnapshot(100, 0, agentReplica),
             ThreadCreated(AgentThreadSyncId(id(3)), "Planning", 90),
         )))
         val legacy = assertIs<PayloadDecodeResult.UnsupportedVersion>(SyncWireCodec.decodePayload(v3))
         assertEquals(3, legacy.actual)
-        val quarantine = ProtocolQuarantine(SyncSpaceId("space"), operationId.value, 41, ProtocolQuarantineReason.UNSUPPORTED_PAYLOAD_VERSION, "3")
-        assertEquals(operationId.value, quarantine.mutationId)
 
         val business = businessPayload()
         assertEquals(1, assertIs<PayloadDecodeResult.Supported>(SyncWireCodec.decodePayload(business)).payload.payloadVersion)
