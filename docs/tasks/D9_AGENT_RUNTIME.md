@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **D9-01 FINAL CI PENDING — PR Draft — D8 COMPLETE**
+> Status: **D9-01 COMPLETE — PR #9 MERGED — D8 COMPLETE**
 > Date: 2026-09-12  
 > Acceptance evidence updated: 2026-09-29
 > Decision source: `docs/AGENT_DECISIONS.md`
@@ -28,9 +28,9 @@ Android/Desktop Agent surface / universal command entry
 
 D9-02 adds synchronized Agent history. D9-03 adds Wear provider provisioning/capability integration.
 
-Current implementation inventory on this branch (D9-01 has completed its
-code/test review and representative live acceptance; final branch CI and merge
-remain pending):
+Current implementation inventory records the completed D9-01 baseline.  Its
+code/test review, representative live acceptance, final branch CI, and PR
+merge are complete; D9-02 and D9-03 remain separately scoped work.
 
 - Shared Agent state/persistence and bounded provider-run orchestration are
   present, including persisted messages, ToolCalls, ToolResults, AgentActions,
@@ -125,9 +125,10 @@ every Typed Tool was manually exercised against a live Provider. The complete
 AGT-017 deterministic matrix is reviewed below, and the final four required
 live representative paths are now recorded above. Agent-origin synchronized
 writes remain disabled without the D8 all-devices-upgraded acknowledgement;
-D9-02/D9-03 remain out of scope. The only remaining D9-01 release gate is a
-green repository-wide CI run on the final rebased PR head, followed by review
-and merge.
+D9-02/D9-03 remain out of scope. D9-01 cleared its final repository-wide CI
+run on rebased head `21f9c6a` in GitHub Actions run
+[`36565045414`](https://github.com/fangbm/temvio/actions/runs/36565045414),
+then PR #9 was reviewed and merged as `1b273b1`.
 
 ---
 
@@ -458,9 +459,9 @@ passing fake Provider test.
 The four required live representative paths (`event.update` or `task.update`,
 Local Reflow, PlanningProfile update, and supported Undo) are complete. The
 AGT-017 code/test review and live representative acceptance are therefore
-complete; final repository CI on the rebased PR head remains required before
-marking the PR Ready. This does not relax AGT-017, the independent OD-012
-production-data gate, or the separate D9-02/D9-03 scope gates.
+complete. Final repository CI passed on the rebased PR head and PR #9 merged.
+This does not relax AGT-017, the independent OD-012 production-data gate, or
+the separate D9-02/D9-03 scope gates.
 
 ---
 
