@@ -1,14 +1,14 @@
 # Temvio — Staged Rebranding and Technical Rename Plan
 
-> Status: PRODUCT NAME SELECTED BY OWNER / LEGAL AND MARKET CLEARANCE PENDING / DOCUMENTATION ONLY  
+> Status: PHASE 1 EXECUTION AUTHORIZED BY OWNER / CLEARANCE RISK ACKNOWLEDGED BY OWNER / TECHNICAL RENAME DEFERRED
 > Date: 2026-09-28  
 > Project: fangbm/agentic-scheduler (current repository name when this plan was written)  
-> Selected product name: Temvio (owner-confirmed 2026-09-28; NOT YET CLEARED)  
+> Selected product name: Temvio (owner-confirmed 2026-09-28; owner instructed Phase 1 to proceed on 2026-09-29)
 > Governing principle: brand presentation and repository identity first; technical identity later, through separately gated changes.
 
 ## 0. Naming clearance — mandatory gate before public rebrand
 
-**Do not rename the public repository or announce Temvio as the final product identity until this gate passes.**
+The owner explicitly accepted the known clearance risk and instructed Phase 1 to proceed on 2026-09-29. This is an owner product decision, not a legal conclusion or a claim that the name is trademark-clear.
 
 A preliminary name check surfaced:
 - An existing software company named Temvio, described as an engineering-team analytics product, using https://temv.io (see https://www.linkedin.com/company/temvio).
@@ -48,7 +48,7 @@ The authoritative code and current GitHub configuration must be rechecked immedi
 
 ## 2. Phase 1 — Brand-facing rename ONLY
 
-**Entry:** Section 0 naming clearance accepted; owner selects final logo concept and final display spelling.  
+**Entry:** owner selects final logo concept and final display spelling; the owner may explicitly accept the Section 0 clearance risk for this phase.
 **Allowed scope:** UI presentation resources; public-facing copy/assets; repository display identity and links. No change to domain, application, persistence, transport or executable naming.
 
 ### 2.1 Identity and design assets
@@ -69,7 +69,7 @@ The authoritative code and current GitHub configuration must be rechecked immedi
 
 1. Capture a rollback baseline: commit SHA, release/tag refs, README, screenshots, repository configuration, CI/check names, external integrations and clone URL.
 2. Update README introduction, repository description/topics, documentation landing pages, badges, project/website links, release-page branding, social previews and screenshots. State “formerly Agentic Scheduler” for a transition period.
-3. **After naming clearance**, rename the GitHub repository from fangbm/agentic-scheduler to the approved brand-based slug (candidate fangbm/temvio) using repository settings. Do not rename the account/owner.
+3. After naming clearance, or the documented owner risk acceptance above, rename the GitHub repository from fangbm/agentic-scheduler to the approved brand-based slug (candidate fangbm/temvio) using repository settings. Do not rename the account/owner.
 4. GitHub typically redirects old repository URLs; do not treat redirects as a replacement for updating workflow references, Git submodules, hard-coded raw URLs, badges, external deployment/webhook settings, external GitHub Apps/connectors, clone remotes and documentation links. Audit these explicitly.
 5. Inspect CI/CIFleet integrations and artifact consumers. During Phase 1, change *display-only* labels only when no automation depends on their exact strings. Keep build, module, artifact and environment identifiers stable otherwise.
 6. Recheck any published package name, documentation domain, support identity or app-store listing before making public branding changes.

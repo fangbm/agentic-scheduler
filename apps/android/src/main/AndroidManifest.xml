@@ -3,7 +3,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application
         android:allowBackup="false"
-        android:label="Agentic Scheduler"
+        android:icon="@drawable/temvio_icon"
+        android:label="Temvio"
         android:theme="@style/Theme.AgenticScheduler">
         <meta-data
             android:name="dev.agenticscheduler.sync.BASE_URL"

@@ -1,6 +1,8 @@
-# Agentic Scheduler
+# Temvio
 
-A local-first Kotlin Multiplatform scheduler. D8 encrypted multi-device sync, opaque server relay, production secure storage, and Android/Desktop/Wear runtime closure are completion-accepted; OD-012 local SQLite encryption remains a separate production-sensitive-data release gate.
+Temvio (formerly Agentic Scheduler) is a local-first Kotlin Multiplatform scheduler. D8 encrypted multi-device sync, opaque server relay, production secure storage, and Android/Desktop/Wear runtime closure are completion-accepted; OD-012 local SQLite encryption remains a separate production-sensitive-data release gate.
+
+The Phase 1 rebrand changes presentation and public-facing materials only. Kotlin packages, application IDs, database identity, encrypted Sync/E2EE identifiers, credentials, and module names deliberately remain compatible with existing installations.
 
 The repository includes the completed D1–D4 foundations, completed D5-01 Calendar/Agenda surface, implemented D5-02 Event/Task creation-editing flow, completed D6 deterministic Planner/PlanBranch work, completed D7 mutation/history/causality foundation, and D8 encrypted multi-device sync through production Android/Desktop/Wear runtime closure. D5-02/D6.5 build and packaging verification passed locally on 2026-09-20; Desktop dogfood passed interactively, and the Android Planner surface plus New Task dialog respond on the API 36 emulator. Full Android Planner input smoke remains pending. OD-012 remains the separate requirement before claiming production-sensitive local-data readiness.
 
