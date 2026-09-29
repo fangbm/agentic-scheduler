@@ -20,6 +20,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -929,7 +931,7 @@ private fun PlannerDogfoodPanel(
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val selected = profileValues.firstOrNull { it.id == selectedProfileId }
-    Column {
+    Column(Modifier.testTag("planner-dogfood")) {
         Text("Planner dogfood")
         Row {
             Button(onClick = { createProfile = true }) { Text("New PlanningProfile") }
@@ -938,10 +940,10 @@ private fun PlannerDogfoodPanel(
         profileValues.forEach { profile -> Button(onClick = { selectedProfileId = profile.id }) { Text(if (profile.id == selectedProfileId) "Selected: ${profile.name}" else profile.name) } }
         if (profileRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         if (profileValues.isEmpty()) Text("Create a PlanningProfile, then configure explicit availability before planning.")
-        OutlinedTextField(horizonStart, { horizonStart = it }, label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
-        OutlinedTextField(horizonEnd, { horizonEnd = it }, label = { Text("Horizon end Instant (exclusive)") })
+        OutlinedTextField(horizonStart, { horizonStart = it }, modifier = Modifier.testTag("planner-horizon-start"), label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
+        OutlinedTextField(horizonEnd, { horizonEnd = it }, modifier = Modifier.testTag("planner-horizon-end"), label = { Text("Horizon end Instant (exclusive)") })
         Row {
-            Button(onClick = {
+            Button(modifier = Modifier.testTag("planner-full-replan"), onClick = {
                 val horizon = parseHorizon(horizonStart, horizonEnd)
                 if (selected == null || horizon == null) message = "Select a PlanningProfile and enter an explicit positive horizon."
                 else scope.launch { preview = planner.fullReplan(selected.id, Clock.System.now(), horizon); message = null }
@@ -963,11 +965,11 @@ private fun PlannerDogfoodPanel(
         message?.let { Text(it) }
         when (val result = preview) {
             is PlannerPreview.Applicable -> {
-                Text("PlanBranch preview: ${result.branch.mutations.size} FocusBlock mutation(s)")
+                Text("PlanBranch preview: ${result.branch.mutations.size} FocusBlock mutation(s)", modifier = Modifier.testTag("planner-preview"))
                 result.branch.mutations.forEach { Text(it.toString()) }
                 result.branch.issues.forEach { Text("PlannerIssue: $it") }
                 Row {
-                    Button(onClick = { scope.launch { when (val applied = planner.apply(result.branch, Clock.System.now())) {
+                    Button(modifier = Modifier.testTag("planner-apply"), onClick = { scope.launch { when (val applied = planner.apply(result.branch, Clock.System.now())) {
                         is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
                         is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
                         is PlanBranchApplyResult.BlockedBySyncConflict -> message = "PlanBranch intersects an unresolved sync conflict. Resolve it before applying."
