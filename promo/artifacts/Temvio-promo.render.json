@@ -1,0 +1,19 @@
+{
+  "source": "D:\\codex\\ASP\\promo\\promo.html",
+  "sourceSha256": "1D23F31B8D1CA48210A790F056A00B70277FA70D561CDDD4D49BD28221C215C7",
+  "output": "D:\\codex\\ASP\\promo\\artifacts\\Temvio-promo.mp4",
+  "outputSha256": "5A77FBB8CD36FC1288397087B0B61F0543EF184F329D78A3BC0795C19C275494",
+  "duration": 63.433333,
+  "fps": 30,
+  "cueTimes": [],
+  "audioAttribution": "D:\\codex\\ASP\\promo\\artifacts\\Temvio-promo.audio.md",
+  "publishable": false,
+  "renderedAtUtc": "2026-09-29T06:13:21.9121525Z",
+  "bpm": 106,
+  "beatOffsetSeconds": 0.05,
+  "meter": "4/4",
+  "bars": 28,
+  "musicSource": "https://mixkit.co/free-stock-music/rhythmic-underscore/",
+  "musicCredit": "Close Up by Michael Ramir C. (Mixkit)",
+  "musicSha256": "A7F05A29D07A84D38072CCD2B35204BCA812DB86E75B2A837E71CC144D3E739B"
+}

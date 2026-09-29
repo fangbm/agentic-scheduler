@@ -3,14 +3,17 @@ package dev.agenticscheduler.desktop
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,9 +21,12 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import dev.agenticscheduler.application.calendar.CalendarConflict
 import dev.agenticscheduler.application.calendar.CalendarItem
 import dev.agenticscheduler.application.calendar.CalendarProjectionIssue
@@ -76,6 +82,51 @@ import dev.agenticscheduler.application.sync.ActiveSyncRuntimeCreation
 import dev.agenticscheduler.application.sync.ActiveSyncCatchUpTrigger
 import dev.agenticscheduler.application.sync.DesktopPlatformSecureStore
 import dev.agenticscheduler.application.sync.TinkPairingHpke
+import dev.agenticscheduler.application.sync.PlatformSecretMaterial
+import dev.agenticscheduler.application.sync.SecretReference
+import dev.agenticscheduler.application.sync.LocalEnrollmentRepository
+import dev.agenticscheduler.application.sync.LocalEnrollmentState
+import dev.agenticscheduler.application.history.AgentOriginWriteGate
+import dev.agenticscheduler.application.history.HistoryQueryService
+import dev.agenticscheduler.application.history.UndoService
+import dev.agenticscheduler.agent.history.AgentStateRepository
+import dev.agenticscheduler.agent.history.AgentThreadId
+import dev.agenticscheduler.agent.history.AgentThread
+import dev.agenticscheduler.agent.history.AgentMessage
+import dev.agenticscheduler.agent.history.AgentToolCall
+import dev.agenticscheduler.agent.history.AgentToolResult
+import dev.agenticscheduler.agent.history.AgentToolCallState
+import dev.agenticscheduler.agent.history.AgentToolResultStatus
+import dev.agenticscheduler.agent.history.ProviderConfig
+import dev.agenticscheduler.agent.history.ProviderConfigId
+import dev.agenticscheduler.agent.permission.AgentSyncWriteGate
+import dev.agenticscheduler.agent.permission.AgentToolCapability
+import dev.agenticscheduler.agent.provider.OpenAiCompatibleProvider
+import dev.agenticscheduler.agent.provider.SecretStoreProviderCredentialResolver
+import dev.agenticscheduler.agent.runtime.AgentClock
+import dev.agenticscheduler.agent.runtime.AgentRunResult
+import dev.agenticscheduler.agent.runtime.AgentRunService
+import dev.agenticscheduler.agent.tool.CalendarListTool
+import dev.agenticscheduler.agent.tool.D7HistoryUndoApplication
+import dev.agenticscheduler.agent.tool.EventCreateTool
+import dev.agenticscheduler.agent.tool.EventUpdateTool
+import dev.agenticscheduler.agent.tool.HistoryReadTools
+import dev.agenticscheduler.agent.tool.HistoryUndoTool
+import dev.agenticscheduler.agent.tool.PlannerApplyBranchTool
+import dev.agenticscheduler.agent.tool.PlannerPreviewFullReplanTool
+import dev.agenticscheduler.agent.tool.PlannerPreviewLocalReflowTool
+import dev.agenticscheduler.agent.tool.PlanningProfileUpdateTool
+import dev.agenticscheduler.agent.tool.TaskCreateTool
+import dev.agenticscheduler.agent.tool.TaskGetTool
+import dev.agenticscheduler.agent.tool.TaskListTool
+import dev.agenticscheduler.agent.tool.TaskUpdateTool
+import dev.agenticscheduler.agent.tool.DogfoodPlannerPreviewApplication
+import dev.agenticscheduler.database.repository.RoomAgentStateRepository
+import dev.agenticscheduler.database.repository.RoomLocalEnrollmentRepository
+import dev.agenticscheduler.application.sync.PlatformSecretStore
+import dev.agenticscheduler.agent.history.AgentMessageRole
+import dev.agenticscheduler.application.sync.AgentOutboundCompatibilityGate
+import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.AccountId
 import dev.agenticscheduler.planner.LocalReflowRequest
 import dev.agenticscheduler.planner.PlanningHorizon
@@ -90,6 +141,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.flowOf
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.cio.CIO
 import kotlinx.datetime.DateTimeUnit
 import kotlinx.datetime.DayOfWeek
 import kotlinx.datetime.LocalDate
@@ -110,20 +163,26 @@ fun main() = application {
     val startupState = remember { mutableStateOf(initialStartupState) }
     val databaseFile = remember { File(System.getProperty("user.home"), ".agentic-scheduler/agentic-scheduler.db").also { it.parentFile.mkdirs() } }
     val database = remember(databaseFile) { openDesktopDatabase(databaseFile.absolutePath) }
+    val secureStore = remember { DesktopPlatformSecureStore() }
+    val agentState = remember(database) { RoomAgentStateRepository(database) }
+    val enrollments = remember(database) { RoomLocalEnrollmentRepository(database) }
+    val journal = remember(database) { RoomMutationJournalRepository(database) }
+    val agentWriteGate = remember(agentState, enrollments) { ActiveEnrollmentAgentWriteGate(enrollments, agentState) }
     val events = remember(database) { RoomEventRepository(database) }
     val tasks = remember(database) { RoomTaskRepository(database) }
     val academics = remember(database) { RoomAcademicRepository(database) }
     val profiles = remember(database) { RoomPlanningProfileRepository(database) }
     val transactions = remember(database) { RoomApplicationTransactionRunner(database) }
     val ids = remember { productionUuidV7Generator() }
-    val mutations = remember(transactions, database, ids) { MutationCoordinator(transactions, RoomMutationJournalRepository(database), ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }) }
-    val d8Runtime = remember(database, ids) {
+    val mutations = remember(transactions, journal, ids, agentWriteGate) { MutationCoordinator(transactions, journal, ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }, agentWriteGate) }
+    val d8Runtime = remember(database, ids, secureStore) {
         RoomD8RuntimeComposition(
             database,
-            DesktopPlatformSecureStore(),
+            secureStore,
             TinkPairingHpke(),
             ids,
             MutationWallClock { Clock.System.now().toEpochMilliseconds() },
+            agentOutboundGate = agentWriteGate,
         )
     }
     val d8Scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
@@ -172,6 +231,30 @@ fun main() = application {
     val profileSettings = remember(profiles, ids, mutations, d8Runtime) { PlanningProfileSettingsService(profiles, ids, mutations, d8Runtime.writePolicy) }
     val eventEditor = remember(events, ids, mutations, d8Runtime) { EventEditingService(events, ids, mutations, d8Runtime.writePolicy) }
     val taskEditor = remember(tasks, ids, mutations, d8Runtime) { TaskEditingService(tasks, ids, mutations, d8Runtime.writePolicy) }
+    val agentHttpClient = remember { HttpClient(CIO) }
+    val agentRunService = remember(database, agentState, agentHttpClient, secureStore, reads, planner, profileSettings, eventEditor, taskEditor, mutations, journal, ids, d8Runtime) {
+        val history = HistoryQueryService(journal)
+        val undo = UndoService(mutations, journal, events, tasks, profiles, d8Runtime.writePolicy)
+        AgentRunService(
+            state = agentState,
+            provider = OpenAiCompatibleProvider(agentHttpClient, SecretStoreProviderCredentialResolver(secureStore)),
+            taskGet = TaskGetTool(tasks),
+            taskCreate = TaskCreateTool(taskEditor),
+            ids = ids,
+            clock = AgentClock { Clock.System.now().toEpochMilliseconds() },
+            taskList = TaskListTool(tasks),
+            historyReads = HistoryReadTools(history),
+            taskUpdate = TaskUpdateTool(taskEditor),
+            calendarList = CalendarListTool(reads),
+            eventCreate = EventCreateTool(eventEditor),
+            eventUpdate = EventUpdateTool(eventEditor),
+            plannerFullReplan = PlannerPreviewFullReplanTool(DogfoodPlannerPreviewApplication(planner)),
+            plannerLocalReflow = PlannerPreviewLocalReflowTool(DogfoodPlannerPreviewApplication(planner)),
+            historyUndo = HistoryUndoTool(D7HistoryUndoApplication(undo, history)),
+            planningProfileUpdate = PlanningProfileUpdateTool(profileSettings),
+            plannerApplyBranch = PlannerApplyBranchTool(planner),
+        )
+    }
     Window(onCloseRequest = {
         d8SyncTrigger.value?.close()
         d8Scope.cancel()
@@ -204,6 +287,11 @@ fun main() = application {
                         taskEditor,
                         syncStoppedReason,
                         onRetrySync = { activeSyncTrigger?.retryNow() },
+                        agentRunService = agentRunService,
+                        agentState = agentState,
+                        secureStore = secureStore,
+                        enrollments = enrollments,
+                        ids = ids,
                     )
                     D8StartupState.Activating -> D8StartupStatus("Connecting to your secure sync space…")
                     D8StartupState.Blocked -> D8StartupStatus("Sync setup is unavailable. Restore the device credential or check the configured account and server.")
@@ -211,6 +299,7 @@ fun main() = application {
             }
         }
     }
+    DisposableEffect(agentHttpClient) { onDispose { agentHttpClient.close() } }
 }
 
 private enum class D8StartupState { Activating, Ready, Blocked }
@@ -237,6 +326,11 @@ private fun DesktopScheduler(
     taskEditor: TaskEditingService,
     syncStoppedReason: String?,
     onRetrySync: () -> Unit,
+    agentRunService: AgentRunService,
+    agentState: AgentStateRepository,
+    secureStore: PlatformSecretStore,
+    enrollments: LocalEnrollmentRepository,
+    ids: dev.agenticscheduler.application.id.UuidV7Generator,
 ) {
     val displayTimeZone = remember { TimeZone.currentSystemDefault() }
     var selectedDate by remember { mutableStateOf(Clock.System.now().toLocalDateTime(displayTimeZone).date) }
@@ -261,6 +355,9 @@ private fun DesktopScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
+        item {
+            AgentCommandPanel(agentRunService, agentState, secureStore, enrollments, ids)
+        }
         if (syncStoppedReason != null) {
             item {
                 Row {
@@ -290,13 +387,20 @@ private fun DesktopScheduler(
             if (projection.issues.isNotEmpty()) Text("${projection.issues.size} projection issue(s)")
             if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }
-        item { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
+        // Calendar source facts above can add or remove lazy items. Keep the pending
+        // PlanBranch preview attached to this semantic panel rather than its list index.
+        plannerDogfoodItem { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
     if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
     editingEvent?.let { EventEditorDialog(it, selectedDate, displayTimeZone, eventEditor, { editingEvent = null }, { editingEvent = null }) }
     if (creatingTask) TaskEditorDialog(null, taskEditor, { creatingTask = false }, { creatingTask = false })
     editingTask?.let { TaskEditorDialog(it, taskEditor, { editingTask = null }, { editingTask = null }) }
+}
+
+/** Keeps the remembered preview state stable while rows above it change. */
+internal fun LazyListScope.plannerDogfoodItem(content: @Composable () -> Unit) {
+    item(key = "planner-dogfood") { content() }
 }
 
 @Composable
@@ -307,6 +411,407 @@ private fun CalendarRow(item: CalendarItem, reads: ConflictAwareSourceFactReadSe
         Text((focusTitle?.let { "Focus block: $it" } ?: item.title) + if (item is CalendarItem.Floating) " (floating)" else "")
         val source = item.source as? CalendarSourceRef.Event
         if (source != null) Button(onClick = { scope.launch { (reads.event(source.id) as? ConflictAwareRead.Projected)?.value?.let(onEdit) } }) { Text("Edit") }
+    }
+}
+
+@Composable
+private fun AgentCommandPanel(
+    runService: AgentRunService,
+    state: AgentStateRepository,
+    secureStore: PlatformSecretStore,
+    enrollments: LocalEnrollmentRepository,
+    ids: dev.agenticscheduler.application.id.UuidV7Generator,
+) {
+    val scope = rememberCoroutineScope()
+    var providers by remember { mutableStateOf<List<ProviderConfig>>(emptyList()) }
+    var threads by remember { mutableStateOf<List<AgentThread>>(emptyList()) }
+    var selectedThread by remember { mutableStateOf<AgentThreadId?>(null) }
+    var messages by remember { mutableStateOf<List<AgentMessage>>(emptyList()) }
+    var calls by remember { mutableStateOf<List<AgentToolCall>>(emptyList()) }
+    var results by remember { mutableStateOf<List<AgentToolResult>>(emptyList()) }
+    var selectedProviderId by remember { mutableStateOf<ProviderConfigId?>(null) }
+    var command by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var providerDialog by remember { mutableStateOf(false) }
+    var confirmThreadDeletion by remember { mutableStateOf(false) }
+    var editingProvider by remember { mutableStateOf<ProviderConfig?>(null) }
+    var runState by remember { mutableStateOf<String?>(null) }
+    var activeEnrollment by remember { mutableStateOf<LocalEnrollmentState.Active?>(null) }
+    var allowSyncedAgentWrites by remember { mutableStateOf(false) }
+    var effectivePolicy by remember { mutableStateOf<List<Pair<AgentToolCapability, String>>>(emptyList()) }
+
+    suspend fun refreshThread(threadId: AgentThreadId?, createIfMissing: Boolean = true) {
+        threads = state.threads().sortedByDescending { it.createdAtEpochMillis }
+        selectedProviderId = state.selectedProviderConfigId()
+        providers = state.providerConfigs().sortedBy { it.model }
+        if (threadId == null) {
+            selectedThread = threads.firstOrNull()?.id ?: if (createIfMissing) runService.createThread().also { selectedThread = it } else null
+        } else selectedThread = threadId
+        val current = selectedThread
+        messages = current?.let { state.messages(it).sortedBy { item -> item.ordinal } }.orEmpty()
+        calls = current?.let { state.toolCalls(it).sortedBy { item -> item.ordinal } }.orEmpty()
+        results = current?.let { state.toolResults(it).sortedBy { item -> item.ordinal } }.orEmpty()
+    }
+
+    LaunchedEffect(runService, state) {
+        refreshThread(null)
+        activeEnrollment = enrollments.states().filterIsInstance<LocalEnrollmentState.Active>().singleOrNull()
+        allowSyncedAgentWrites = activeEnrollment?.let { state.syncAgentOriginEnabled(it.syncSpaceId) } ?: false
+        val policy = state.permissionPolicy()
+        effectivePolicy = AgentToolCapability.entries.map { capability -> capability to policy.modeFor(capability).name }
+    }
+
+    Column {
+        Text("Universal command")
+        Text("Ask a question, inspect schedule and history, propose typed changes, or request a Planner preview. All business writes remain behind the local Permission Engine.")
+        Text("Effective device-local Tool policy")
+        effectivePolicy.forEach { (capability, mode) -> Text("${capability.name}: $mode") }
+        val pending = calls.lastOrNull { it.state == AgentToolCallState.WAITING_CONFIRMATION }
+        val threadSwitchEnabled = !busy && pending == null
+        val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
+        Row {
+            if (selectedProvider == null) Text("Provider not configured") else Text("Provider: ${selectedProvider.model}")
+            Button(onClick = { editingProvider = selectedProvider; providerDialog = true }) { Text(if (selectedProvider == null) "Configure provider" else "Provider settings") }
+            Button(enabled = threadSwitchEnabled, onClick = {
+                if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@Button
+                scope.launch {
+                    if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@launch
+                    val id = runService.createThread()
+                    refreshThread(id)
+                    runState = "New AgentThread created."
+                }
+            }) { Text("New conversation") }
+            Button(enabled = !busy && selectedThread != null, onClick = { confirmThreadDeletion = true }) {
+                Text("Delete conversation")
+            }
+        }
+        providers.forEach { provider ->
+            Button(onClick = { scope.launch {
+                state.selectProviderConfig(provider.id)
+                selectedProviderId = provider.id
+                runState = "Using ${provider.model} for this AgentThread."
+            } }) { Text(if (provider.id == selectedProviderId) "Selected provider: ${provider.model}" else "Use provider: ${provider.model}") }
+        }
+        selectedProvider?.let { config ->
+            Text("Context capacity: ${config.maxContextUnits} units; output reserve: ${config.reservedOutputUnits} units. Streaming: ${config.streamingSupported}; structured tools: ${config.toolCallingSupported}.")
+        }
+        if (threads.size > 1) {
+            Text("Conversations")
+            threads.forEach { thread ->
+                Button(
+                    enabled = threadSwitchEnabled && thread.id != selectedThread,
+                    onClick = {
+                        if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@Button
+                        scope.launch {
+                            if (busy || calls.any { it.state == AgentToolCallState.WAITING_CONFIRMATION }) return@launch
+                            refreshThread(thread.id)
+                            runState = null
+                        }
+                    },
+                ) {
+                    Text(if (thread.id == selectedThread) "Current: ${thread.title ?: thread.id.value}" else thread.title ?: thread.id.value)
+                }
+            }
+        }
+        activeEnrollment?.let { active ->
+            Row {
+                Checkbox(
+                    checked = allowSyncedAgentWrites,
+                    onCheckedChange = { enabled -> scope.launch {
+                        state.setSyncAgentOriginEnabled(active.syncSpaceId, enabled)
+                        allowSyncedAgentWrites = state.syncAgentOriginEnabled(active.syncSpaceId)
+                    } },
+                )
+                Text("I confirm every enrolled device is upgraded for Agent-origin sync writes")
+            }
+            Text(if (allowSyncedAgentWrites) "Agent-origin sync writes are enabled for this SyncSpace." else "Agent-origin writes stay local until you enable this acknowledgement.")
+        } ?: Text("No single active SyncSpace is selected. Agent writes remain local-only.")
+
+        if (messages.isEmpty()) Text("Start a conversation with an explicit request.")
+        messages.takeLast(16).forEach { message ->
+            when (message.role) {
+                dev.agenticscheduler.agent.history.AgentMessageRole.USER -> Text("You: ${message.content}")
+                dev.agenticscheduler.agent.history.AgentMessageRole.ASSISTANT -> Text("Agent: ${message.content}")
+                dev.agenticscheduler.agent.history.AgentMessageRole.TOOL -> Unit
+            }
+        }
+        calls.takeLast(12).forEach { call ->
+            Text("Tool ${call.name}: ${call.state.userLabel()}")
+            val result = results.lastOrNull { it.callId == call.id }
+            if (result != null) Text("Result: ${result.status.userLabel()} — ${result.resultJson}")
+        }
+        runState?.let { Text(it) }
+        OutlinedTextField(
+            value = command,
+            onValueChange = { command = it },
+            label = { Text("Command") },
+            enabled = !busy && pending == null,
+        )
+        Row {
+            Button(enabled = !busy && pending == null && command.isNotBlank() && selectedProvider != null, onClick = {
+                val threadId = selectedThread ?: return@Button
+                val request = command
+                busy = true
+                runState = "Thinking / waiting for provider response…"
+                scope.launch {
+                    try {
+                        when (val result = runService.run(threadId, request)) {
+                            is AgentRunResult.Completed -> runState = "Turn completed."
+                            is AgentRunResult.AwaitingConfirmation -> runState = "A typed write requires your confirmation."
+                            is AgentRunResult.Failed -> runState = failureLabel(result.redactedCode)
+                        }
+                        command = ""
+                        refreshThread(threadId)
+                    } catch (_: Exception) {
+                        runState = "Provider or local Agent runtime is unavailable."
+                    } finally {
+                        busy = false
+                    }
+                }
+            }) { Text(if (busy) "Thinking…" else "Send") }
+        }
+    }
+
+    pendingOrNull(calls)?.takeUnless { confirmThreadDeletion }?.let { call ->
+        AlertDialog(
+            onDismissRequest = { /* A pending preview must be explicitly confirmed or denied. */ },
+            title = { Text("Confirm ${call.name}") },
+            text = { Column { Text("Review the normalized before/after preview. The operation is revalidated against current state when confirmed."); Text(call.previewJson ?: "No preview was recorded.") } },
+            confirmButton = { Button(enabled = !busy, onClick = {
+                val threadId = selectedThread ?: return@Button
+                busy = true
+                runState = "Revalidating confirmation against current state…"
+                scope.launch {
+                    try {
+                        when (val result = runService.confirm(threadId, call.id, true)) {
+                            is AgentRunResult.Completed -> runState = "Confirmed Tool flow completed."
+                            is AgentRunResult.AwaitingConfirmation -> runState = "Another Tool requires confirmation."
+                            is AgentRunResult.Failed -> runState = failureLabel(result.redactedCode)
+                        }
+                        refreshThread(threadId)
+                    } catch (_: Exception) { runState = "Agent confirmation failed. Check the structured Tool result below." }
+                    finally { busy = false }
+                }
+            }) { Text("Confirm") } },
+            dismissButton = { Row {
+                Button(enabled = !busy, onClick = {
+                    val threadId = selectedThread ?: return@Button
+                    busy = true
+                    scope.launch {
+                        try {
+                            when (val result = runService.confirm(threadId, call.id, false)) {
+                                is AgentRunResult.Completed -> runState = "Denied. No write was performed."
+                                is AgentRunResult.AwaitingConfirmation -> runState = "Another Tool requires confirmation."
+                                is AgentRunResult.Failed -> runState = failureLabel(result.redactedCode)
+                            }
+                            refreshThread(threadId)
+                        } catch (_: Exception) { runState = "Denial could not be recorded." }
+                        finally { busy = false }
+                    }
+                }) { Text("Deny") }
+                Button(enabled = !busy, onClick = { confirmThreadDeletion = true }) { Text("Delete conversation") }
+            } },
+        )
+    }
+
+    if (confirmThreadDeletion) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) confirmThreadDeletion = false },
+            title = { Text("Delete this conversation?") },
+            text = { Text("This removes its local messages, Tool calls and results, and summaries. Committed AgentAction and ChangeLog audit facts remain. Deletion does not erase every historical encrypted copy.") },
+            confirmButton = { Button(enabled = !busy, onClick = {
+                val threadId = selectedThread ?: return@Button
+                busy = true
+                scope.launch {
+                    try {
+                        state.deleteThread(threadId)
+                        confirmThreadDeletion = false
+                        runState = "Conversation deleted. Committed audit facts remain."
+                        refreshThread(null, createIfMissing = false)
+                    } catch (_: Exception) {
+                        runState = "Conversation could not be deleted."
+                    } finally { busy = false }
+                }
+            }) { Text("Delete") } },
+            dismissButton = { Button(enabled = !busy, onClick = { confirmThreadDeletion = false }) { Text("Cancel") } },
+        )
+    }
+
+    if (providerDialog) ProviderConfigurationDialog(
+        existing = editingProvider,
+        state = state,
+        secureStore = secureStore,
+        ids = ids,
+        onDismiss = { providerDialog = false },
+        onSaved = { scope.launch {
+            val saved = state.providerConfigs().sortedBy { it.model }
+            providers = saved
+            selectedProviderId = state.selectedProviderConfigId()
+            providerDialog = false
+            runState = "Provider metadata saved. Credential material is kept only in the platform secure store."
+        } },
+    )
+}
+
+@Composable
+private fun ProviderConfigurationDialog(
+    existing: ProviderConfig?,
+    state: AgentStateRepository,
+    secureStore: PlatformSecretStore,
+    ids: dev.agenticscheduler.application.id.UuidV7Generator,
+    onDismiss: () -> Unit,
+    onSaved: () -> Unit,
+) {
+    var baseUrl by remember(existing) { mutableStateOf(existing?.baseUrl.orEmpty()) }
+    var model by remember(existing) { mutableStateOf(existing?.model.orEmpty()) }
+    var contextUnits by remember(existing) { mutableStateOf(existing?.maxContextUnits?.toString().orEmpty()) }
+    var outputUnits by remember(existing) { mutableStateOf(existing?.reservedOutputUnits?.toString().orEmpty()) }
+    var streaming by remember(existing) { mutableStateOf(existing?.streamingSupported) }
+    var toolCalling by remember(existing) { mutableStateOf(existing?.toolCallingSupported) }
+    var replaceCredential by remember(existing) { mutableStateOf(false) }
+    var removeCredential by remember(existing) { mutableStateOf(false) }
+    var credential by remember(existing) { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    val unsafeHttp = nonLoopbackHttp(baseUrl)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (existing == null) "Configure Agent provider" else "Provider configuration") },
+        text = { Column {
+            OutlinedTextField(baseUrl, { baseUrl = it }, label = { Text("OpenAI-compatible base URL") })
+            OutlinedTextField(model, { model = it }, label = { Text("Model") })
+            OutlinedTextField(contextUnits, { contextUnits = it }, label = { Text("Maximum context units") })
+            OutlinedTextField(outputUnits, { outputUnits = it }, label = { Text("Reserved output units") })
+            Row {
+                Button(onClick = { streaming = streaming.nextExplicitChoice() }) { Text("Streaming supported: ${streaming?.let { if (it) "Yes" else "No" } ?: "Choose"}") }
+                Button(onClick = { toolCalling = toolCalling.nextExplicitChoice() }) { Text("Structured tool calling: ${toolCalling?.let { if (it) "Yes" else "No" } ?: "Choose"}") }
+            }
+            if (existing?.credentialReference != null) Text("A credential is stored securely. Its value is never shown here.")
+            Row { Checkbox(replaceCredential, { replaceCredential = it; if (it) removeCredential = false }); Text(if (existing?.credentialReference == null) "Add API credential" else "Replace saved credential") }
+            if (existing?.credentialReference != null) Row { Checkbox(removeCredential, { removeCredential = it; if (it) replaceCredential = false }); Text("Remove saved credential") }
+            if (replaceCredential) OutlinedTextField(credential, { credential = it }, label = { Text("API credential (optional)") }, visualTransformation = PasswordVisualTransformation())
+            if (baseUrl.trim().startsWith("http://", ignoreCase = true) && (existing?.credentialReference != null && !removeCredential || replaceCredential)) Text("Credentials require HTTPS. Save an HTTPS URL before using a credential.")
+            if (unsafeHttp) Text("This HTTP endpoint is not loopback. Prompt and schedule data will travel without transport encryption.")
+            error?.let { Text(it) }
+        } },
+        confirmButton = { Button(onClick = {
+            val parsedContext = contextUnits.toLongOrNull()
+            val parsedOutput = outputUnits.toLongOrNull()
+            if (baseUrl.isBlank() || model.isBlank() || parsedContext == null || parsedOutput == null || streaming == null || toolCalling == null ||
+                parsedContext <= 0 || parsedOutput <= 0 || parsedOutput >= parsedContext ||
+                (replaceCredential && credential.isBlank()) ||
+                (baseUrl.trim().startsWith("http://", ignoreCase = true) &&
+                    (replaceCredential || existing?.credentialReference != null && !removeCredential))
+            ) {
+                error = if (baseUrl.trim().startsWith("http://", ignoreCase = true) &&
+                    (replaceCredential || existing?.credentialReference != null && !removeCredential)) {
+                    "A provider credential requires HTTPS. No credential has been imported."
+                } else "Enter every provider field explicitly. Context must be positive and output must be smaller than context."
+            } else scope.launch {
+                var importedReference: SecretReference? = null
+                var providerSaved = false
+                try {
+                    val reference = when {
+                        removeCredential -> null
+                        replaceCredential -> {
+                            val bytes = credential.encodeToByteArray()
+                            try {
+                                secureStore.importSecret(DesktopProviderCredentialMaterial(bytes)).also { importedReference = it }
+                            }
+                            finally { bytes.fill(0); credential = "" }
+                        }
+                        else -> existing?.credentialReference
+                    }
+                    val config = ProviderConfig(
+                        id = existing?.id ?: ProviderConfigId(ids.next()),
+                        baseUrl = baseUrl.trim(), model = model.trim(),
+                        maxContextUnits = checkNotNull(parsedContext), reservedOutputUnits = checkNotNull(parsedOutput),
+                        streamingSupported = checkNotNull(streaming), toolCallingSupported = checkNotNull(toolCalling),
+                        credentialReference = reference,
+                    )
+                    state.saveProviderConfig(config)
+                    providerSaved = true
+                    state.selectProviderConfig(config.id)
+                } catch (_: Exception) {
+                    if (!providerSaved) importedReference?.let { reference -> runCatching { secureStore.delete(reference) } }
+                    error = "Provider settings could not be saved. The credential value was not retained in Agent state."
+                    credential = ""
+                    return@launch
+                }
+                val previousReference = existing?.credentialReference
+                if (previousReference != null && (removeCredential || replaceCredential) && previousReference != importedReference) {
+                    runCatching { secureStore.delete(previousReference) }
+                }
+                onSaved()
+            }
+        }) { Text("Save provider") } },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun pendingOrNull(calls: List<AgentToolCall>) = calls.lastOrNull { it.state == AgentToolCallState.WAITING_CONFIRMATION }
+
+private fun AgentToolCallState.userLabel(): String = when (this) {
+    AgentToolCallState.PROPOSED -> "proposed"
+    AgentToolCallState.WAITING_CONFIRMATION -> "confirmation required"
+    AgentToolCallState.RUNNING -> "running"
+    AgentToolCallState.COMPLETED -> "succeeded"
+    AgentToolCallState.FAILED -> "failed"
+    AgentToolCallState.DENIED -> "denied"
+}
+
+private fun AgentToolResultStatus.userLabel(): String = when (this) {
+    AgentToolResultStatus.SUCCESS -> "succeeded"
+    AgentToolResultStatus.INVALID_INPUT -> "invalid input"
+    AgentToolResultStatus.NOT_FOUND -> "not found"
+    AgentToolResultStatus.PERMISSION_DENIED -> "permission denied"
+    AgentToolResultStatus.STALE -> "stale preview / conflict"
+    AgentToolResultStatus.CONFLICT -> "sync conflict"
+    AgentToolResultStatus.INFEASIBLE -> "infeasible PlanBranch"
+    AgentToolResultStatus.UNSUPPORTED -> "unsupported Tool"
+    AgentToolResultStatus.INFRASTRUCTURE_FAILURE -> "provider or infrastructure unavailable"
+}
+
+private fun failureLabel(code: String): String = when {
+    "STALE" in code -> "The preview is stale. Reload current facts and ask again. ($code)"
+    "CONFLICT" in code -> "The change conflicts with unresolved Sync state. ($code)"
+    "INFEASIBLE" in code -> "Planner found no feasible result. ($code)"
+    "PERMISSION" in code || "CONFIRMATION" in code -> "Permission or confirmation is required. ($code)"
+    "PROVIDER" in code || "NETWORK" in code || "HTTP_" in code -> "Provider/network unavailable. ($code)"
+    else -> "Agent request failed. ($code)"
+}
+
+private fun Boolean?.nextExplicitChoice(): Boolean? = when (this) { null -> true; true -> false; false -> null }
+
+private fun nonLoopbackHttp(value: String): Boolean = runCatching {
+    val uri = java.net.URI(value.trim())
+    uri.scheme.equals("http", ignoreCase = true) && uri.host?.let { host ->
+        !host.equals("localhost", ignoreCase = true) && host != "127.0.0.1" && host != "::1" && !host.startsWith("127.")
+    } == true
+}.getOrDefault(false)
+
+private class DesktopProviderCredentialMaterial(private val bytes: ByteArray) : PlatformSecretMaterial {
+    override fun copyRawSecretBytesForSecureStore(): ByteArray = bytes.copyOf()
+}
+
+private class ActiveEnrollmentAgentWriteGate(
+    private val enrollments: LocalEnrollmentRepository,
+    private val state: AgentStateRepository,
+) : AgentOriginWriteGate, AgentOutboundCompatibilityGate {
+    override suspend fun mayCommit(): Boolean {
+        val active = enrollments.states().filterIsInstance<LocalEnrollmentState.Active>()
+        return when (active.size) {
+            0 -> true // No enrollment means this write cannot be emitted to a SyncSpace.
+            1 -> AgentSyncWriteGate(active.single().accountId, enrollments, state).mayCommit()
+            else -> false
+        }
+    }
+
+    override suspend fun enabled(syncSpaceId: SyncSpaceId): Boolean {
+        val active = enrollments.states().filterIsInstance<LocalEnrollmentState.Active>()
+        val selected = active.singleOrNull { it.syncSpaceId == syncSpaceId } ?: return false
+        if (active.size != 1) return false
+        return AgentSyncWriteGate(selected.accountId, enrollments, state).enabled(syncSpaceId)
     }
 }
 
@@ -344,6 +849,7 @@ private fun EventEditorDialog(existing: Event?, selectedDate: LocalDate, display
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Event no longer exists."
+                        EditingResult.Stale -> error = "Event changed. Reload it before saving."
                         is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
@@ -402,6 +908,7 @@ private fun TaskEditorDialog(existing: Task?, editor: TaskEditingService, onSave
                         is EditingResult.Success -> onSaved()
                         is EditingResult.Invalid -> error = result.issues.joinToString()
                         EditingResult.NotFound -> error = "Task no longer exists."
+                        EditingResult.Stale -> error = "Task changed. Reload it before saving."
                         is EditingResult.BlockedBySyncConflict -> error = "This change intersects an unresolved sync conflict. Resolve it before editing."
                     }
                 }
@@ -430,7 +937,7 @@ private fun PlannerDogfoodPanel(
     var message by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val selected = profileValues.firstOrNull { it.id == selectedProfileId }
-    Column {
+    Column(Modifier.testTag("planner-dogfood")) {
         Text("Planner dogfood")
         Row {
             Button(onClick = { createProfile = true }) { Text("New PlanningProfile") }
@@ -439,10 +946,10 @@ private fun PlannerDogfoodPanel(
         profileValues.forEach { profile -> Button(onClick = { selectedProfileId = profile.id }) { Text(if (profile.id == selectedProfileId) "Selected: ${profile.name}" else profile.name) } }
         if (profileRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         if (profileValues.isEmpty()) Text("Create a PlanningProfile, then configure explicit availability before planning.")
-        OutlinedTextField(horizonStart, { horizonStart = it }, label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
-        OutlinedTextField(horizonEnd, { horizonEnd = it }, label = { Text("Horizon end Instant (exclusive)") })
+        OutlinedTextField(horizonStart, { horizonStart = it }, modifier = Modifier.testTag("planner-horizon-start"), label = { Text("Horizon start Instant (e.g. 2026-09-14T09:00:00Z)") })
+        OutlinedTextField(horizonEnd, { horizonEnd = it }, modifier = Modifier.testTag("planner-horizon-end"), label = { Text("Horizon end Instant (exclusive)") })
         Row {
-            Button(onClick = {
+            Button(modifier = Modifier.testTag("planner-full-replan"), onClick = {
                 val horizon = parseHorizon(horizonStart, horizonEnd)
                 if (selected == null || horizon == null) message = "Select a PlanningProfile and enter an explicit positive horizon."
                 else scope.launch { preview = planner.fullReplan(selected.id, Clock.System.now(), horizon); message = null }
@@ -464,11 +971,11 @@ private fun PlannerDogfoodPanel(
         message?.let { Text(it) }
         when (val result = preview) {
             is PlannerPreview.Applicable -> {
-                Text("PlanBranch preview: ${result.branch.mutations.size} FocusBlock mutation(s)")
+                Text("PlanBranch preview: ${result.branch.mutations.size} FocusBlock mutation(s)", modifier = Modifier.testTag("planner-preview"))
                 result.branch.mutations.forEach { Text(it.toString()) }
                 result.branch.issues.forEach { Text("PlannerIssue: $it") }
                 Row {
-                    Button(onClick = { scope.launch { when (val applied = planner.apply(result.branch, Clock.System.now())) {
+                    Button(modifier = Modifier.testTag("planner-apply"), onClick = { scope.launch { when (val applied = planner.apply(result.branch, Clock.System.now())) {
                         is PlanBranchApplyResult.Applied -> { message = "PlanBranch applied atomically."; preview = null }
                         is PlanBranchApplyResult.Stale -> { preview = PlannerPreview.Applicable(applied.branch); message = "PlanBranch is stale; preview again before Apply." }
                         is PlanBranchApplyResult.BlockedBySyncConflict -> message = "PlanBranch intersects an unresolved sync conflict. Resolve it before applying."

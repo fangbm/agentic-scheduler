@@ -113,6 +113,31 @@ class SyncTransportWorkerTest {
         assertEquals(local.mutationId, transport.uploaded.single().mutationId)
     }
 
+    @Test
+    fun `Agent origin cannot upload until device local compatibility gate is enabled`() = runBlocking {
+        val agent = operation().copy(origin = MutationOrigin.Agent("00000000-0000-7000-8000-000000000092"))
+        val transport = MemoryTransport().apply { shouldFail = false }
+        val outbound = MemoryOutbound()
+        val keys = CountingKeys { transport.encryptions++ }
+        fun worker(gate: AgentOutboundCompatibilityGate = AgentOutboundCompatibilityGate { false }) = SyncTransportWorker(
+            history = MemoryHistory(agent), outbound = outbound, receive = MemoryReceive(),
+            codec = AuthenticatedSyncEnvelopeCodec(keys, keys), encryptionKeys = keys,
+            deviceId = DeviceId("device"), transport = transport,
+            receiveGateway = SyncEnvelopeReceiver { _, _ -> error("fetch is empty") },
+            agentOutboundGate = gate,
+        )
+
+        val denied = worker().run(SyncSpaceId("space"))
+        assertNotNull(denied.stoppedOnFailure)
+        assertEquals(0, transport.encryptions)
+        assertEquals(0, transport.uploaded.size)
+        assertNull(outbound.value)
+
+        val accepted = worker(AgentOutboundCompatibilityGate { it == SyncSpaceId("space") }).run(SyncSpaceId("space"))
+        assertEquals(1, accepted.uploaded)
+        assertEquals(1, transport.uploaded.size)
+    }
+
     private fun workerFor(transport: SyncTransport, seen: MutableList<String>) = SyncTransportWorker(
         history = MemoryHistory(emptyList()),
         outbound = MemoryOutbound(),

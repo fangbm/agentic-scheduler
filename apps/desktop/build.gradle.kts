@@ -16,9 +16,13 @@ dependencies {
     implementation(project(":shared:domain"))
     implementation(project(":shared:application"))
     implementation(project(":shared:database"))
+    implementation(project(":shared:agent"))
+    implementation(libs.ktor.client.cio)
     implementation(compose.desktop.currentOs)
     @Suppress("DEPRECATION")
     implementation(compose.material3)
+    testImplementation(compose.desktop.uiTestJUnit4)
+    testImplementation(compose.desktop.currentOs)
 }
 
 compose.desktop {

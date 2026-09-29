@@ -2,6 +2,7 @@ package dev.agenticscheduler.application.planner
 
 import dev.agenticscheduler.application.id.UuidV7Generator
 import dev.agenticscheduler.application.history.MutationCoordinator
+import dev.agenticscheduler.application.history.MutationExecution
 import dev.agenticscheduler.application.history.ConflictAwareSourceFactQuery
 import dev.agenticscheduler.application.history.ConflictProjection
 import dev.agenticscheduler.application.history.SyncConflictWriteBlock
@@ -22,6 +23,7 @@ import dev.agenticscheduler.planner.PlannerIssue
 import dev.agenticscheduler.planner.PlanningHorizon
 import dev.agenticscheduler.planner.PlanningSnapshot
 import dev.agenticscheduler.sync.MutationOrigin
+import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.PlanningProfilePut
 import dev.agenticscheduler.sync.*
 import kotlin.time.Instant
@@ -60,7 +62,12 @@ class DogfoodPlannerService(
         request: LocalReflowRequest,
     ): PlannerPreview = preview(profileId, referenceNow, horizon, PlanningRequest.LocalReflow(request))
 
-    suspend fun apply(branch: PlanBranch, applyNow: Instant): PlanBranchApplyResult {
+    suspend fun apply(
+        branch: PlanBranch,
+        applyNow: Instant,
+        origin: MutationOrigin = MutationOrigin.Planner,
+        onCommitted: suspend (MutationExecution<PlanBranchApplyResult>) -> Unit = {},
+    ): PlanBranchApplyResult {
         // A source fact that becomes unresolved after Preview cannot be safely
         // applied. Marking the session-only branch stale keeps Active State intact.
         val current = assembleCurrent(
@@ -82,7 +89,7 @@ class DogfoodPlannerService(
             },
             mutations = mutations,
             conflictWritePolicy = conflictWritePolicy,
-        ).apply(branch, applyNow)
+        ).apply(branch, applyNow, origin, onCommitted)
     }
 
     private suspend fun preview(
@@ -210,7 +217,18 @@ class DogfoodPlannerService(
 
 sealed interface PlanningProfileSettingsResult {
     data class Success(val profile: PlanningProfile) : PlanningProfileSettingsResult
+    data object Stale : PlanningProfileSettingsResult
+    data object NotFound : PlanningProfileSettingsResult
     data class BlockedBySyncConflict(val blocks: kotlinx.collections.immutable.ImmutableList<SyncConflictWriteBlock>) : PlanningProfileSettingsResult
+}
+
+data class PlanningProfileSettingsPreview(val before: PlanningProfile?, val after: PlanningProfile)
+
+sealed interface PlanningProfileAgentSaveResult {
+    data class Success(val profile: PlanningProfile, val mutationId: MutationId) : PlanningProfileAgentSaveResult
+    data object Stale : PlanningProfileAgentSaveResult
+    data object NotFound : PlanningProfileAgentSaveResult
+    data class BlockedBySyncConflict(val blocks: kotlinx.collections.immutable.ImmutableList<SyncConflictWriteBlock>) : PlanningProfileAgentSaveResult
 }
 
 /** Profile settings writes use the application transaction boundary, never a platform DAO. */
@@ -220,6 +238,9 @@ class PlanningProfileSettingsService(
     private val mutations: MutationCoordinator,
     private val conflictWritePolicy: SyncConflictWritePolicy,
 ) {
+    suspend fun previewSave(profile: PlanningProfile): PlanningProfileSettingsPreview =
+        PlanningProfileSettingsPreview(profiles.get(profile.id), profile)
+
     suspend fun createUnconfigured(name: String): PlanningProfileSettingsResult {
         val profile = PlanningProfile(
             PlanningProfileId(uuidV7.next()),
@@ -258,5 +279,41 @@ class PlanningProfileSettingsService(
             requireNotNull(result)
         }
         return execution?.value ?: requireNotNull(result)
+    }
+
+    /** Agent profile writes recheck the exact previewed before-image in the write transaction. */
+    suspend fun saveAgent(
+        profile: PlanningProfile,
+        expectedBefore: PlanningProfile?,
+        agentActionId: String,
+        onCommitted: suspend (MutationExecution<PlanningProfileSettingsResult>) -> Unit = {},
+    ): PlanningProfileAgentSaveResult {
+        var result: PlanningProfileSettingsResult? = null
+        val execution = mutations.executeIfAny(MutationOrigin.Agent(agentActionId), onCommitted) {
+            val before = profiles.get(profile.id)
+            result = if (before == null) {
+                PlanningProfileSettingsResult.NotFound
+            } else if (before != expectedBefore) {
+                PlanningProfileSettingsResult.Stale
+            } else {
+                val proposed = PlanningProfilePut(before?.toSemanticImage(), profile.toSemanticImage())
+                val blocks = conflictWritePolicy.blocks(listOf(proposed))
+                if (blocks.isNotEmpty()) {
+                    PlanningProfileSettingsResult.BlockedBySyncConflict(blocks.toImmutableList())
+                } else {
+                    profiles.upsert(profile)
+                    record(proposed)
+                    PlanningProfileSettingsResult.Success(profile)
+                }
+            }
+            requireNotNull(result)
+        }
+        val value = execution?.value ?: requireNotNull(result)
+        return when (value) {
+            is PlanningProfileSettingsResult.Success -> PlanningProfileAgentSaveResult.Success(value.profile, requireNotNull(execution).mutationId)
+            PlanningProfileSettingsResult.Stale -> PlanningProfileAgentSaveResult.Stale
+            PlanningProfileSettingsResult.NotFound -> PlanningProfileAgentSaveResult.NotFound
+            is PlanningProfileSettingsResult.BlockedBySyncConflict -> PlanningProfileAgentSaveResult.BlockedBySyncConflict(value.blocks)
+        }
     }
 }

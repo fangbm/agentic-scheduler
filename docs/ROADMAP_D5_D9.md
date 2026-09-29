@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10 + Post-project Hackathon
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 complete through production runtime closure; D9 may resume from its frozen predecessor gate; D10 planned; post-project DGX Spark hackathon fork planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 complete through production runtime closure; D9-01 final CI/merge pending; D10 planned; post-project DGX Spark hackathon fork planned
 > Date: 2026-09-20
 
 ---
@@ -20,7 +20,7 @@ D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
  ↓
 D8     E2EE Multi-device Sync + Thin Server    COMPLETE — FINAL PASS
  ↓
-D9-01  Agent Runtime + Typed Tools             CORE-ONLY / PAUSED BEFORE PRODUCTION INTEGRATION
+D9-01  Agent Runtime + Typed Tools             FINAL CI / MERGE PENDING
 D9-02  Agent history sync amendment            AFTER D9-01
 D9-03  Wear Agent/provider provisioning        AFTER D9-01
  ↓
@@ -230,10 +230,67 @@ Status:
 
 ```text
 D9-00 decisions                        FROZEN
-D9-01 Android/Desktop Agent core       READY AFTER D8
+D9-01 Android/Desktop Agent core       IN PROGRESS
 D9-02 synchronized Agent history       AFTER D9-01
 D9-03 Wear Agent/provider provisioning AFTER D9-01
 ```
+
+D9-01 remains IN PROGRESS. The current branch contains local Agent state and
+provider-run persistence, transcript reconstruction, context assembly/budgeting
+and compaction, plus a bounded provider orchestration path that persists
+ToolCall/ToolResult/AgentAction state. Its shared typed Tool inventory now
+covers calendar/task/history reads; Event create/update; Task create/update;
+Full Replan and Local Reflow previews; PlanBranch apply; PlanningProfile
+update; and history Undo.
+
+Android and Desktop contain Universal Command surfaces wired to the persistent
+Agent runtime, including provider configuration, conversation, permission
+display, and confirmation handling. Android physical-device evidence covers a
+real DeepSeek Flash read and a confirmed Task write. Windows Desktop visible
+acceptance on 2026-09-29 covers a real Provider read, confirmed Task creation,
+denied and invalid Event writes, structured Provider failure/recovery, durable
+confirmation recovery after restart, local conversation deletion, and
+PlanBranch Preview/Cancel/Apply/stale rejection. This is representative runtime
+evidence, not a replacement for the complete D9-01 test/review gate.
+
+Agent-origin business writes use the D8 inner-payload-v2 compatibility gate and
+device-local all-devices-upgraded opt-in; synchronized Agent writes remain
+disabled by default. PR #9 head `a96cc04` passed all four CI jobs in run
+[`36523454147`](https://github.com/fangbm/agentic-scheduler/actions/runs/36523454147):
+Linux build/tests, Windows Desktop, Android Keystore, and Wear Keystore.
+
+Android 16 physical-device read-only Provider E2E was exercised with DeepSeek
+Flash. The credential was resolved from Android secure storage, requests used
+HTTPS at `api.deepseek.com`, and the structured-tool capability probe
+succeeded. The Agent made a structured `history.timeline` call (`limit: 20`),
+persisted/displayed the Tool call and Tool result (`[]`), returned that result
+to the model, and received a final response reporting no changes. No business
+data mutation was made. This evidence covers the read-only Tool round trip
+only.
+
+Android 16 physical-device write acceptance was subsequently completed with
+DeepSeek Flash. An initial multi-Tool proposal was rejected by the runtime
+without a business write. A later single `task.create` proposal showed a
+confirmation preview for `D9 confirmation execution test` (`LOW`, five-minute
+estimated and remaining effort, no deadline). Following explicit user
+confirmation, the Task was persisted as `OPEN` / `LOW`, with five-minute
+estimated and remaining effort and no deadline. The ToolResult was `SUCCESS`;
+the linked AgentAction was `SUCCEEDED` with `REQUIRE_CONFIRMATION`. Its
+MutationId linked the `MutationRecord` (`AGENT:<action>` origin), `ChangeLog`
+`TaskPut`, and sync journal entry. No active SyncSpace was present, so the
+write remained local and was not synchronized to a server. This verifies the
+Android task-create path through provider, typed Tool, preview, explicit
+confirmation, application write, and audit/journal evidence. It does not
+establish Desktop visible UI acceptance or broader write-tool acceptance.
+D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
+frozen decision is changed by this progress update. The remaining D9-01 gate is
+the complete AGT-017 test/review matrix; D9-02 synchronized Agent history and
+D9-03 Wear Agent/provider provisioning remain later, separately scoped work.
+
+The Android Provider form makes credential removal and replacement mutually
+exclusive, and rejects credentialed HTTP URLs before resolving or importing a
+credential. These are local validation safeguards; they do not change the
+frozen Provider transport contract.
 
 Frozen D9-01 baseline:
 

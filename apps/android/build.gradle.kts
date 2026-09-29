@@ -23,10 +23,12 @@ dependencies {
     implementation(project(":shared:domain"))
     implementation(project(":shared:application"))
     implementation(project(":shared:database"))
+    implementation(project(":shared:agent"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.ktor.client.android)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
 }

@@ -43,9 +43,28 @@ class UndoService(
         return unsupportedReason(original.operation.orderedMutations)?.let(UndoCapability::Unsupported) ?: UndoCapability.Available
     }
 
-    suspend fun undo(originalMutationId: String): UndoResult {
+    suspend fun undo(
+        originalMutationId: String,
+        onCommitted: suspend (MutationExecution<UndoResult>) -> Unit = {},
+    ): UndoResult = undoInternal(originalMutationId, onCommitted, requireAgentWriteAuthorization = false)
+
+    /** Agent-triggered Undo keeps D7's Undo origin while applying the trusted Agent write gate. */
+    suspend fun undoAsAgent(
+        originalMutationId: String,
+        onCommitted: suspend (MutationExecution<UndoResult>) -> Unit = {},
+    ): UndoResult = undoInternal(originalMutationId, onCommitted, requireAgentWriteAuthorization = true)
+
+    private suspend fun undoInternal(
+        originalMutationId: String,
+        onCommitted: suspend (MutationExecution<UndoResult>) -> Unit,
+        requireAgentWriteAuthorization: Boolean,
+    ): UndoResult {
         var noMutation: UndoResult? = null
-        val execution = coordinator.executeIfAny(MutationOrigin.Undo(originalMutationId)) {
+        val execution = coordinator.executeIfAny(
+            origin = MutationOrigin.Undo(originalMutationId),
+            onCommitted = onCommitted,
+            requireAgentWriteAuthorization = requireAgentWriteAuthorization,
+        ) {
             val original = history.mutation(originalMutationId)
             if (original == null) {
                 noMutation = UndoResult.NotFound

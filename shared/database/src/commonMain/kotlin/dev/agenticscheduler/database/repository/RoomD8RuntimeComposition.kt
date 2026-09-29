@@ -12,6 +12,7 @@ import dev.agenticscheduler.application.sync.ActiveSyncRuntimeDependencies
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeFactory
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeHost
 import dev.agenticscheduler.application.sync.ActiveSyncRuntimeTransportFactory
+import dev.agenticscheduler.application.sync.AgentOutboundCompatibilityGate
 import dev.agenticscheduler.application.sync.KtorActiveSyncRuntimeTransportFactory
 import dev.agenticscheduler.application.sync.PairingHpke
 import dev.agenticscheduler.application.sync.PlatformD8SecureStore
@@ -30,6 +31,7 @@ class RoomD8RuntimeComposition(
     ids: UuidV7Generator,
     wallClock: MutationWallClock,
     transportFactory: ActiveSyncRuntimeTransportFactory = KtorActiveSyncRuntimeTransportFactory,
+    agentOutboundGate: AgentOutboundCompatibilityGate = AgentOutboundCompatibilityGate { false },
 ) {
     private val transactions = RoomApplicationTransactionRunner(database)
     private val journal = RoomMutationJournalRepository(database)
@@ -52,6 +54,7 @@ class RoomD8RuntimeComposition(
             keyRing = RoomSyncKeyMetadataRepository(database),
             secureStore = secureStore,
             pairingHpke = pairingHpke,
+            agentOutboundGate = agentOutboundGate,
         ),
         transportFactory,
     )
