@@ -498,6 +498,9 @@ private fun AndroidAgentPanel(
         configChoices.clear()
         configChoices.addAll(state.providerConfigs())
         selectedConfigId = state.selectedProviderConfigId()
+        if (selectedConfigId != null && status == "Configure a provider to begin.") {
+            status = "Provider ready."
+        }
         effectivePolicy = state.permissionPolicy()
         threadChoices = state.threads().sortedByDescending { it.createdAtEpochMillis }
         if (threadId == null) threadId = threadChoices.firstOrNull()?.id
