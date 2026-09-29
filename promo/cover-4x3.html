@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1600,initial-scale=1" />
+  <title>Temvio — 4:3 Agent planning cover</title>
+  <style>
+    :root{font-family:Inter,"SF Pro Display","PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;color:#102f55;font-synthesis:none}
+    *{box-sizing:border-box}html,body{margin:0;width:1600px;height:1200px;overflow:hidden;background:#fff}#cover{position:relative;width:1600px;height:1200px;overflow:hidden;background:linear-gradient(135deg,#fff 0%,#fff 59%,#f3fbff 100%)}
+    .glow{position:absolute;right:-70px;top:270px;width:780px;height:780px;border-radius:50%;background:radial-gradient(circle,rgba(16,183,194,.12),rgba(32,126,239,.055) 48%,transparent 73%)}
+    .brand{position:absolute;left:122px;top:65px;display:flex;align-items:center;gap:12px}.brand img:first-child{width:48px;height:48px;object-fit:contain}.brand img:last-child{width:134px;height:auto}.edition{position:absolute;right:125px;top:84px;color:#79909f;font-size:13px;font-weight:730;letter-spacing:.14em}
+    .eyebrow{position:absolute;left:127px;top:177px;color:#1378d8;font-size:14px;font-weight:760;letter-spacing:.17em}.headline{position:absolute;left:120px;top:222px;width:1360px;margin:0;color:#102f55;font-size:60px;line-height:1.17;letter-spacing:0;font-weight:760}.headline .accent{margin-left:21px;background:linear-gradient(95deg,#1268e8,#10b7c2);-webkit-background-clip:text;background-clip:text;color:transparent}.subline{position:absolute;left:127px;top:316px;color:#667e90;font-size:21px}
+    .panel{position:absolute;left:120px;top:392px;width:1360px;height:600px;border:1px solid #dfe9ef;border-radius:24px;background:rgba(255,255,255,.96);box-shadow:0 26px 68px rgba(30,72,109,.12);overflow:hidden}.panel-head{height:78px;padding:0 27px;display:flex;align-items:center;border-bottom:1px solid #e9eff3;background:linear-gradient(90deg,#fff,#fbfdff)}.agent-icon{width:35px;height:35px;object-fit:contain;margin-right:12px}.panel-title{font-size:17px;font-weight:740;color:#334f64}.panel-sub{margin-left:10px;color:#95a3ad;font-size:12px}.secure{margin-left:auto;display:flex;align-items:center;gap:8px;color:#18826b;font-size:12px;font-weight:720}.secure i{width:8px;height:8px;border-radius:50%;background:#20a67c;box-shadow:0 0 0 5px #edf8f3}
+    .content{height:calc(100% - 78px);display:grid;grid-template-columns:545px 1fr}.conversation{padding:24px 25px 23px;border-right:1px solid #edf1f4;position:relative}.section-label{color:#93a1ab;font-weight:750;font-size:11px;letter-spacing:.13em;margin-bottom:12px}.prompt{padding:16px 17px;border-radius:13px 13px 4px 13px;background:#edf5ff;color:#32546f;font-size:16px;line-height:1.55;margin-left:28px}.answer{display:grid;grid-template-columns:34px 1fr;gap:11px;margin:21px 3px 0;color:#425b6c;font-size:15px;line-height:1.6}.spark{width:32px;height:32px;border-radius:10px;background:linear-gradient(145deg,#eaf3ff,#e7faf7);display:grid;place-items:center;color:#177ed0;font-size:17px;font-weight:800}.answer small{display:block;margin-top:6px;color:#8495a1;font-size:12px;line-height:1.5}.tool{display:flex;align-items:center;gap:9px;margin:20px 0 0 45px;padding:12px 13px;border:1px solid #e2e9ee;border-radius:9px;color:#587080;font-size:12px;background:#fbfcfd}.tool i{width:7px;height:7px;border-radius:50%;background:#188b73}.tool code{color:#31536b;font-size:11px}.tool b{margin-left:auto;color:#80919c;font-size:10px;font-weight:650}
+    .plan{padding:24px 28px}.plan-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:17px}.plan-title{font-size:17px;font-weight:740;color:#2a4659}.plan-badge{padding:7px 10px;border:1px solid #d6eee4;border-radius:99px;background:#f1faf6;color:#19836a;font-size:11px;font-weight:730}.day{display:grid;grid-template-columns:88px 1fr;gap:13px;align-items:stretch}.timeline{border-right:1px solid #edf1f4;display:flex;flex-direction:column;justify-content:space-around;padding-right:13px;color:#82929d;font-size:12px;text-align:right}.events{display:flex;flex-direction:column;gap:10px}.event{min-height:74px;display:flex;align-items:center;padding:12px 16px;border:1px solid #e7edf1;border-radius:10px;background:#fff;color:#405a6d}.event.active{border-color:#bce2d5;background:linear-gradient(90deg,#f1faf6,#fbfefd);box-shadow:0 4px 12px rgba(26,130,100,.055)}.event-bar{width:4px;height:38px;border-radius:4px;background:#7da9d4;margin-right:14px}.event.active .event-bar{background:linear-gradient(#1268e8,#10b7c2)}.event-text{font-size:14px;font-weight:710}.event-text small{display:block;margin-top:5px;color:#8797a2;font-size:11px;font-weight:500}.event-time{margin-left:auto;color:#688091;font-size:12px;font-weight:690}.event.active .event-time{color:#167c68}.decision{display:flex;align-items:center;margin-top:17px;padding-top:16px;border-top:1px solid #edf1f4;color:#687f8f;font-size:12px}.decision strong{margin-left:7px;color:#37576c;font-weight:730}.cta{margin-left:auto;display:flex;align-items:center;justify-content:center;height:41px;padding:0 17px;border-radius:9px;background:linear-gradient(100deg,#176fe2,#1199bb);box-shadow:0 7px 16px rgba(25,117,198,.16);color:#fff;font-size:12px;font-weight:730}
+    .trust-strip{position:absolute;left:0;right:0;bottom:0;height:82px;display:grid;grid-template-columns:1.2fr repeat(4,1fr);align-items:center;padding:0 27px;border-top:1px solid #e9eff3;background:#fbfdfe}.trust-label{color:#82929d;font-size:11px;font-weight:730;letter-spacing:.08em}.trust-step{display:flex;align-items:center;gap:10px;color:#516a7c;font-size:12px;font-weight:680}.trust-step i{width:25px;height:25px;border:1px solid #d8e6ed;border-radius:8px;display:grid;place-items:center;color:#1479d2;font-size:10px;font-style:normal;font-weight:750;background:#fff}.trust-step:last-child i{border-color:#cce9df;color:#16836b;background:#f4fbf7}
+    .footer{position:absolute;left:126px;right:126px;bottom:67px;display:flex;align-items:center;justify-content:space-between;color:#8799a5;font-size:12px;letter-spacing:.11em}.footer strong{color:#187baf;font-weight:740}
+  </style>
+</head>
+<body>
+  <main id="cover">
+    <div class="glow"></div>
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div>
+    <div class="edition">YOUR AI PLANNING COMPANION</div>
+    <div class="eyebrow">AGENTIC SURFACE · DETERMINISTIC CORE</div>
+    <h1 class="headline">把计划交给 Agent。<span class="accent">把决定，留给自己。</span></h1>
+    <div class="subline">从一句话，到一份可检查、可确认的计划。</div>
+    <section class="panel" aria-label="Agent planning and approval preview">
+      <div class="panel-head"><img class="agent-icon" src="assets/temvio-icon-transparent.png" alt=""/><span class="panel-title">Temvio Agent</span><span class="panel-sub">读取日程 · 提出计划 · 等你确认</span><span class="secure"><i></i>由你决定何时应用</span></div>
+      <div class="content">
+        <div class="conversation">
+          <div class="section-label">你的请求</div>
+          <div class="prompt">帮我创建“整理访谈记录”，低优先级、预计 45 分钟；再放进今天的空档。</div>
+          <div class="answer"><i class="spark">✦</i><div>我找到一个可用时段，先生成安排预览。<small>我会保留现有固定安排，并检查计划是否冲突。</small></div></div>
+          <div class="tool"><i></i><code>planner.previewFullReplan</code><b>预览生成</b></div>
+          <div class="tool"><i></i><code>task.create</code><b>等待确认</b></div>
+        </div>
+        <div class="plan">
+          <div class="plan-top"><span class="plan-title">今天 · 计划提案</span><span class="plan-badge">✓ 无冲突</span></div>
+          <div class="day">
+            <div class="timeline"><span>14:00</span><span>15:00</span><span>16:00</span><span>17:00</span></div>
+            <div class="events">
+              <div class="event"><i class="event-bar"></i><span class="event-text">课程阅读<small>已锁定的课程安排</small></span><span class="event-time">14:00 – 15:00</span></div>
+              <div class="event active"><i class="event-bar"></i><span class="event-text">整理访谈记录<small>新增 Task · LOW · 45 分钟</small></span><span class="event-time">15:00 – 15:45</span></div>
+              <div class="event"><i class="event-bar"></i><span class="event-text">专注与缓冲<small>保留后续可用时间</small></span><span class="event-time">15:45 – 17:00</span></div>
+            </div>
+          </div>
+          <div class="decision"><span>权限检查</span><strong>通过 · 当前日程未改变</strong><span class="cta">预览后确认应用</span></div>
+        </div>
+      </div>
+      <div class="trust-strip"><span class="trust-label">每一步都清晰可见</span><span class="trust-step"><i>01</i>理解意图</span><span class="trust-step"><i>02</i>类型化工具</span><span class="trust-step"><i>03</i>规则与权限</span><span class="trust-step"><i>04</i>你确认应用</span></div>
+    </section>
+    <div class="footer"><span><strong>TEMVIO</strong>　时间规划，由你掌握。</span><span>YOUR TIME · YOUR DECISION</span></div>
+  </main>
+  <script>window.renderAt=()=>{};window.renderAt(0)</script>
+</body>
+</html>
