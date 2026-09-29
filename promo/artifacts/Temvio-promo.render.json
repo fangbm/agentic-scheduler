@@ -1,0 +1,21 @@
+{
+  "source": "D:\\codex\\ASP\\promo\\promo.html",
+  "sourceSha256": "B8D149F449EC200ADC92FA570919B6AC0CDC916F69AE9F6DB80CF3BF1B0497B7",
+  "output": "D:\\codex\\ASP\\promo\\artifacts\\Temvio-promo.mp4",
+  "outputSha256": "E7699093F44F80A3B0B34C3E5213569F104B221A118303CB40CBDCB46E0EDF3E",
+  "duration": 90.0,
+  "fps": 30,
+  "cueTimes": [
+    9.0,
+    20.0,
+    31.0,
+    42.0,
+    53.0,
+    67.0,
+    77.0,
+    84.0
+  ],
+  "audioAttribution": "D:\\codex\\ASP\\promo\\artifacts\\Temvio-promo.audio.md",
+  "publishable": false,
+  "renderedAtUtc": "2026-09-29T03:27:44.9412472Z"
+}

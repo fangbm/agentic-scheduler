@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1920,initial-scale=1" />
-  <title>Agentic Scheduler — 项目宣传片</title>
+  <title>Temvio — 项目宣传片</title>
   <style>
     :root { font-family: Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif; color:#18211f; font-synthesis:none; --ink:#18211f; --muted:#687571; --line:#dfe7e3; --green:#187b68; --mint:#e8f4ef; --paper:#f4f6f3; }
     * { box-sizing:border-box; }
@@ -94,6 +94,8 @@
     .roadnote { position:absolute; left:130px; bottom:142px; font-size:24px; color:#52655b; }
     .endmark { width:118px;height:118px;border:2px solid #8ed5bd;border-radius:35px 35px 35px 8px; margin:auto; position:relative; }
     .endmark:after { content:"";position:absolute; width:39px;height:39px; border-right:4px solid #8ed5bd;border-bottom:4px solid #8ed5bd; right:19px;bottom:19px;transform:rotate(-45deg); }
+    .logo-card { width:360px;height:360px;padding:0;border:1px solid rgba(255,255,255,.55);border-radius:32px;background:#fff;overflow:hidden;box-shadow:0 24px 68px rgba(0,0,0,.23); }
+    .logo-card img { display:block;width:100%;height:100%;object-fit:contain; }
     .endstack { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; gap:23px; }
     .endstack h2 { font-size:65px; }
     .endstack p { font-size:26px; color:#a8b8b1; }
@@ -106,16 +108,16 @@
 <body>
 <main id="stage">
   <section class="scene dark" data-start="0" data-end="9">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>PRODUCT FILM · 2026</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>PRODUCT FILM · 2026</span></div>
     <div class="endstack" style="gap:25px">
-      <div class="eyebrow">一个正在构建的个人时间系统</div>
+      <div class="logo-card"><img src="assets/temvio-logo.png" alt="Temvio logo" /></div>
       <h1 class="hero-title">把计划，<br>变成可执行的日常。</h1>
       <p class="sub">从可信的日历，到可控的智能助理。</p>
       <div class="smallmeta">Local-first · Deterministic planning · Encrypted sync</div>
     </div>
   </section>
   <section class="scene light" data-start="9" data-end="20">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>01 / 看清今天</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>01 / 看清今天</span></div>
     <div class="copy"><div class="eyebrow">A CLEAR VIEW OF YOUR DAY</div><h2 class="headline">日程与任务，<br>各有其位。</h2><p class="sub">事件占据时间；任务承载待完成的工作。日历把当天安排放在同一张视图里。</p></div>
     <div class="product"><div class="ui"><div class="uihead"><strong>Agenda / Day</strong><span>2026年 9月 29日　　‹　›</span></div><div class="body">
       <div class="pill"><i class="dot"></i> 今日安排</div>
@@ -128,7 +130,7 @@
     </div></div></div>
   </section>
   <section class="scene light" data-start="20" data-end="31">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>02 / 先预览，再决定</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>02 / 先预览，再决定</span></div>
     <div class="copy"><div class="eyebrow">DETERMINISTIC PLANNER</div><h2 class="headline">规划是一份提案。<br>应用权仍在你手里。</h2><p class="sub">确定性 Planner 根据明确的安排生成 PlanBranch。先检查变化，再选择应用或取消。</p></div>
     <div class="product"><div class="ui"><div class="uihead"><strong>Planner · PlanBranch preview</strong><span>未应用　·　可取消</span></div><div class="body"><div class="planner">
       <div class="column"><h3>当前安排</h3><div class="slot">09:00　课程阅读</div><div class="slot">13:00　空闲时间</div><div class="slot focus">16:00　整理访谈 · 30 分钟</div><div class="slot">18:00　个人安排</div></div>
@@ -136,7 +138,7 @@
     </div><div class="footerbar"><span>变化 1 项　·　依据当前计划生成</span><span><i class="outlinebtn">取消</i>　<i class="button">应用提案</i></span></div></div></div></div>
   </section>
   <section class="scene light" data-start="31" data-end="42">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>03 / 每次改变，都留下来</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>03 / 每次改变，都留下来</span></div>
     <div class="copy"><div class="eyebrow">HISTORY & UNDO</div><h2 class="headline">改变有记录。<br>需要时，可以撤销。</h2><p class="sub">操作日志把一次业务变更作为完整单元记录。Undo 通过补偿操作恢复可恢复的状态。</p></div>
     <div class="product"><div class="ui"><div class="uihead"><strong>操作历史</strong><span>本机记录　·　最近</span></div><div class="body">
       <div class="history"><span class="num">09:41</span><div><b>调整专注时段</b><small>FocusBlock　·　已完成</small></div><span class="tag">1 项变更</span></div>
@@ -148,7 +150,7 @@
     </div></div></div>
   </section>
   <section class="scene light" data-start="42" data-end="53">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>04 / 让设备协作，让内容保持私密</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>04 / 让设备协作，让内容保持私密</span></div>
     <div class="copy"><div class="eyebrow">END-TO-END ENCRYPTED SYNC</div><h2 class="headline">数据由设备持有。<br>服务器只转发密文。</h2><p class="sub">客户端加密后再同步。服务器保存加密信封，不读取日程内容；同步不改变本地业务真相。</p></div>
     <div class="product"><div class="ui"><div class="uihead"><strong>Personal SyncSpace</strong><span><i class="dot" style="display:inline-block;color:#328d71"></i> 已加密同步</span></div><div class="sync">
       <div class="device"><div class="devicebox"><div class="screenline green"></div><div class="screenline"></div><div class="screenline"></div><div class="screenline green" style="width:55%"></div><div class="screenline"></div></div><label>Android · 本地明文</label></div>
@@ -157,7 +159,7 @@
     </div></div></div>
   </section>
   <section class="scene light" data-start="53" data-end="67">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>05 / 对话可以提出，执行仍由你掌控</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>05 / 对话可以提出，执行仍由你掌控</span></div>
     <div class="copy"><div class="eyebrow">AGENT · D9 IN PROGRESS</div><h2 class="headline">说出下一步。<br>先看清，再确认。</h2><p class="sub">Agent 通过类型明确的工具读取与提出操作。写入经过权限判断、变更预览和用户确认。</p></div>
     <div class="product"><div class="ui"><div class="uihead"><strong>Universal command</strong><span>本地权限策略 · 新任务需确认</span></div><div class="chat">
       <div class="bubble user">帮我创建一个任务：整理访谈记录，预估 45 分钟，优先级 LOW。</div>
@@ -166,7 +168,7 @@
     </div></div></div>
   </section>
   <section class="scene light" data-start="67" data-end="77">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>06 / 助理不越过业务规则</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>06 / 助理不越过业务规则</span></div>
     <div class="copy" style="top:230px"><div class="eyebrow">ONE TRUSTED PATH</div><h2 class="headline">模型提出工具调用。<br>规则决定能否执行。</h2><p class="sub">Agent 不直接写入数据库。所有业务改动走相同的验证、权限和事务路径。</p></div>
     <div class="steps">
       <div class="step"><div class="stepicon">01</div><b>结构化提议</b><small>typed Tool call</small></div><div class="connector"></div>
@@ -176,7 +178,7 @@
     </div>
   </section>
   <section class="scene light" data-start="77" data-end="84">
-    <div class="topline"><div class="brand"><span class="mark"></span> Agentic Scheduler</div><span>PROJECT ROADMAP · D5—D10</span></div>
+    <div class="topline"><div class="brand">Temvio</div><span>PROJECT ROADMAP · D5—D10</span></div>
     <div class="copy" style="top:145px;width:1200px"><div class="eyebrow">从坚实内核，到完整体验</div><h2 class="headline" style="font-size:56px">每一步，都为下一步建立可信基础。</h2></div>
     <div class="roadmap">
       <div class="mile done"><strong>D5　日历与任务</strong><p>Agenda / Day<br>事件与任务编辑</p><span>已实现</span></div>
@@ -188,7 +190,7 @@
     <div class="roadnote">先把时间安排好，再让智能能力在清晰边界内参与。</div>
   </section>
   <section class="scene dark" data-start="84" data-end="90">
-    <div class="endstack"><div class="endmark"></div><h2>Agentic Scheduler</h2><p>把计划，变成可执行的日常。</p><div class="smallmeta">LOCAL-FIRST　·　DETERMINISTIC　·　PRIVATE BY DESIGN</div></div>
+    <div class="endstack"><div class="logo-card"><img src="assets/temvio-logo.png" alt="Temvio logo" /></div><p>把计划，变成可执行的日常。</p><div class="smallmeta">LOCAL-FIRST　·　DETERMINISTIC　·　PRIVATE BY DESIGN</div></div>
   </section>
 </main>
 <script>

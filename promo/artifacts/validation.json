@@ -1,5 +1,5 @@
 {
-  "path": "Agentic-Scheduler-promo.mp4",
+  "path": "Temvio-promo.mp4",
   "durationSeconds": 90.0,
   "resolution": "1920x1080",
   "frameRate": 30,
@@ -18,15 +18,15 @@
   "finalFrameDecoded": true,
   "blackFrameGapsOver400ms": [],
   "approvedStillSsim": {
-    "frame-4-50.png": 0.997824,
-    "frame-14-50.png": 0.996597,
-    "frame-25-50.png": 0.995613,
-    "frame-36-50.png": 0.996811,
-    "frame-47-50.png": 0.99678,
-    "frame-60-00.png": 0.995795,
-    "frame-72-00.png": 0.997678,
-    "frame-80-50.png": 0.996822,
-    "frame-87-00.png": 0.998609,
-    "frame-89-90.png": 0.998613
+    "frame-4-50.png": 0.995977,
+    "frame-14-50.png": 0.996738,
+    "frame-25-50.png": 0.995728,
+    "frame-36-50.png": 0.996903,
+    "frame-47-50.png": 0.99695,
+    "frame-60-00.png": 0.995877,
+    "frame-72-00.png": 0.997828,
+    "frame-80-50.png": 0.996846,
+    "frame-87-00.png": 0.996863,
+    "frame-89-90.png": 0.996867
   }
 }
