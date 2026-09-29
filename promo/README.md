@@ -23,7 +23,7 @@
 - `cover.html`：同一品牌体系下的独立宣传封面源稿。
 - `artifacts/Temvio-cover.png`：1920 × 1080 封面图，强调 Agent 提案与用户确认。
 - `cover-4x3.html` 与 `tools/render_cover.mjs`：4:3 封面源稿和可复用渲染脚本。
-- `artifacts/Temvio-cover-4x3.png`：1600 × 1200 版本；中部以 Agent 对话、计划时间线和确认路径填充。
+- `artifacts/Temvio-cover-4x3.png`：1600 × 1200 版本，沿用 16:9 封面的标题和 Agent 计划卡片布局，收窄两者之间的留白。
 - `assets/temvio-logo.png`：用户提供的组合 Logo 源稿。
 - `assets/temvio-icon-transparent.png` 与 `assets/temvio-wordmark-transparent.png`：从源稿拆分出的透明底图标与字标。
 - `artifacts/Temvio-promo.mp4`：H.264 High、yuv420p、AAC 48 kHz、faststart。
