@@ -243,16 +243,21 @@ covers calendar/task/history reads; Event create/update; Task create/update;
 Full Replan and Local Reflow previews; PlanBranch apply; PlanningProfile
 update; and history Undo.
 
-Android and Desktop contain in-progress Universal Command surfaces wired to the
-persistent Agent runtime, including provider configuration, conversation,
-permission display, and confirmation handling. Cross-platform usability has
-not yet been accepted.
+Android and Desktop contain Universal Command surfaces wired to the persistent
+Agent runtime, including provider configuration, conversation, permission
+display, and confirmation handling. Android physical-device evidence covers a
+real DeepSeek Flash read and a confirmed Task write. Windows Desktop visible
+acceptance on 2026-09-29 covers a real Provider read, confirmed Task creation,
+denied and invalid Event writes, structured Provider failure/recovery, durable
+confirmation recovery after restart, local conversation deletion, and
+PlanBranch Preview/Cancel/Apply/stale rejection. This is representative runtime
+evidence, not a replacement for the complete D9-01 test/review gate.
 
 Agent-origin business writes use the D8 inner-payload-v2 compatibility gate and
 device-local all-devices-upgraded opt-in; synchronized Agent writes remain
-disabled by default. The recorded CI run `36395340410` passed all four jobs on
-head `f2a333e`; later provider-adapter changes have separate focused desktop
-tests, so that CI result does not certify those later commits.
+disabled by default. PR #9 head `a96cc04` passed all four CI jobs in run
+[`36523454147`](https://github.com/fangbm/agentic-scheduler/actions/runs/36523454147):
+Linux build/tests, Windows Desktop, Android Keystore, and Wear Keystore.
 
 Android 16 physical-device read-only Provider E2E was exercised with DeepSeek
 Flash. The credential was resolved from Android secure storage, requests used
@@ -278,7 +283,9 @@ Android task-create path through provider, typed Tool, preview, explicit
 confirmation, application write, and audit/journal evidence. It does not
 establish Desktop visible UI acceptance or broader write-tool acceptance.
 D9-01 remains IN PROGRESS and its PR remains Draft. Full D9 remains open; no
-frozen decision is changed by this progress update.
+frozen decision is changed by this progress update. The remaining D9-01 gate is
+the complete AGT-017 test/review matrix; D9-02 synchronized Agent history and
+D9-03 Wear Agent/provider provisioning remain later, separately scoped work.
 
 The Android Provider form makes credential removal and replacement mutually
 exclusive, and rejects credentialed HTTP URLs before resolving or importing a

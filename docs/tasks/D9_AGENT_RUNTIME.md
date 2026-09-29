@@ -4,6 +4,7 @@
 > Milestone: **D9 — Agent / Universal Command**  
 > Status: **D9-01 IN PROGRESS — PR Draft — D8 COMPLETE**
 > Date: 2026-09-12  
+> Acceptance evidence updated: 2026-09-29
 > Decision source: `docs/AGENT_DECISIONS.md`
 
 ---
@@ -49,10 +50,11 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   `WAITING_CONFIRMATION` call when its conversation is selected, rather than
   relying only on in-memory dialog state. Session-local PlanBranch proposals
   are scoped to their AgentThread.
-- Verification status: head `f2a333e` passed all four jobs (Linux
-  build/tests, Windows Desktop, Android Keystore, and Wear Keystore) in CI run
-  `36395340410`. Later provider-adapter changes have separate focused desktop
-  tests; this CI result is not evidence for those later commits.
+- Verification status: PR #9 head `a96cc04` passed all four CI jobs (Linux
+  build/tests, Windows Desktop, Android Keystore, and Wear Keystore) in run
+  [`36523454147`](https://github.com/fangbm/agentic-scheduler/actions/runs/36523454147).
+  This run includes the supported Compose desktop regression assertion for
+  retaining a PlanBranch preview across a calendar recomposition.
 - Android 16 physical-device read-only Provider E2E was exercised with
   DeepSeek Flash. The credential was resolved from Android secure storage,
   requests used HTTPS at `api.deepseek.com`, and the structured-tool capability
@@ -80,17 +82,39 @@ Current implementation inventory on this branch (D9-01 remains IN PROGRESS):
   acceptance.
 - Other Android device evidence covers the provider configuration surface,
   missing-field error, responsive action rows, and thread-deletion confirmation
-  content. Desktop visible UI acceptance remains pending.
+  content.
+- Windows Desktop visible acceptance was exercised on 2026-09-29 with a real
+  HTTPS DeepSeek Flash provider credential held by the Desktop secret-store
+  path. A structured `task.list` round trip rendered the authoritative Task
+  result. A confirmation-required `task.create` showed its normalized
+  before/after facts and, after confirmation, produced the expected Task.
+  A permission-denied Event create and an invalid Event range produced no
+  write; the latter exposed `time:INVALID_RANGE`. A controlled Provider
+  `HTTP_400` was surfaced as a structured unavailable error, after which a
+  restored Provider completed a fresh structured read. Deleting a disposable
+  conversation removed it from the local conversation list while the previously
+  committed Task remained visible.
+- Desktop also exercised durable confirmation and Planner behavior. A pending
+  `task.create` confirmation survived an application restart; denying it then
+  reported no write and left no task with that title. Full Replan Preview was
+  exercised with both Cancel and Apply. After the source Task changed, Apply
+  rejected the retained proposal with `PlanBranch is stale; preview again
+  before Apply.` No Provider secret, credential value, or sensitive transcript
+  is recorded in this evidence.
 - The Android Provider form now makes credential removal and replacement
   mutually exclusive: selecting removal clears and disables the credential
   field. It also rejects credentialed HTTP URLs before resolving or importing
   a credential. This is local UI validation; end-to-end Android/Provider
   acceptance remains covered by the broader D9-01 gate.
 
-Full D9-01 acceptance remains open, including Desktop visible UI acceptance,
-broader write-tool acceptance, and the
-remaining required acceptance criteria below. The PR remains Draft; passing CI
-does not close D9-01.
+Full D9-01 acceptance remains open. The recorded Desktop evidence covers the
+representative read, confirmation, denial, error, deletion, restart, and
+Planner paths above; it is not a claim that every Typed Tool has been exercised
+against a live Provider. In particular, the full AGT-017 matrix remains gated
+by its repository tests and review, Agent-origin synchronized writes remain
+disabled without the D8 all-devices-upgraded acknowledgement, and D9-02/D9-03
+remain out of scope. The PR remains Draft; passing CI and this focused runtime
+evidence do not close D9-01.
 
 ---
 
