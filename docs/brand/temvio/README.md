@@ -23,3 +23,9 @@ Approved display spelling: **Temvio**. The owner selected these supplied raster 
 | Android/Wear `temvio_icon.png` | no explicit manifest icon resource |
 
 The original supplied masters are retained here alongside the in-app copies. Reverting the Phase 1 commit restores the previous display labels without modifying stored data or technical identities.
+
+## Intentionally retained legacy display strings
+
+- The Desktop window title and any hard-coded Desktop/About copy remain `Agentic Scheduler`: Phase 1 permits no Kotlin/Java edits.
+- CI artifact and workflow labels retain `agentic-scheduler` where exact strings may be consumed by automation.
+- Package names, Android/Wear application IDs, themes, database and secure-store identifiers, Sync/E2EE identifiers, server routes and Gradle project names remain legacy technical identities by design.
