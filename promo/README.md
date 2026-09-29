@@ -1,6 +1,6 @@
 # Temvio 宣传片
 
-当前成片：`artifacts/Temvio-promo.mp4`，约 63.43 秒，1920 × 1080，30 FPS。全片围绕 Agent 的一条真实能力链展开：读当前上下文、通过类型化工具提出写入、调用确定性 Planner、等待用户确认、查询 ChangeLog、按用户请求预览撤销，最后同步已提交的日历数据。
+当前成片：`artifacts/Temvio-promo.mp4`，约 63.43 秒，1920 × 1080，30 FPS。全片围绕 Agent 的一条真实能力链展开：读当前上下文、通过类型化工具提出写入、调用确定性 Planner、等待用户确认、查询 ChangeLog、按用户请求预览撤销，最后同步已提交的日历数据。片头、片尾均为白底；配套封面见 `artifacts/Temvio-cover.png`。
 
 ## 节奏与分镜
 
@@ -20,6 +20,8 @@
 ## 源文件与交付
 
 - `promo.html`：固定 1920 × 1080 画布、确定性 `window.renderAt(timeInSeconds)`，节拍与场景时间写在 `promo-metadata` 中。
+- `cover.html`：同一品牌体系下的独立宣传封面源稿。
+- `artifacts/Temvio-cover.png`：1920 × 1080 封面图，强调 Agent 提案与用户确认。
 - `assets/temvio-logo.png`：用户提供的组合 Logo 源稿。
 - `assets/temvio-icon-transparent.png` 与 `assets/temvio-wordmark-transparent.png`：从源稿拆分出的透明底图标与字标。
 - `artifacts/Temvio-promo.mp4`：H.264 High、yuv420p、AAC 48 kHz、faststart。
@@ -28,6 +30,7 @@
 - `tools/create_bgm.py`：本地备用的原创合成配乐生成器；本片不使用其音轨。
 - `artifacts/approved-stills-agent-centered/` 与 `artifacts/final-mp4-stills-agent-centered/`：编码前关键画面与成片抽帧验证。
 - `artifacts/validation-agent-centered.json`：最终 MP4 的编码、时长、空黑帧与 17 个视觉检查点校验。
+- `artifacts/validation-agent-centered-white.json`：白底首尾版本的最终 MP4 校验报告。
 
 ## 项目状态与画面说明
 
