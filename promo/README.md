@@ -17,7 +17,8 @@
 ## 源文件与交付
 
 - `promo.html`：固定 1920 × 1080 画布和确定性 `window.renderAt(timeInSeconds)`。
-- `assets/temvio-logo.png`：用户提供的 Temvio 原始 Logo，片头和片尾直接使用。
+- `assets/temvio-logo.png`：用户提供的原始组合图，作为品牌源稿保留。
+- `assets/temvio-icon-transparent.png` 与 `assets/temvio-wordmark-transparent.png`：从组合图拆分出的透明底日历图标和 Temvio 字标，片头、产品界面和片尾分别组合使用。
 - `artifacts/Temvio-promo.mp4`：H.264 High、yuv420p、AAC 48 kHz、faststart。
 - `artifacts/Temvio-promo.audio.md`：音频说明。
 - `artifacts/Temvio-promo.render.json`：源文件和输出文件哈希、渲染参数。

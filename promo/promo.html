@@ -12,14 +12,16 @@
     .scene { position:absolute;inset:0;opacity:0;visibility:hidden;overflow:hidden; }
     .dark { background:#080c12;color:#f4f7fb; }
     .paper { background:#eef2f5;color:#18212a; }
-    .brand { position:absolute;left:112px;top:70px;display:flex;align-items:center;gap:14px;font-size:21px;font-weight:700;letter-spacing:.01em;z-index:8; }
-    .brand img { width:34px;height:34px;object-fit:cover;border-radius:9px; }
-    .tag { position:absolute;right:112px;top:77px;font-size:17px;color:#9baab9;letter-spacing:.12em;z-index:8; }
+    .brand { position:absolute;left:112px;top:70px;display:flex;align-items:center;gap:9px;z-index:8; }
+    .brand .brand-icon { width:32px;height:32px;object-fit:contain; }
+    .brand .brand-wordmark { width:100px;height:auto;object-fit:contain; }
+    .tag { position:absolute;right:112px;top:77px;font-size:17px;color:#72808c;letter-spacing:.12em;z-index:8; }
     .intro-content { position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:15px; }
-    .logo-card { width:252px;height:252px;border-radius:28px;background:#fff;overflow:hidden;box-shadow:0 20px 60px rgba(12,116,220,.18);opacity:0;transform:translateY(18px) scale(.96); }
-    .logo-card img { width:100%;height:100%;display:block;object-fit:contain; }
+    .logo-card { width:auto;height:auto;border-radius:0;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:0;box-shadow:none;overflow:visible;opacity:0;transform:translateY(18px) scale(.96); }
+    .logo-card .lockup-icon { width:220px;height:201px;display:block;object-fit:contain; }
+    .logo-card .lockup-wordmark { width:355px;height:auto;display:block;object-fit:contain; }
     .hero { margin-top:4px;font-size:76px;line-height:1.08;font-weight:760;letter-spacing:0;opacity:0;transform:translateY(20px); }
-    .hero-sub { margin-top:3px;color:#9eacba;font-size:25px;opacity:0;transform:translateY(14px); }
+    .hero-sub { margin-top:3px;color:#657581;font-size:25px;opacity:0;transform:translateY(14px); }
     .hero-stroke { width:104px;height:3px;background:linear-gradient(90deg,var(--blue),var(--cyan));margin-top:12px;transform:scaleX(0); }
 
     .browser { position:absolute;left:82px;top:90px;width:1756px;height:900px;border:1px solid #d5dee7;border-radius:25px;background:#fff;overflow:hidden;box-shadow:0 25px 78px rgba(25,42,58,.18);transform:translateY(18px) scale(.985);opacity:0; }
@@ -27,7 +29,7 @@
     .traffic { width:10px;height:10px;border-radius:50%;background:#ff6258; }.traffic:nth-child(2){background:#ffbd45}.traffic:nth-child(3){background:#32c76a}
     .url { height:25px;margin-left:14px;border-radius:14px;background:#edf1f5;color:#84919d;padding:4px 13px;font-size:13px;flex:1; }
     .appbar { height:60px;display:flex;align-items:center;gap:32px;padding:0 26px;border-bottom:1px solid #e7edf2;font-size:17px; }
-    .word { font-size:21px;font-weight:750;color:#172c45;margin-right:20px; }
+    .wordmark { display:block;width:104px;height:auto;object-fit:contain;margin-right:20px; }
     .nav { color:#71808c; }.nav.on { color:#1478ed;font-weight:700; }
     .appbar .spacer { flex:1; }
     .avatar { width:31px;height:31px;border-radius:50%;display:grid;place-items:center;background:#eaf2fc;color:#176dc2;font-size:14px;font-weight:700; }
@@ -129,8 +131,10 @@
     .agent-sub { margin-top:21px;font-size:25px;line-height:1.55;color:#657581;max-width:680px; }
     .phone { width:600px;height:780px;border:1px solid #d6e0e7;border-radius:31px;background:#fff;box-shadow:0 25px 70px rgba(26,53,72,.15);overflow:hidden;justify-self:end;position:relative; }
     .phone-head { height:72px;border-bottom:1px solid #e8edf1;display:flex;align-items:center;padding:0 24px;gap:12px; }
-    .phone-head img { width:39px;height:39px;border-radius:10px; }
-    .phone-head b { font-size:18px; }.phone-head small{display:block;color:#86939d;margin-top:4px;font-size:12px}
+    .phone-head .phone-icon { width:39px;height:39px;object-fit:contain; }
+    .phone-head .phone-brand { display:flex;align-items:baseline;gap:7px; }
+    .phone-head .phone-wordmark { width:93px;height:auto;display:block; }
+    .phone-head b { font-size:14px;color:#61717e; }.phone-head small{display:block;color:#86939d;margin-top:4px;font-size:12px}
     .phone-head .badge { margin-left:auto;background:#fff6e6;color:#9b6718; }
     .chat { padding:23px 22px; }
     .bubble { max-width:470px;padding:14px 16px;border-radius:15px;font-size:16px;line-height:1.55;margin:8px 0 14px; }
@@ -151,11 +155,12 @@
     .agent-status { margin-top:21px;font-size:14px;color:#82909b;display:flex;align-items:center;gap:9px; }
     .agent-status i { width:8px;height:8px;border-radius:50%;background:#d8a14f; }
     .outro { position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:15px; }
-    .outro .logo-card { width:285px;height:285px; }
+    .outro .logo-card .lockup-icon { width:235px;height:215px; }
+    .outro .logo-card .lockup-wordmark { width:380px;height:auto; }
     .outro-line { font-size:43px;font-weight:700;margin-top:5px; }
-    .outro-sub { font-size:19px;color:#9eacba; }
-    .outro-bar { display:flex;align-items:center;gap:14px;font-size:13px;color:#8ca0b0;letter-spacing:.10em;margin-top:6px; }
-    .outro-bar i { width:36px;height:1px;background:#3f607d; }
+    .outro-sub { font-size:19px;color:#657581; }
+    .outro-bar { display:flex;align-items:center;gap:14px;font-size:13px;color:#72808c;letter-spacing:.10em;margin-top:6px; }
+    .outro-bar i { width:36px;height:1px;background:#c5d1da; }
   </style>
   <script id="promo-metadata" type="application/json">
     {"duration":60,"cues":{"brand":0.4,"taskOpen":5.0,"taskSave":8.9,"replan":15.0,"branch":18.2,"apply":21.2,"history":26.0,"undo":30.0,"sync":35.3,"agentSend":44.2,"agentPreview":47.5,"agentConfirm":52.0,"outro":55.2}}
@@ -163,15 +168,15 @@
 </head>
 <body>
 <main id="stage">
-  <section class="scene dark" data-start="0" data-end="3.6" id="intro">
-    <div class="brand"><img src="assets/temvio-logo.png" alt="" />Temvio</div><div class="tag">PERSONAL TIME, IN FOCUS</div>
-    <div class="intro-content"><div class="logo-card" data-show="0.24"><img src="assets/temvio-logo.png" alt="Temvio" /></div><h1 class="hero" data-show="0.88">让计划，变成<br>可执行的日常。</h1><p class="hero-sub" data-show="1.48">日历 · 确定性规划 · 可信的智能助理</p><div class="hero-stroke" data-show="1.92"></div></div>
+  <section class="scene paper" data-start="0" data-end="3.6" id="intro">
+    <div class="tag">PERSONAL TIME, IN FOCUS</div>
+    <div class="intro-content"><div class="logo-card" data-show="0.24"><img class="lockup-icon" src="assets/temvio-icon-transparent.png" alt=""/><img class="lockup-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><h1 class="hero" data-show="0.88">让计划，变成<br>可执行的日常。</h1><p class="hero-sub" data-show="1.48">日历 · 确定性规划 · 可信的智能助理</p><div class="hero-stroke" data-show="1.92"></div></div>
   </section>
 
   <section class="scene paper" data-start="3.6" data-end="13.5" id="agenda">
     <div class="browser">
       <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><div class="url">temvio.app / today</div></div>
-      <div class="appbar"><span class="word">Temvio</span><span class="nav on">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav">规划</span><span class="nav">历史</span><span class="spacer"></span><span class="nav">9月 29日　⌄</span><span class="avatar">T</span></div>
+      <div class="appbar"><img class="wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><span class="nav on">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav">规划</span><span class="nav">历史</span><span class="spacer"></span><span class="nav">9月 29日　⌄</span><span class="avatar">T</span></div>
       <div class="workspace" id="agenda-workspace">
         <aside class="sidebar"><div class="side-label">工作区</div><div class="side-item active"><i class="side-icon"></i>今天</div><div class="side-item"><i class="side-icon"></i>日历</div><div class="side-item"><i class="side-icon"></i>任务</div><div class="side-item"><i class="side-icon"></i>规划</div><div class="side-item"><i class="side-icon"></i>历史</div><div class="side-label" style="margin-top:35px">近期</div><div class="side-item"><i class="side-icon"></i>本周安排</div></aside>
         <div class="main">
@@ -193,7 +198,7 @@
   <section class="scene paper" data-start="13.5" data-end="24" id="planner">
     <div class="browser">
       <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><div class="url">temvio.app / planner / preview</div></div>
-      <div class="appbar"><span class="word">Temvio</span><span class="nav">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav on">规划</span><span class="nav">历史</span><span class="spacer"></span><span class="nav">Study profile　⌄</span><span class="avatar">T</span></div>
+      <div class="appbar"><img class="wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><span class="nav">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav on">规划</span><span class="nav">历史</span><span class="spacer"></span><span class="nav">Study profile　⌄</span><span class="avatar">T</span></div>
       <div class="workspace"><aside class="sidebar"><div class="side-label">规划工具</div><div class="side-item active"><i class="side-icon"></i>完整重排</div><div class="side-item"><i class="side-icon"></i>局部调整</div><div class="side-item"><i class="side-icon"></i>计划分支</div><div class="side-label" style="margin-top:35px">约束</div><div class="side-item"><i class="side-icon"></i>固定安排　4</div><div class="side-item"><i class="side-icon"></i>开放任务　3</div></aside>
         <div class="main"><div class="toolbar"><div class="page-title">本周安排</div><span class="date-pill">9月 28日 — 10月 4日</span><div class="push"></div><button class="btn" id="planner-run">生成规划预览</button></div>
           <div class="progressline"><i id="plan-fill"></i></div>
@@ -219,7 +224,7 @@
   <section class="scene paper" data-start="24" data-end="33.4" id="history">
     <div class="browser">
       <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><div class="url">temvio.app / history</div></div>
-      <div class="appbar"><span class="word">Temvio</span><span class="nav">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav">规划</span><span class="nav on">历史</span><span class="spacer"></span><span class="nav">本机记录　⌄</span><span class="avatar">T</span></div>
+      <div class="appbar"><img class="wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><span class="nav">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav">规划</span><span class="nav on">历史</span><span class="spacer"></span><span class="nav">本机记录　⌄</span><span class="avatar">T</span></div>
       <div class="workspace"><aside class="sidebar"><div class="side-label">活动</div><div class="side-item"><i class="side-icon"></i>今天</div><div class="side-item active"><i class="side-icon"></i>操作历史</div><div class="side-label" style="margin-top:35px">筛选</div><div class="side-item"><i class="side-icon"></i>全部变更</div><div class="side-item"><i class="side-icon"></i>可撤销操作</div></aside>
         <div class="main"><div class="toolbar"><div class="page-title">操作历史</div><span class="date-pill">每次更改均保留记录</span><div class="push"></div><button class="btn">最近 7 天　⌄</button></div><div class="history-layout"><div class="surface history-list">
           <div class="history-row" id="undo-target"><span class="history-time">10:42</span><i class="history-icon">↔</i><div><b>应用计划分支</b><small>FocusBlock · 整理访谈记录 · 1 项变更</small></div><button class="btn" id="undo-button">预览撤销</button></div>
@@ -233,7 +238,7 @@
   </section>
 
   <section class="scene paper" data-start="33.4" data-end="41.4" id="sync">
-    <div class="brand"><img src="assets/temvio-logo.png" alt="" />Temvio</div><div class="tag">D8 · ENCRYPTED DEVICE SYNC</div>
+    <div class="brand"><img class="brand-icon" src="assets/temvio-icon-transparent.png" alt=""/><img class="brand-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="tag">D8 · ENCRYPTED DEVICE SYNC</div>
     <div class="sync-stage"><div class="device"><div class="device-top"><i class="device-light"></i> Android · 本机数据</div><div class="device-content"><div class="device-heading">今天</div><div class="device-event">晨间回顾<small>09:00 — 09:45</small></div><div class="device-event" style="border-color:#1eaa9c">整理访谈记录<small>待规划 · LOW</small></div><div class="device-event" style="border-color:#55a181">课程阅读<small>14:00 — 15:00</small></div></div></div>
       <div class="sync-center"><div class="sync-title">你的设备，保持一致。</div><div class="sync-sub">客户端加密后再同步<br>服务器只转发加密信封</div><div class="route"><i class="route-line"></i><i class="packet" id="packet"></i></div><span class="lock"><i class="lock-icon"></i> 内容端到端加密</span><div class="sync-state" id="sync-state">等待加密打包</div></div>
       <div class="device"><div class="device-top"><i class="device-light"></i> Desktop · 已解密使用</div><div class="device-content"><div class="device-heading">Agenda / Day</div><div class="device-event">晨间回顾<small>09:00 — 09:45</small></div><div class="device-event" style="border-color:#1eaa9c">整理访谈记录<small>待规划 · LOW</small></div><div class="device-event" style="border-color:#55a181">课程阅读<small>14:00 — 15:00</small></div></div></div>
@@ -242,7 +247,7 @@
 
   <section class="scene paper" data-start="41.4" data-end="55" id="agent">
     <div class="agent-layout"><div class="agent-copy"><div class="eyebrow">AGENT · D9 正在进行</div><h2 class="agent-head">描述你要做的事。<br>检查之后，再确认。</h2><p class="agent-sub">Temvio Agent 用类型化工具读取和提出变更。每次写入先展示内容，再由你决定。</p><div class="agent-status"><i></i><span>受本地权限控制 · 操作结果进入历史</span></div></div>
-      <div class="phone"><div class="phone-head"><img src="assets/temvio-logo.png" alt=""/><div><b>Temvio Assistant</b><small>本地 Agent 对话</small></div><span class="badge">D9 进行中</span></div><div class="chat">
+      <div class="phone"><div class="phone-head"><img class="phone-icon" src="assets/temvio-icon-transparent.png" alt=""/><div><div class="phone-brand"><img class="phone-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><b>Assistant</b></div><small>本地 Agent 对话</small></div><span class="badge">D9 进行中</span></div><div class="chat">
         <div class="bubble user" id="agent-user"></div>
         <div class="bubble agent" id="agent-reply">我会先检查任务输入，再准备创建预览。</div>
         <div class="tool-card" id="tool-card"><div class="tool-top"><span>类型化工具调用</span><span id="tool-state">等待确认</span></div><div class="tool-main"><div class="tool-step"><i></i><span>task.create · 输入已校验</span></div><div class="confirm-box"><strong>整理访谈记录</strong><small>开放任务　·　优先级 LOW　·　预计 45 分钟</small><div class="confirm-row"><button class="btn" id="agent-deny">拒绝</button><button class="btn primary" id="agent-confirm">确认并创建</button></div></div></div></div>
@@ -252,8 +257,8 @@
     <div class="cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <section class="scene dark" data-start="55" data-end="60" id="outro">
-    <div class="outro"><div class="logo-card" data-show="55.15"><img src="assets/temvio-logo.png" alt="Temvio" /></div><div class="outro-line" data-show="55.55">把计划，变成可执行的日常。</div><div class="outro-sub" data-show="56">从日历开始，始终由你掌控。</div><div class="outro-bar" data-show="56.45"><span>日历</span><i></i><span>规划</span><i></i><span>历史</span><i></i><span>Agent</span></div></div>
+  <section class="scene paper" data-start="55" data-end="60" id="outro">
+    <div class="outro"><div class="logo-card" data-show="55.15"><img class="lockup-icon" src="assets/temvio-icon-transparent.png" alt=""/><img class="lockup-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="outro-line" data-show="55.55">把计划，变成可执行的日常。</div><div class="outro-sub" data-show="56">从日历开始，始终由你掌控。</div><div class="outro-bar" data-show="56.45"><span>日历</span><i></i><span>规划</span><i></i><span>历史</span><i></i><span>Agent</span></div></div>
   </section>
 
   <div class="cursor" id="global-cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div>
