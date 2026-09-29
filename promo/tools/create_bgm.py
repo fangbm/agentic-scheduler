@@ -11,7 +11,7 @@ import numpy as np
 
 
 SAMPLE_RATE = 48_000
-TEMPO = 100
+TEMPO = 76
 BEAT = 60.0 / TEMPO
 CHORDS = [
     (48, (60, 64, 67, 74)),  # C add9
@@ -26,7 +26,7 @@ def midi_hz(note: int) -> float:
 
 
 def add_note(audio: np.ndarray, start: float, frequency: float, amplitude: float,
-             duration: float, pan: float = 0.0, decay: float = 8.0,
+             duration: float, pan: float = 0.0, decay: float = 3.5,
              color: float = 0.0) -> None:
     first = max(0, int(round(start * SAMPLE_RATE)))
     count = min(int(round(duration * SAMPLE_RATE)), len(audio) - first)
@@ -34,7 +34,7 @@ def add_note(audio: np.ndarray, start: float, frequency: float, amplitude: float
         return
     local = np.arange(count, dtype=np.float64) / SAMPLE_RATE
     envelope = np.exp(-decay * local)
-    attack = np.minimum(1.0, local / 0.009)
+    attack = np.minimum(1.0, local / 0.045)
     phase = 2.0 * np.pi * frequency * local
     signal = (np.sin(phase) + color * np.sin(phase * 2.003)) * envelope * attack * amplitude
     left = math.sqrt((1.0 - pan) * 0.5)
@@ -51,74 +51,51 @@ def render(duration: float = 60.0) -> np.ndarray:
     for index in range(chord_count):
         start = index * chord_seconds
         first = int(round(start * SAMPLE_RATE))
-        count = min(int(round(chord_seconds * SAMPLE_RATE)), len(audio) - first)
+        span = chord_seconds + 0.72
+        count = min(int(round(span * SAMPLE_RATE)), len(audio) - first)
         if count <= 0:
             continue
         local = np.arange(count, dtype=np.float64) / SAMPLE_RATE
-        attack = np.minimum(1.0, local / 0.38)
-        release = np.minimum(1.0, np.maximum(0.0, (chord_seconds - local) / 0.30))
-        breathe = 0.90 + 0.10 * np.sin(2 * np.pi * 0.18 * local + index * 0.3)
+        attack = np.minimum(1.0, local / 0.72)
+        release = np.minimum(1.0, np.maximum(0.0, (span - local) / 0.86))
+        breathe = 0.96 + 0.04 * np.sin(2 * np.pi * 0.12 * local + index * 0.3)
         env = attack * release * breathe
         _, notes = CHORDS[index % len(CHORDS)]
         for voice, note in enumerate(notes):
             frequency = midi_hz(note)
             phase = 2 * np.pi * frequency * local
-            tone = np.sin(phase) + 0.18 * np.sin(phase * 2.002 + voice * 0.08)
-            level = 0.026 if voice < 3 else 0.018
-            pan = (-0.34, -0.12, 0.15, 0.36)[voice]
+            tone = np.sin(phase) + 0.045 * np.sin(phase * 2.002 + voice * 0.08)
+            level = 0.082 if voice < 3 else 0.058
+            pan = (-0.20, -0.07, 0.08, 0.20)[voice]
             audio[first:first + count, 0] += tone * env * level * math.sqrt((1 - pan) * 0.5)
             audio[first:first + count, 1] += tone * env * level * math.sqrt((1 + pan) * 0.5)
 
-    # A light repeating arpeggio supplies forward motion without crowding speech.
-    arp_pattern = (0, 2, 1, 3, 2, 1, 3, 2)
-    step_seconds = BEAT / 2
+    # Sparse, softly rounded notes add movement without a busy repeating pulse.
+    melody_pattern = (2, 1, 3, 2, 0, 2, 1, 3)
+    step_seconds = 1.58
     steps = int(math.ceil(duration / step_seconds))
     for step in range(steps):
-        start = step * step_seconds + (0.035 if step % 2 else 0.0)
+        start = step * step_seconds
         chord_index = int(start // chord_seconds) % len(CHORDS)
         _, chord = CHORDS[chord_index]
-        note = chord[arp_pattern[step % len(arp_pattern)]] + 12
-        add_note(audio, start, midi_hz(note), 0.075, 0.27,
-                 pan=(-0.22 if step % 2 else 0.22), decay=13.0, color=0.32)
+        note = chord[melody_pattern[step % len(melody_pattern)]] + 12
+        add_note(audio, start, midi_hz(note), 0.032, 0.72,
+                 pan=(-0.12 if step % 2 else 0.12), decay=3.0, color=0.055)
 
-    # Rounded bass notes and a restrained kick on beats one and three.
-    for beat_index in range(int(math.ceil(duration / BEAT))):
-        start = beat_index * BEAT
-        chord_index = int(start // chord_seconds) % len(CHORDS)
-        root, _ = CHORDS[chord_index]
-        add_note(audio, start, midi_hz(root), 0.082, 0.38,
-                 pan=0.0, decay=7.0, color=0.08)
-        if beat_index % 4 in (0, 2):
-            count = min(int(0.20 * SAMPLE_RATE), len(audio) - int(start * SAMPLE_RATE))
-            first = int(start * SAMPLE_RATE)
-            if count > 0:
-                local = np.arange(count, dtype=np.float64) / SAMPLE_RATE
-                sweep = 74.0 - 28.0 * np.minimum(1.0, local / 0.16)
-                phase = 2 * np.pi * np.cumsum(sweep) / SAMPLE_RATE
-                kick = 0.09 * np.sin(phase) * np.exp(-24 * local)
-                audio[first:first + count, 0] += kick
-                audio[first:first + count, 1] += kick
-
-    # Quiet deterministic noise ticks mark the backbeat; no sampled material.
-    noise = np.random.default_rng(240929).standard_normal(int(0.055 * SAMPLE_RATE))
-    noise *= np.exp(-72 * np.arange(len(noise), dtype=np.float64) / SAMPLE_RATE)
-    noise -= np.convolve(noise, np.ones(15) / 15, mode="same")
-    for beat_index in range(int(math.ceil(duration / BEAT))):
-        if beat_index % 4 not in (1, 3):
-            continue
-        first = int(round(beat_index * BEAT * SAMPLE_RATE))
-        count = min(len(noise), len(audio) - first)
-        if count > 0:
-            audio[first:first + count, 0] += noise[:count] * 0.020
-            audio[first:first + count, 1] += noise[:count] * 0.020
+    # Low, sustained root tones anchor each chord; no kick, snare, or noise layer.
+    for index in range(chord_count):
+        start = index * chord_seconds
+        root, _ = CHORDS[index % len(CHORDS)]
+        add_note(audio, start, midi_hz(root - 12), 0.036, chord_seconds + 0.55,
+                 pan=0.0, decay=1.0, color=0.025)
 
     time = np.arange(len(audio), dtype=np.float64) / SAMPLE_RATE
     fade = np.minimum(1.0, np.minimum(time / 0.55, (duration - time) / 1.4)).clip(0, 1)
     audio *= fade[:, None]
+    audio *= 1.45
     peak = float(np.max(np.abs(audio)))
-    if peak > 0:
-        audio *= 0.78 / peak
-    audio = np.tanh(audio * 1.12) / np.tanh(1.12)
+    if peak > 0.82:
+        audio *= 0.82 / peak
     return np.clip(audio, -1.0, 1.0)
 
 
