@@ -8,3 +8,9 @@ local.properties
 .kotlin/
 out/
 .tooling/
+promo/artifacts/mixkit-close-up-1167.mp3
+promo/artifacts/mixkit-close-up-analysis.wav
+promo/artifacts/agent-remake-preview/
+promo/artifacts/agent-remake-contact.png
+promo/artifacts/Temvio-agent-centered.tmp.*
+promo/artifacts/validation-agent-centered.tmp.json

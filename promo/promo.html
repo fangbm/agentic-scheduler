@@ -3,384 +3,130 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1920,initial-scale=1" />
-  <title>Temvio — 项目宣传片</title>
+  <title>Temvio — Agent 主导的时间规划</title>
   <style>
-    :root { font-family:Inter,"SF Pro Display","PingFang SC","Microsoft YaHei","Segoe UI",sans-serif; font-synthesis:none; color:#17212a; --blue:#1478ed; --cyan:#09bcd0; --ink:#17212a; --muted:#72808c; --line:#dce4eb; --pale:#eff5fb; --green:#20977c; }
-    * { box-sizing:border-box; }
-    html,body { margin:0;width:100%;height:100%;overflow:hidden;background:#080c12; }
-    #stage { position:relative;width:1920px;height:1080px;overflow:hidden;background:#080c12; }
-    .scene { position:absolute;inset:0;opacity:0;visibility:hidden;overflow:hidden; }
-    .dark { background:#080c12;color:#f4f7fb; }
-    .paper { background:#eef2f5;color:#18212a; }
-    .brand { position:absolute;left:112px;top:70px;display:flex;align-items:center;gap:9px;z-index:8; }
-    .brand .brand-icon { width:32px;height:32px;object-fit:contain; }
-    .brand .brand-wordmark { width:100px;height:auto;object-fit:contain; }
-    .tag { position:absolute;right:112px;top:77px;font-size:17px;color:#72808c;letter-spacing:.12em;z-index:8; }
-    .intro-content { position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:15px; }
-    .logo-card { width:auto;height:auto;border-radius:0;background:transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:0;box-shadow:none;overflow:visible;opacity:0;transform:translateY(18px) scale(.96); }
-    .logo-card .lockup-icon { width:220px;height:201px;display:block;object-fit:contain; }
-    .logo-card .lockup-wordmark { width:355px;height:auto;display:block;object-fit:contain; }
-    .hero { margin-top:4px;font-size:76px;line-height:1.08;font-weight:760;letter-spacing:0;opacity:0;transform:translateY(20px); }
-    .hero-sub { margin-top:3px;color:#657581;font-size:25px;opacity:0;transform:translateY(14px); }
-    .hero-stroke { width:104px;height:3px;background:linear-gradient(90deg,var(--blue),var(--cyan));margin-top:12px;transform:scaleX(0); }
-
-    .browser { position:absolute;left:82px;top:90px;width:1756px;height:900px;border:1px solid #d5dee7;border-radius:25px;background:#fff;overflow:hidden;box-shadow:0 25px 78px rgba(25,42,58,.18);transform:translateY(18px) scale(.985);opacity:0; }
-    .chrome { height:44px;display:flex;align-items:center;gap:8px;padding:0 17px;background:#f7f9fb;border-bottom:1px solid #e8edf1; }
-    .traffic { width:10px;height:10px;border-radius:50%;background:#ff6258; }.traffic:nth-child(2){background:#ffbd45}.traffic:nth-child(3){background:#32c76a}
-    .url { height:25px;margin-left:14px;border-radius:14px;background:#edf1f5;color:#84919d;padding:4px 13px;font-size:13px;flex:1; }
-    .appbar { height:60px;display:flex;align-items:center;gap:32px;padding:0 26px;border-bottom:1px solid #e7edf2;font-size:17px; }
-    .wordmark { display:block;width:104px;height:auto;object-fit:contain;margin-right:20px; }
-    .nav { color:#71808c; }.nav.on { color:#1478ed;font-weight:700; }
-    .appbar .spacer { flex:1; }
-    .avatar { width:31px;height:31px;border-radius:50%;display:grid;place-items:center;background:#eaf2fc;color:#176dc2;font-size:14px;font-weight:700; }
-    .workspace { position:relative;height:calc(100% - 104px);display:grid;grid-template-columns:220px 1fr; }
-    .sidebar { padding:26px 16px;border-right:1px solid #e9eef2;background:#fbfcfd; }
-    .side-label { color:#9aa6af;font-size:13px;margin:12px 11px;letter-spacing:.08em; }
-    .side-item { padding:13px 13px;border-radius:10px;margin:4px 0;color:#64727e;font-size:16px;display:flex;gap:11px;align-items:center; }
-    .side-item.active { background:#eaf3ff;color:#1478ed;font-weight:700; }
-    .side-icon { width:17px;height:17px;border:1.5px solid currentColor;border-radius:5px;opacity:.78; }
-    .main { position:relative;padding:28px 34px;overflow:hidden; }
-    .toolbar { display:flex;align-items:center;min-height:53px;gap:14px; }
-    .page-title { font-size:30px;font-weight:730;color:#17212a; }
-    .date-pill { color:#75838f;font-size:16px;margin-left:12px; }
-    .push { flex:1; }
-    .btn { border:1px solid #d5dfe7;border-radius:9px;background:white;color:#526271;padding:11px 16px;font-size:15px;font-weight:650;white-space:nowrap; }
-    .btn.primary { background:#1478ed;border-color:#1478ed;color:white;box-shadow:0 5px 12px rgba(20,120,237,.18); }
-    .btn.green { background:#198b73;border-color:#198b73;color:#fff; }
-    .btn.pressed { box-shadow:0 0 0 5px rgba(20,120,237,.18); }
-    .caption { display:flex;align-items:center;gap:11px;color:#778590;font-size:15px;margin:16px 0 10px; }
-    .caption .line { flex:1;height:1px;background:#e7edf1; }
-    .agenda-layout { display:grid;grid-template-columns:1fr 340px;gap:22px; }
-    .surface { border:1px solid #e2e8ed;border-radius:13px;background:#fff;overflow:hidden; }
-    .event { display:grid;grid-template-columns:83px 5px 1fr auto;gap:15px;align-items:center;min-height:86px;border-bottom:1px solid #edf1f4;padding:11px 16px;font-size:18px;position:relative; }
-    .event:last-child { border-bottom:0; }
-    .event.selected { background:#f5f9ff; }
-    .event.highlight:after { content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:#1480f4;transform:scaleY(var(--hl,0));transform-origin:top; }
-    .event-time { color:#74828e;font-size:16px; }
-    .event-bar { height:43px;width:4px;border-radius:4px;background:#5897dc; }.event-bar.cyan{background:#19afbd}.event-bar.green{background:#38a27e}
-    .event-title { font-weight:650; }.event-detail { color:#89959f;font-size:14px;margin-top:6px; }
-    .task-surface { padding:19px 18px; }
-    .surface-title { font-size:17px;font-weight:700;display:flex;align-items:center;justify-content:space-between;margin-bottom:13px; }
-    .task { display:flex;align-items:center;gap:11px;padding:13px 4px;border-bottom:1px solid #edf1f4;color:#3e4c58;font-size:15px;position:relative; }
-    .task:last-child { border:0; }
-    .check { width:18px;height:18px;border:1.5px solid #afbdc8;border-radius:5px; }
-    .task.added { background:#f0fbf8;color:#176c5a;border-radius:8px;padding-left:8px; }
-    .task.added .check { border-color:#1fa27f;background:#1fa27f;box-shadow:inset 0 0 0 4px #fff; }
-    .badge { border-radius:99px;padding:5px 9px;background:#e8f3ff;color:#2874c4;font-size:12px;font-weight:700; }
-    .popover { position:absolute;z-index:7;width:390px;border:1px solid #dbe4eb;border-radius:14px;background:#fff;box-shadow:0 18px 46px rgba(23,44,63,.20);padding:0;opacity:0;visibility:hidden;transform:scale(.94);transform-origin:right center; }
-    .popover:before { content:"";position:absolute;right:-9px;top:34px;width:16px;height:16px;background:white;border-top:1px solid #dbe4eb;border-right:1px solid #dbe4eb;transform:rotate(45deg); }
-    .pop-head { padding:17px 19px;border-bottom:1px solid #edf1f4;display:flex;align-items:center;justify-content:space-between;font-size:16px;font-weight:700; }
-    .pop-body { padding:16px 19px; }
-    .field-label { font-size:13px;color:#788691;margin-bottom:7px; }
-    .field { min-height:43px;padding:12px 12px;border:1px solid #d9e2e9;border-radius:8px;font-size:15px;color:#253444;background:#fff; }
-    .field.focus { border-color:#2785ed;box-shadow:0 0 0 3px rgba(39,133,237,.11); }
-    .pop-foot { display:flex;align-items:center;justify-content:space-between;padding:0 19px 17px; }
-    .micro { font-size:12px;color:#8a97a2; }
-    .cursor { position:absolute;z-index:20;width:45px;height:58px;pointer-events:none;opacity:0;filter:drop-shadow(1px 2px 1px rgba(0,0,0,.30)); }
-    .cursor svg { display:block;width:100%;height:100%; }
-    .ripple { position:absolute;z-index:19;width:50px;height:50px;border:2px solid rgba(20,120,237,.75);border-radius:50%;pointer-events:none;opacity:0;transform:scale(.5); }
-
-    .planner-body { display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px; }
-    .plan-col { border:1px solid #dfe6ec;border-radius:13px;overflow:hidden;background:#fff; }
-    .plan-title { display:flex;align-items:center;justify-content:space-between;padding:16px 18px;background:#fafcfd;border-bottom:1px solid #e9eef2;font-size:16px;font-weight:700; }
-    .plan-rows { padding:11px 15px; }
-    .plan-row { display:grid;grid-template-columns:65px 5px 1fr;gap:13px;align-items:center;min-height:81px;border-bottom:1px solid #eef2f5;padding:10px 7px;position:relative; }
-    .plan-row:last-child{border:0}.plan-row time{font-size:14px;color:#7c8995}.plan-row b{font-size:16px;font-weight:650}.plan-row small{display:block;color:#8b97a1;font-size:13px;margin-top:5px}.plan-mark{height:42px;width:4px;border-radius:4px;background:#9bb1c3}
-    .plan-row.proposed { border:1px dashed #56a7eb;border-radius:10px;background:#eef7ff;transform:translateX(var(--shift,0)); }
-    .plan-row.proposed .plan-mark { background:#1882ed; }
-    .plan-row.proposed .proposal-tag { position:absolute;right:11px;top:10px;color:#1974c5;font-size:12px;font-weight:700;opacity:var(--show,0); }
-    .plan-note { display:flex;align-items:center;gap:9px;padding:12px 15px;color:#73818c;font-size:13px;background:#fbfcfd;border-top:1px solid #e9eef2; }
-    .plan-note .dot { width:7px;height:7px;background:#208d70;border-radius:50%; }
-    .planner-footer { display:flex;justify-content:space-between;align-items:center;margin-top:17px;color:#71808b;font-size:14px; }
-    .progressline { height:3px;background:#e7edf2;margin-top:14px;overflow:hidden;border-radius:4px; }
-    .progressline i { display:block;height:100%;width:var(--fill,0);background:linear-gradient(90deg,#1679eb,#0bb7c7); }
-
-    .history-layout { display:grid;grid-template-columns:1fr 350px;gap:22px;margin-top:17px; }
-    .history-list { padding:5px 20px; }
-    .history-row { position:relative;display:grid;grid-template-columns:78px 28px 1fr auto;gap:12px;align-items:center;min-height:84px;border-bottom:1px solid #edf1f4; }
-    .history-row.selected { background:#f2f8ff; }
-    .history-row:last-child{border:0}.history-time{font-size:14px;color:#8996a0}.history-icon{width:24px;height:24px;border-radius:8px;background:#e8f3ff;color:#2475c4;display:grid;place-items:center;font-size:14px}
-    .history-row b{font-size:16px}.history-row small{display:block;margin-top:5px;color:#8996a0;font-size:13px}.history-side{font-size:12px;color:#628271}
-    .audit { padding:20px;border-radius:13px;background:#f7fafc;border:1px solid #e2e9ee; }
-    .audit h3{font-size:16px;margin:0 0 12px}.audit p{font-size:14px;color:#6e7c88;line-height:1.55;margin:0 0 15px}
-    .undo-preview { padding:13px 14px;border-radius:9px;background:#fff;border:1px solid #dde5eb;font-size:13px;color:#465663;margin-bottom:14px; }
-
-    .sync-stage { position:absolute;inset:0;display:grid;grid-template-columns:1fr 500px 1fr;align-items:center;padding:0 160px;gap:28px; }
-    .device { width:370px;height:550px;margin:auto;border:2px solid #d9e2e9;border-radius:36px;background:#fff;box-shadow:0 26px 60px rgba(29,51,68,.13);overflow:hidden; }
-    .device-top { height:54px;border-bottom:1px solid #edf1f4;display:flex;align-items:center;padding:0 17px;gap:8px;color:#60707e;font-size:14px; }
-    .device-light { width:7px;height:7px;border-radius:50%;background:#46ab88; }
-    .device-content { padding:22px 19px; }
-    .device-heading { font-size:21px;font-weight:730;margin-bottom:15px; }
-    .device-event { padding:14px 12px;border-left:4px solid #3187e4;background:#f5f9fd;border-radius:7px;margin:10px 0;font-size:14px; }
-    .device-event small { display:block;color:#8a96a0;margin-top:5px;font-size:12px; }
-    .sync-center { text-align:center;position:relative; }
-    .sync-title { font-size:24px;font-weight:700;margin-bottom:17px; }
-    .sync-sub { font-size:15px;color:#7d8b96;line-height:1.6; }
-    .route { position:relative;height:74px;margin:13px 0; }
-    .route-line { position:absolute;left:0;right:0;top:36px;height:2px;background:#d9e4ec; }
-    .packet { position:absolute;top:23px;left:0;width:29px;height:29px;border-radius:9px;background:linear-gradient(135deg,#1579ef,#09c4c8);box-shadow:0 7px 18px rgba(17,126,219,.25);transform:translateX(var(--packet,0)); }
-    .lock { display:inline-flex;align-items:center;gap:8px;background:#e8f5f1;border-radius:99px;padding:9px 13px;color:#19806a;font-weight:700;font-size:14px; }
-    .lock-icon { width:15px;height:12px;border:1.5px solid currentColor;border-radius:3px;position:relative; }
-    .lock-icon:before { content:"";position:absolute;left:3px;top:-7px;width:7px;height:7px;border:1.5px solid currentColor;border-bottom:0;border-radius:7px 7px 0 0; }
-    .sync-state { margin-top:16px;color:#72818d;font-size:14px;height:22px; }
-
-    .agent-layout { position:absolute;left:115px;right:115px;top:133px;bottom:77px;display:grid;grid-template-columns:1fr 600px;gap:80px;align-items:center; }
-    .agent-copy { align-self:center;max-width:760px; }
-    .eyebrow { font-size:17px;color:#1684e8;font-weight:750;letter-spacing:.12em;margin-bottom:19px; }
-    .agent-head { font-size:66px;line-height:1.13;font-weight:740;letter-spacing:0; }
-    .agent-sub { margin-top:21px;font-size:25px;line-height:1.55;color:#657581;max-width:680px; }
-    .phone { width:600px;height:780px;border:1px solid #d6e0e7;border-radius:31px;background:#fff;box-shadow:0 25px 70px rgba(26,53,72,.15);overflow:hidden;justify-self:end;position:relative; }
-    .phone-head { height:72px;border-bottom:1px solid #e8edf1;display:flex;align-items:center;padding:0 24px;gap:12px; }
-    .phone-head .phone-icon { width:39px;height:39px;object-fit:contain; }
-    .phone-head .phone-brand { display:flex;align-items:baseline;gap:7px; }
-    .phone-head .phone-wordmark { width:93px;height:auto;display:block; }
-    .phone-head b { font-size:14px;color:#61717e; }.phone-head small{display:block;color:#86939d;margin-top:4px;font-size:12px}
-    .phone-head .badge { margin-left:auto;background:#fff6e6;color:#9b6718; }
-    .chat { padding:23px 22px; }
-    .bubble { max-width:470px;padding:14px 16px;border-radius:15px;font-size:16px;line-height:1.55;margin:8px 0 14px; }
-    .bubble.user { background:#eaf3ff;margin-left:auto;border-bottom-right-radius:5px;min-height:63px; }
-    .bubble.agent { background:#f3f6f8;border:1px solid #e4eaee;border-bottom-left-radius:5px; }
-    .typing { display:inline-block;width:2px;height:18px;background:#167de8;vertical-align:middle;animation:none; }
-    .tool-card { border:1px solid #d9e4eb;border-radius:12px;margin-top:14px;overflow:hidden;opacity:0;transform:translateY(10px) scale(.985);transform-origin:top center; }
-    .tool-top { display:flex;align-items:center;justify-content:space-between;padding:13px 15px;background:#f8fafb;color:#61717e;font-size:13px; }
-    .tool-main { padding:15px; }
-    .tool-step { display:flex;align-items:center;gap:9px;font-size:14px;color:#394b5a;margin-bottom:10px; }
-    .tool-step i { width:8px;height:8px;border-radius:50%;background:#31a17d; }
-    .confirm-box { border:1px solid #dbe4ea;background:#fbfcfd;border-radius:9px;padding:13px 14px;margin-top:12px; }
-    .confirm-box strong { font-size:15px; }
-    .confirm-box small { display:block;color:#778691;margin-top:6px;font-size:13px; }
-    .confirm-row { display:flex;justify-content:flex-end;gap:9px;margin-top:13px; }
-    .chat-input { position:absolute;left:18px;right:18px;bottom:18px;display:flex;align-items:center;justify-content:space-between;padding:10px 12px;border:1px solid #e0e7ec;border-radius:12px;color:#94a0a9;font-size:14px;background:#fff; }
-    .send { width:34px;height:34px;border-radius:9px;background:#167de8;color:white;display:grid;place-items:center;font-size:19px; }
-    .agent-status { margin-top:21px;font-size:14px;color:#82909b;display:flex;align-items:center;gap:9px; }
-    .agent-status i { width:8px;height:8px;border-radius:50%;background:#d8a14f; }
-    .outro { position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:15px; }
-    .outro .logo-card .lockup-icon { width:235px;height:215px; }
-    .outro .logo-card .lockup-wordmark { width:380px;height:auto; }
-    .outro-line { font-size:43px;font-weight:700;margin-top:5px; }
-    .outro-sub { font-size:19px;color:#657581; }
-    .outro-bar { display:flex;align-items:center;gap:14px;font-size:13px;color:#72808c;letter-spacing:.10em;margin-top:6px; }
-    .outro-bar i { width:36px;height:1px;background:#c5d1da; }
+    :root{font-family:Inter,"SF Pro Display","PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;font-synthesis:none;color:#152433;--blue:#1268e8;--cyan:#10b7c2;--ink:#152433;--muted:#667889;--line:#dbe5ec;--soft:#f3f7fa;--green:#13836d}
+    *{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#080d13}#stage{position:relative;width:1920px;height:1080px;overflow:hidden;background:#080d13}.scene{position:absolute;inset:0;opacity:0;visibility:hidden;overflow:hidden}.paper{background:#eef3f6;color:var(--ink)}.dark{background:#080d13;color:#f6f9fc}
+    .scene:before{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 82% 52%,rgba(34,112,160,.10),transparent 42%);pointer-events:none}.brand{position:absolute;left:110px;top:64px;display:flex;align-items:center;gap:10px;z-index:5}.brand img:first-child{width:35px;height:35px;object-fit:contain}.brand img:last-child{width:108px;height:auto}.kicker{position:absolute;right:80px;top:75px;color:#718290;font-size:16px;font-weight:700;letter-spacing:.12em}.copy{position:absolute;left:85px;top:258px;width:460px;z-index:2}.eyebrow{font-size:15px;font-weight:760;letter-spacing:.15em;color:#1376e8;margin-bottom:19px}.headline{font-size:53px;line-height:1.17;letter-spacing:0;font-weight:740;margin:0 0 22px}.support{font-size:23px;line-height:1.58;color:#637584;margin:0;max-width:455px}.proof{display:flex;align-items:center;gap:11px;color:#738391;font-size:14px;margin-top:28px}.proof i{width:8px;height:8px;border-radius:50%;background:#17a180;box-shadow:0 0 0 5px rgba(23,161,128,.10)}
+    .window{position:absolute;left:565px;top:100px;width:1275px;height:870px;border:1px solid #d5e0e8;border-radius:22px;background:#fff;overflow:hidden;box-shadow:0 32px 88px rgba(25,44,61,.17);z-index:1}.window-top{height:51px;display:flex;align-items:center;gap:9px;padding:0 18px;background:#f9fbfc;border-bottom:1px solid #e8eef2;color:#73818c;font-size:14px}.dot{width:10px;height:10px;border-radius:50%;background:#ff6258}.dot:nth-child(2){background:#ffbd45}.dot:nth-child(3){background:#32c76a}.address{margin-left:12px;padding:5px 13px;border-radius:15px;background:#eff3f6;flex:1}.window-body{height:calc(100% - 51px);display:grid;grid-template-columns:214px 1fr}.rail{border-right:1px solid #e8eef2;background:#fbfcfd;padding:22px 14px}.rail-brand{display:flex;align-items:center;gap:8px;padding:0 7px 20px;border-bottom:1px solid #edf1f4}.rail-brand img:first-child{width:27px;height:27px}.rail-brand img:last-child{width:79px;height:auto}.rail-label{color:#9aa6b0;font-size:12px;font-weight:700;letter-spacing:.10em;margin:19px 9px 9px}.rail-item{height:43px;border-radius:8px;display:flex;align-items:center;gap:10px;padding:0 10px;color:#61717e;font-size:15px;margin:3px 0}.rail-item.on{background:#eaf3ff;color:#176fd1;font-weight:700}.rail-ico{width:15px;height:15px;border:1.5px solid currentColor;border-radius:4px;opacity:.75}.rail-foot{position:absolute;left:25px;bottom:22px;color:#9aa6b0;font-size:11px}
+    .work{position:relative;padding:25px 28px;overflow:hidden}.work-head{height:42px;display:flex;align-items:center;gap:12px;border-bottom:1px solid #edf1f4;padding-bottom:16px}.work-title{font-size:23px;font-weight:740}.work-sub{font-size:14px;color:#87949e}.work-tag{margin-left:auto;padding:7px 11px;border-radius:99px;background:#edf5ff;color:#2476ca;font-weight:700;font-size:12px}.conversation{position:absolute;left:29px;top:82px;bottom:73px;width:535px;overflow:hidden}.msg{font-size:17px;line-height:1.55;padding:13px 15px;border-radius:13px;margin:0 0 13px;max-width:100%;opacity:0;transform:translateY(8px)}.msg.user{background:#eaf3ff;color:#24486a;margin-left:42px;border-bottom-right-radius:4px}.msg.assistant{background:#f5f7f8;border:1px solid #e6ecef;color:#304453;border-bottom-left-radius:4px}.msg small{display:block;margin-top:7px;color:#788995;font-size:12px}.user-label,.agent-label{font-size:11px;color:#8997a2;font-weight:700;letter-spacing:.08em;margin:0 0 6px 2px}.user-label{text-align:right;margin-right:3px}.agent-label{margin-top:5px}.inputbar{position:absolute;left:27px;bottom:20px;width:530px;height:48px;border:1px solid #dfe7ed;border-radius:10px;display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 13px;color:#a0abb3;font-size:13px;background:#fff}.send{width:31px;height:31px;border-radius:7px;background:var(--blue);color:white;display:grid;place-items:center;font-size:17px}.sidepanel{position:absolute;left:585px;right:24px;top:83px;bottom:23px;border-left:1px solid #eef1f3;padding:5px 0 0 25px}.panel-title{display:flex;align-items:center;justify-content:space-between;font-size:15px;font-weight:730;margin-bottom:14px}.panel-meta{font-size:11px;color:#8d9aa4;font-weight:500}.small-label{font-size:11px;color:#8d9aa4;font-weight:740;letter-spacing:.10em;margin:16px 0 7px}.row{min-height:53px;border-bottom:1px solid #edf1f4;display:flex;align-items:center;gap:10px;font-size:14px;color:#40515e}.row b{font-size:14px}.row small{display:block;font-size:11px;color:#8997a1;margin-top:4px}.row .time{width:48px;color:#87949e;font-size:11px}.row .bar{height:31px;width:3px;border-radius:3px;background:#3188e4}.row .bar.cyan{background:#12b3bc}.row .bar.green{background:#3c9c7d}.row .grow{flex:1}.state{font-size:11px;color:#218670;font-weight:700}.tool-row{height:42px;border:1px solid #e3eaef;border-radius:8px;display:flex;align-items:center;gap:9px;padding:0 10px;margin:7px 0;color:#415565;font-size:13px;background:#fff}.tool-dot{width:7px;height:7px;border-radius:50%;background:#32a47f}.tool-dot.blue{background:#287bd0}.tool-row .status{margin-left:auto;color:#79909f;font-size:11px}.split{display:grid;grid-template-columns:1fr 1fr;gap:12px}.mini-card{border:1px solid #e2e9ee;border-radius:10px;padding:12px;background:#fff}.mini-head{display:flex;justify-content:space-between;align-items:center;font-size:14px;font-weight:740;margin-bottom:9px}.pill{display:inline-flex;align-items:center;padding:5px 8px;border-radius:99px;background:#eef5ff;color:#2876c7;font-size:10px;font-weight:700}.pill.green{background:#e9f6f1;color:#16836b}.action{height:39px;border:1px solid #dce5eb;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;padding:0 14px;color:#546574;background:#fff;font-size:13px;font-weight:700}.action.primary{background:#176fe2;border-color:#176fe2;color:white}.action.accept{background:#16836c;border-color:#16836c;color:white}.action.pressed{box-shadow:0 0 0 4px rgba(25,121,221,.17)}.proposal{background:#eff8f6;border:1px solid #c9e9df;border-radius:8px;padding:10px;margin:8px 0;color:#26574e}.proposal b{font-size:14px}.proposal small{display:block;font-size:11px;color:#5e8279;margin-top:5px}.inline-note{font-size:11px;line-height:1.45;color:#82919b;margin-top:10px}.cursor{position:absolute;z-index:50;width:42px;height:54px;pointer-events:none;opacity:0;filter:drop-shadow(1px 2px 1px rgba(0,0,0,.28))}.cursor svg{width:100%;height:100%}.ripple{position:absolute;width:44px;height:44px;border:2px solid rgba(20,120,237,.78);border-radius:50%;z-index:49;opacity:0;pointer-events:none}
+    .architecture{position:absolute;left:565px;top:218px;width:1275px;height:600px;padding:40px 39px;background:#fff;border:1px solid #dce5eb;border-radius:20px;box-shadow:0 28px 75px rgba(25,44,61,.14)}.arch-title{font-size:20px;font-weight:740;color:#314553;margin:0 0 30px}.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:center}.node{height:177px;border:1px solid #dce6ed;border-radius:13px;background:#fbfcfd;padding:17px 15px;opacity:.35;transform:translateY(8px)}.node.active{border-color:#9dc7ed;background:#f2f8ff;box-shadow:0 8px 20px rgba(30,111,192,.08)}.node-num{font-size:11px;color:#91a0aa;font-weight:740;letter-spacing:.12em}.node-icon{width:34px;height:34px;border:1px solid #bdcbd5;border-radius:10px;margin:14px 0 11px;display:grid;place-items:center;color:#2278c6;font-size:15px}.node h3{font-size:16px;margin:0 0 5px}.node p{font-size:13px;line-height:1.5;color:#71818e;margin:0}.flow-arrow{position:absolute;margin-left:-14px;font-size:20px;color:#a5b7c3}.bottom-rule{height:75px;border-top:1px solid #edf1f4;margin-top:29px;display:flex;align-items:center;justify-content:space-between}.rule-copy{font-size:16px;color:#566978}.rule-copy b{color:#1b3448}.rule-status{display:flex;align-items:center;gap:8px;color:#967026;font-size:12px;font-weight:700}.rule-status i{width:7px;height:7px;background:#d4a546;border-radius:50%}
+    .sync-panel{position:absolute;left:565px;top:154px;width:1275px;height:740px;background:#fff;border:1px solid #dce5eb;border-radius:20px;box-shadow:0 28px 75px rgba(25,44,61,.14);padding:26px}.sync-top{display:flex;align-items:center;border-bottom:1px solid #edf1f4;padding-bottom:15px}.sync-title{font-size:20px;font-weight:740}.sync-meta{margin-left:auto;color:#8795a0;font-size:12px}.devices{display:grid;grid-template-columns:1fr 250px 1fr;gap:25px;align-items:center;padding:52px 24px}.device{height:445px;border:1px solid #dbe4ea;border-radius:21px;background:#fbfcfd;overflow:hidden;box-shadow:0 14px 36px rgba(30,54,75,.08)}.device-head{height:51px;display:flex;align-items:center;gap:9px;padding:0 16px;border-bottom:1px solid #e8eef2;color:#546775;font-size:14px;font-weight:700}.device-screen{padding:20px 15px}.device-date{font-size:18px;font-weight:740;margin-bottom:14px}.device-event{background:#f2f7fb;border-left:3px solid #3b8bd4;padding:10px;border-radius:6px;margin:8px 0;font-size:13px}.device-event.new{border-color:#168f78;background:#eff9f5}.device-event small{display:block;color:#7f8f9a;font-size:11px;margin-top:5px}.sync-lane{text-align:center}.encrypted{height:2px;background:#d9e3e9;position:relative;margin:25px 0}.packet{position:absolute;top:-11px;left:0;width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#176fe2,#10b6bd);box-shadow:0 5px 14px rgba(22,112,203,.25)}.lock-chip{display:inline-flex;align-items:center;gap:7px;border-radius:99px;background:#eaf6f1;color:#14806c;font-size:12px;font-weight:700;padding:8px 11px}.sync-caption{font-size:13px;color:#6c7c88;line-height:1.6}.sync-foot{margin:0 29px;border-top:1px solid #edf1f4;padding-top:16px;display:flex;align-items:center;justify-content:space-between;font-size:13px;color:#647784}.sync-foot b{color:#25644f}
+    .intro-center,.outro{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}.hero-mark{display:flex;flex-direction:column;align-items:center}.hero-mark img:first-child{width:189px;height:175px;object-fit:contain}.hero-mark img:last-child{width:315px;height:auto;margin-top:-2px}.hero-line{font-size:71px;line-height:1.1;font-weight:730;margin:30px 0 13px}.hero-subline{font-size:22px;color:#8d9ba7}.hero-pill{margin-top:28px;padding:10px 16px;border:1px solid #293b4a;border-radius:99px;color:#9cabb6;font-size:11px;letter-spacing:.06em}.outro .hero-mark img:first-child{width:146px;height:135px}.outro .hero-mark img:last-child{width:248px}.outro-line{font-size:45px;font-weight:720;margin:27px 0 10px}.outro-sub{font-size:18px;color:#9aa8b4}.outro-tag{margin-top:25px;color:#657889;font-size:12px;letter-spacing:.12em}.pulse{display:inline-block;width:7px;height:7px;border-radius:50%;background:#14b6c4;margin-right:8px;vertical-align:2px}
   </style>
   <script id="promo-metadata" type="application/json">
-    {"duration":60,"cues":{"brand":0.4,"taskOpen":5.0,"taskSave":8.9,"replan":15.0,"branch":18.2,"apply":21.2,"history":26.0,"undo":30.0,"sync":35.3,"agentSend":44.2,"agentPreview":47.5,"agentConfirm":52.0,"outro":55.2}}
+    {"duration":63.433333,"fps":30,"bpm":106,"beatOffset":0.05,"beatsPerBar":4,"cutBars":[2,4,4,4,4,4,4,2],"cues":{"contextRead":7.974,"taskPreview":15.898,"taskConfirm":19.294,"plannerPreview":25.521,"planApply":30.615,"historyRead":34.011,"undoConfirm":39.672,"coreFlow":40.804,"sync":49.860,"outro":58.917}}
   </script>
 </head>
 <body>
 <main id="stage">
-  <section class="scene paper" data-start="0" data-end="3.6" id="intro">
-    <div class="tag">PERSONAL TIME, IN FOCUS</div>
-    <div class="intro-content"><div class="logo-card" data-show="0.24"><img class="lockup-icon" src="assets/temvio-icon-transparent.png" alt=""/><img class="lockup-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><h1 class="hero" data-show="0.88">让计划，变成<br>可执行的日常。</h1><p class="hero-sub" data-show="1.48">日历 · 确定性规划 · 可信的智能助理</p><div class="hero-stroke" data-show="1.92"></div></div>
+  <section class="scene dark" data-start="0" data-end="4.577" id="intro">
+    <div class="intro-center"><div class="hero-mark reveal" data-at="0.05"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><h1 class="hero-line reveal" data-at="0.616">Agent，统筹你的每一天。</h1><div class="hero-subline reveal" data-at="1.182">从一句话，到一份可检查、可确认的计划。</div><div class="hero-pill reveal" data-at="1.748">AGENTIC SURFACE · DETERMINISTIC CORE</div></div>
   </section>
 
-  <section class="scene paper" data-start="3.6" data-end="13.5" id="agenda">
-    <div class="browser">
-      <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><div class="url">temvio.app / today</div></div>
-      <div class="appbar"><img class="wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><span class="nav on">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav">规划</span><span class="nav">历史</span><span class="spacer"></span><span class="nav">9月 29日　⌄</span><span class="avatar">T</span></div>
-      <div class="workspace" id="agenda-workspace">
-        <aside class="sidebar"><div class="side-label">工作区</div><div class="side-item active"><i class="side-icon"></i>今天</div><div class="side-item"><i class="side-icon"></i>日历</div><div class="side-item"><i class="side-icon"></i>任务</div><div class="side-item"><i class="side-icon"></i>规划</div><div class="side-item"><i class="side-icon"></i>历史</div><div class="side-label" style="margin-top:35px">近期</div><div class="side-item"><i class="side-icon"></i>本周安排</div></aside>
-        <div class="main">
-          <div class="toolbar"><div class="page-title">今天</div><div class="date-pill">星期二 · 9月 29日</div><div class="push"></div><button class="btn" id="task-add">＋ 新建任务</button><button class="btn primary">＋ 新建日程</button></div>
-          <div class="caption"><span>日程</span><i class="line"></i><span>按开始时间</span></div>
-          <div class="agenda-layout"><div class="surface" id="agenda-items">
-            <div class="event"><span class="event-time">09:00</span><i class="event-bar"></i><div><div class="event-title">晨间回顾</div><div class="event-detail">专注时段 · 09:00 — 09:45</div></div><span class="badge">已安排</span></div>
-            <div class="event selected"><span class="event-time">11:00</span><i class="event-bar cyan"></i><div><div class="event-title">项目同步</div><div class="event-detail">事件 · 11:00 — 11:30</div></div><span class="event-detail">•••</span></div>
-            <div class="event"><span class="event-time">14:00</span><i class="event-bar green"></i><div><div class="event-title">课程阅读</div><div class="event-detail">专注时段 · 14:00 — 15:00</div></div><span class="badge">已安排</span></div>
-            <div class="event"><span class="event-time">16:30</span><i class="event-bar"></i><div><div class="event-title">自由时间</div><div class="event-detail">空闲窗口</div></div><span class="event-detail">可规划</span></div>
-          </div><div class="surface task-surface"><div class="surface-title"><span>待办任务</span><span class="micro">3 项</span></div><div class="task"><i class="check"></i>整理研究提纲</div><div class="task"><i class="check"></i>查看课程资料</div><div class="task"><i class="check"></i>回复项目邮件</div><div class="micro" style="margin-top:16px">尚未分配时段</div></div></div>
-          <div class="popover" id="task-pop" data-anchor="#task-add"><div class="pop-head"><span>新建任务</span><span style="color:#9aa5ad">×</span></div><div class="pop-body"><div class="field-label">任务名称</div><div class="field focus" id="task-title">整理访谈记录</div><div style="display:flex;gap:12px;margin-top:14px"><div style="flex:1"><div class="field-label">优先级</div><div class="field">LOW　⌄</div></div><div style="flex:1"><div class="field-label">预计用时</div><div class="field">45 分钟</div></div></div></div><div class="pop-foot"><span class="micro">其他信息可稍后补充</span><button class="btn primary" id="task-save">保存任务</button></div></div>
+  <section class="scene paper" data-start="4.577" data-end="13.634" id="context">
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="kicker">01 / 先读取当前事实</div>
+    <div class="copy"><div class="eyebrow">ONE AGENT · SHARED CONTEXT</div><h2 class="headline">先看懂今天，<br>再开始安排。</h2><p class="support">Agent 从当前日程、开放任务和操作历史中取回所需事实。</p><div class="proof"><i></i><span>上下文由应用组装，历史可继续查证</span></div></div>
+    <div class="window">
+      <div class="window-top"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="address">Temvio · Agent / Today</div><span>D9 · LOCAL THREAD</span></div>
+      <div class="window-body"><aside class="rail"><div class="rail-brand"><img src="assets/temvio-icon-transparent.png"/><img src="assets/temvio-wordmark-transparent.png"/></div><div class="rail-label">WORKSPACE</div><div class="rail-item on"><i class="rail-ico"></i>Agent</div><div class="rail-item"><i class="rail-ico"></i>今天</div><div class="rail-item"><i class="rail-ico"></i>日历</div><div class="rail-item"><i class="rail-ico"></i>任务</div><div class="rail-item"><i class="rail-ico"></i>规划</div><div class="rail-item"><i class="rail-ico"></i>历史</div><div class="rail-foot">Local-first · Context assembled by app</div></aside>
+        <div class="work"><div class="work-head"><span class="work-title">今天，怎么安排？</span><span class="work-sub">Temvio Agent</span><span class="work-tag">本地上下文已就绪</span></div>
+          <div class="conversation"><div class="user-label reveal" data-at="5.143">YOU</div><div class="msg user reveal" id="ctx-user" data-at="5.143"></div><div class="agent-label reveal" data-at="7.407">TEMVIO AGENT</div><div class="msg assistant reveal" data-at="7.407">我先核对今天的固定安排与待办。</div><div class="tool-row reveal" id="ctx-tool1" data-at="7.974"><i class="tool-dot blue"></i><code>calendar.list</code><span class="status">读取成功</span></div><div class="tool-row reveal" id="ctx-tool2" data-at="8.540"><i class="tool-dot blue"></i><code>task.list</code><span class="status">读取成功</span></div><div class="msg assistant reveal" data-at="9.106">已找到今天的安排和未分配任务。接下来，我会按你给出的条件创建并规划。</div></div>
+          <div class="sidepanel"><div class="panel-title">当天事实 <span class="panel-meta">来自当前日历</span></div><div class="small-label">FIXED SCHEDULE</div><div class="row"><span class="time">09:00</span><i class="bar"></i><div><b>晨间回顾</b><small>FocusBlock · 45 分钟</small></div><span class="grow"></span><span class="state">固定</span></div><div class="row"><span class="time">11:00</span><i class="bar cyan"></i><div><b>项目同步</b><small>Event · 30 分钟</small></div><span class="grow"></span><span class="state">固定</span></div><div class="row"><span class="time">14:00</span><i class="bar green"></i><div><b>课程阅读</b><small>FocusBlock · 60 分钟</small></div><span class="grow"></span><span class="state">固定</span></div><div class="small-label">OPEN TASKS</div><div class="tool-row"><i class="tool-dot"></i><span>整理研究提纲</span><span class="status">未安排</span></div><div class="tool-row"><i class="tool-dot"></i><span>查看课程资料</span><span class="status">未安排</span></div><div class="inline-note">读取工具只查询；日历和任务仍是当前状态的事实来源。</div></div>
+          <div class="inputbar"><span>向 Agent 描述你要做的事…</span><span class="send">↑</span></div>
         </div>
       </div>
-    </div>
-    <div class="cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
+    </div><div class="cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <section class="scene paper" data-start="13.5" data-end="24" id="planner">
-    <div class="browser">
-      <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><div class="url">temvio.app / planner / preview</div></div>
-      <div class="appbar"><img class="wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><span class="nav">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav on">规划</span><span class="nav">历史</span><span class="spacer"></span><span class="nav">Study profile　⌄</span><span class="avatar">T</span></div>
-      <div class="workspace"><aside class="sidebar"><div class="side-label">规划工具</div><div class="side-item active"><i class="side-icon"></i>完整重排</div><div class="side-item"><i class="side-icon"></i>局部调整</div><div class="side-item"><i class="side-icon"></i>计划分支</div><div class="side-label" style="margin-top:35px">约束</div><div class="side-item"><i class="side-icon"></i>固定安排　4</div><div class="side-item"><i class="side-icon"></i>开放任务　3</div></aside>
-        <div class="main"><div class="toolbar"><div class="page-title">本周安排</div><span class="date-pill">9月 28日 — 10月 4日</span><div class="push"></div><button class="btn" id="planner-run">生成规划预览</button></div>
-          <div class="progressline"><i id="plan-fill"></i></div>
-          <div class="planner-body"><div class="plan-col"><div class="plan-title"><span>当前安排</span><span class="micro">活动日历</span></div><div class="plan-rows">
-            <div class="plan-row"><time>09:00</time><i class="plan-mark"></i><div><b>课程阅读</b><small>固定安排 · 60 分钟</small></div></div>
-            <div class="plan-row"><time>13:30</time><i class="plan-mark"></i><div><b>空闲窗口</b><small>可用于计划</small></div></div>
-            <div class="plan-row"><time>15:00</time><i class="plan-mark"></i><div><b>个人安排</b><small>固定安排 · 60 分钟</small></div></div>
-            <div class="plan-row"><time>16:30</time><i class="plan-mark"></i><div><b>未安排任务</b><small>整理访谈记录 · 45 分钟</small></div></div>
-          </div></div><div class="plan-col"><div class="plan-title"><span>PlanBranch 预览</span><span class="badge" id="branch-badge" style="opacity:0">未应用</span></div><div class="plan-rows">
-            <div class="plan-row"><time>09:00</time><i class="plan-mark"></i><div><b>课程阅读</b><small>保持不变</small></div></div>
-            <div class="plan-row proposed" id="proposed-row"><time>13:30</time><i class="plan-mark"></i><div><b>整理访谈记录</b><small>建议专注 · 45 分钟</small></div><span class="proposal-tag" id="proposal-tag">新增</span></div>
-            <div class="plan-row"><time>15:00</time><i class="plan-mark"></i><div><b>个人安排</b><small>保持不变</small></div></div>
-            <div class="plan-row"><time>16:30</time><i class="plan-mark"></i><div><b>自由时间</b><small>保留</small></div></div>
-          </div></div></div>
-          <div class="planner-footer"><span id="branch-status">选择重排范围，然后生成预览</span><span style="display:flex;gap:10px"><button class="btn" id="planner-cancel">取消</button><button class="btn green" id="planner-apply">应用提案</button></span></div>
-          <div class="plan-note"><i class="dot"></i><span>预览不会改变活动日历；应用时重新检查基础状态</span></div>
+  <section class="scene paper" data-start="13.634" data-end="22.691" id="task">
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="kicker">02 / 结构化工具 · 确认后写入</div>
+    <div class="copy"><div class="eyebrow">SAY IT · REVIEW IT</div><h2 class="headline">Agent 提出操作，<br>你决定是否执行。</h2><p class="support">任务信息先变成可核对的预览。写入前，权限与当前状态都会再检查。</p><div class="proof"><i></i><span>没有对数据库的直写通道</span></div></div>
+    <div class="window">
+      <div class="window-top"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="address">Temvio · Agent / Task proposal</div><span>CONFIRMATION REQUIRED</span></div>
+      <div class="window-body"><aside class="rail"><div class="rail-brand"><img src="assets/temvio-icon-transparent.png"/><img src="assets/temvio-wordmark-transparent.png"/></div><div class="rail-label">WORKSPACE</div><div class="rail-item on"><i class="rail-ico"></i>Agent</div><div class="rail-item"><i class="rail-ico"></i>今天</div><div class="rail-item"><i class="rail-ico"></i>日历</div><div class="rail-item"><i class="rail-ico"></i>任务</div><div class="rail-item"><i class="rail-ico"></i>规划</div><div class="rail-item"><i class="rail-ico"></i>历史</div><div class="rail-foot">Local-first · Context assembled by app</div></aside>
+        <div class="work"><div class="work-head"><span class="work-title">Agent 建议创建任务</span><span class="work-tag">待你确认</span></div>
+          <div class="conversation"><div class="user-label">YOU</div><div class="msg user" id="task-user" data-at="14.766">请创建任务“整理访谈记录”，优先级 LOW，预计与剩余用时均为 45 分钟，不设截止日期；再安排进今天的空档。</div><div class="agent-label reveal" data-at="15.332">TEMVIO AGENT</div><div class="msg assistant reveal" data-at="15.332">我会按你给出的条件创建；接着生成独立的计划预览。</div><div class="tool-row reveal" data-at="15.898"><i class="tool-dot"></i><code>task.create</code><span class="status">输入已校验</span></div><div class="msg assistant reveal" data-at="16.464">请检查任务字段。确认后才会提交。</div><div class="tool-row reveal" id="task-created" data-at="19.860"><i class="tool-dot"></i><code>ToolResult</code><span class="status">SUCCESS · 已记录</span></div></div>
+          <div class="sidepanel"><div class="panel-title">写入预览 <span class="panel-meta">ToolWritePreview</span></div><div class="small-label">提案内容</div><div class="mini-card"><div class="mini-head"><span>整理访谈记录</span><span class="pill">Task</span></div><div class="row"><span>状态</span><span class="grow"></span><b>OPEN</b></div><div class="row"><span>优先级</span><span class="grow"></span><b>LOW</b></div><div class="row"><span>预计 / 剩余</span><span class="grow"></span><b>45 / 45 分钟</b></div><div class="row"><span>截止时间</span><span class="grow"></span><b>无</b></div><div class="inline-note">内容来自你的请求；此预览尚未写入。</div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:13px"><button class="action">拒绝</button><button class="action primary" id="task-confirm">确认并创建</button></div></div><div class="tool-row" style="margin-top:15px"><i class="tool-dot blue"></i><span>重新校验当前状态</span><span class="status">确认时</span></div></div>
+          <div class="inputbar"><span>向 Agent 描述你要做的事…</span><span class="send">↑</span></div>
         </div>
       </div>
-    </div>
-    <div class="cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
+    </div><div class="cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <section class="scene paper" data-start="24" data-end="33.4" id="history">
-    <div class="browser">
-      <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><div class="url">temvio.app / history</div></div>
-      <div class="appbar"><img class="wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><span class="nav">今天</span><span class="nav">日历</span><span class="nav">任务</span><span class="nav">规划</span><span class="nav on">历史</span><span class="spacer"></span><span class="nav">本机记录　⌄</span><span class="avatar">T</span></div>
-      <div class="workspace"><aside class="sidebar"><div class="side-label">活动</div><div class="side-item"><i class="side-icon"></i>今天</div><div class="side-item active"><i class="side-icon"></i>操作历史</div><div class="side-label" style="margin-top:35px">筛选</div><div class="side-item"><i class="side-icon"></i>全部变更</div><div class="side-item"><i class="side-icon"></i>可撤销操作</div></aside>
-        <div class="main"><div class="toolbar"><div class="page-title">操作历史</div><span class="date-pill">每次更改均保留记录</span><div class="push"></div><button class="btn">最近 7 天　⌄</button></div><div class="history-layout"><div class="surface history-list">
-          <div class="history-row" id="undo-target"><span class="history-time">10:42</span><i class="history-icon">↔</i><div><b>应用计划分支</b><small>FocusBlock · 整理访谈记录 · 1 项变更</small></div><button class="btn" id="undo-button">预览撤销</button></div>
-          <div class="history-row"><span class="history-time">10:18</span><i class="history-icon">✓</i><div><b>完成课程阅读</b><small>Task · 状态更新 · 1 项变更</small></div><span class="history-side">已完成</span></div>
-          <div class="history-row"><span class="history-time">09:30</span><i class="history-icon">＋</i><div><b>创建任务：整理访谈记录</b><small>Task · LOW · 45 分钟</small></div><span class="history-side">已完成</span></div>
-          <div class="history-row"><span class="history-time">09:02</span><i class="history-icon">✎</i><div><b>更新计划偏好</b><small>PlanningProfile · Study</small></div><span class="history-side">已完成</span></div>
-        </div><div class="audit"><h3>变更记录</h3><p>一次操作作为一个完整单元提交。撤销会执行可验证的补偿操作，并继续写入历史。</p><div class="undo-preview" id="undo-preview"><b>撤销预览</b><br><span style="display:block;margin-top:8px">新增专注时段　→　已撤销<br>关联操作　Undo preview</span></div><button class="btn primary" id="undo-confirm" style="width:100%">确认撤销</button><div class="micro" style="margin-top:12px">仍需用户确认 · 当前状态会重新校验</div></div></div></div>
+  <section class="scene paper" data-start="22.691" data-end="31.747" id="planner">
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="kicker">03 / DETERMINISTIC PLANNER</div>
+    <div class="copy"><div class="eyebrow">AGENT ASKS · PLANNER CALCULATES</div><h2 class="headline">计划有依据，<br>改变有边界。</h2><p class="support">Planner 根据当前安排与约束生成 PlanBranch；预览先展示，应用时重新校验。</p><div class="proof"><i></i><span>预览不会先改动当前日历</span></div></div>
+    <div class="window">
+      <div class="window-top"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="address">Temvio · Agent / Replan preview</div><span>PLANBRANCH · NOT APPLIED</span></div>
+      <div class="window-body"><aside class="rail"><div class="rail-brand"><img src="assets/temvio-icon-transparent.png"/><img src="assets/temvio-wordmark-transparent.png"/></div><div class="rail-label">WORKSPACE</div><div class="rail-item on"><i class="rail-ico"></i>Agent</div><div class="rail-item"><i class="rail-ico"></i>今天</div><div class="rail-item"><i class="rail-ico"></i>日历</div><div class="rail-item"><i class="rail-ico"></i>任务</div><div class="rail-item"><i class="rail-ico"></i>规划</div><div class="rail-item"><i class="rail-ico"></i>历史</div><div class="rail-foot">Local-first · Context assembled by app</div></aside>
+        <div class="work"><div class="work-head"><span class="work-title">Agent 已生成计划预览</span><span class="work-tag">1 项提案 · 尚未应用</span></div>
+          <div class="conversation"><div class="user-label">YOU</div><div class="msg user reveal" data-at="23.257">把新任务安排进今天的空档，已有安排不要移动。</div><div class="agent-label reveal" data-at="24.389">TEMVIO AGENT</div><div class="msg assistant reveal" data-at="24.389">我按现有固定安排生成了一个可审阅分支。</div><div class="tool-row reveal" data-at="25.521"><i class="tool-dot blue"></i><code>planner.previewFullReplan</code><span class="status">预览已生成</span></div><div class="tool-row reveal" data-at="26.087"><i class="tool-dot"></i><span>当前状态复核</span><span class="status">无冲突</span></div><div class="msg assistant reveal" data-at="27.219">整理访谈记录安排在 15:00–15:45。晨间回顾、项目同步与课程阅读保持不变。</div><div class="tool-row reveal" id="plan-result" data-at="30.049"><i class="tool-dot"></i><code>PlanBranch</code><span class="status">等待应用</span></div></div>
+          <div class="sidepanel"><div class="panel-title">计划分支 <span class="panel-meta">周二 · 9 月 29 日</span></div><div class="split"><div class="mini-card"><div class="mini-head"><span>当前</span><span class="pill">日历</span></div><div class="row"><span class="time">09:00</span><i class="bar"></i><b>晨间回顾</b></div><div class="row"><span class="time">11:00</span><i class="bar cyan"></i><b>项目同步</b></div><div class="row"><span class="time">14:00</span><i class="bar green"></i><b>课程阅读</b></div><div class="row"><span class="time">—</span><i class="bar"></i><b>访谈记录</b></div></div><div class="mini-card"><div class="mini-head"><span>提案</span><span class="pill green">PlanBranch</span></div><div class="row"><span class="time">09:00</span><i class="bar"></i><b>晨间回顾</b><span class="grow"></span><span class="state">不变</span></div><div class="row"><span class="time">11:00</span><i class="bar cyan"></i><b>项目同步</b><span class="grow"></span><span class="state">不变</span></div><div class="row"><span class="time">14:00</span><i class="bar green"></i><b>课程阅读</b><span class="grow"></span><span class="state">不变</span></div><div class="proposal"><b>15:00　整理访谈记录</b><small>FocusBlock · 45 分钟</small></div></div></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:15px"><button class="action">取消</button><button class="action accept" id="plan-apply">复核并应用</button></div><div class="inline-note">应用时会对当前状态重新校验；若已变化，将提示冲突并要求重新规划。</div></div>
+          <div class="inputbar"><span>向 Agent 描述你要做的事…</span><span class="send">↑</span></div>
+        </div>
       </div>
-    </div>
-    <div class="cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
+    </div><div class="cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <section class="scene paper" data-start="33.4" data-end="41.4" id="sync">
-    <div class="brand"><img class="brand-icon" src="assets/temvio-icon-transparent.png" alt=""/><img class="brand-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="tag">D8 · ENCRYPTED DEVICE SYNC</div>
-    <div class="sync-stage"><div class="device"><div class="device-top"><i class="device-light"></i> Android · 本机数据</div><div class="device-content"><div class="device-heading">今天</div><div class="device-event">晨间回顾<small>09:00 — 09:45</small></div><div class="device-event" style="border-color:#1eaa9c">整理访谈记录<small>待规划 · LOW</small></div><div class="device-event" style="border-color:#55a181">课程阅读<small>14:00 — 15:00</small></div></div></div>
-      <div class="sync-center"><div class="sync-title">你的设备，保持一致。</div><div class="sync-sub">客户端加密后再同步<br>服务器只转发加密信封</div><div class="route"><i class="route-line"></i><i class="packet" id="packet"></i></div><span class="lock"><i class="lock-icon"></i> 内容端到端加密</span><div class="sync-state" id="sync-state">等待加密打包</div></div>
-      <div class="device"><div class="device-top"><i class="device-light"></i> Desktop · 已解密使用</div><div class="device-content"><div class="device-heading">Agenda / Day</div><div class="device-event">晨间回顾<small>09:00 — 09:45</small></div><div class="device-event" style="border-color:#1eaa9c">整理访谈记录<small>待规划 · LOW</small></div><div class="device-event" style="border-color:#55a181">课程阅读<small>14:00 — 15:00</small></div></div></div>
-    </div>
+  <section class="scene paper" data-start="31.747" data-end="40.804" id="history">
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="kicker">04 / CHANGELOG · HISTORY UNDO</div>
+    <div class="copy"><div class="eyebrow">FACTS YOU CAN RETRIEVE</div><h2 class="headline">Agent 记得过程，<br>每次改变可追溯。</h2><p class="support">对话负责表达；ChangeLog 记录实际发生的变更。需要调整时，可先预览补偿操作。</p><div class="proof"><i></i><span>撤销会留下新的历史记录</span></div></div>
+    <div class="window">
+      <div class="window-top"><i class="dot"></i><i class="dot"></i><i class="dot"></i><div class="address">Temvio · Agent / History retrieval</div><span>AUTHORITATIVE CHANGELOG</span></div>
+      <div class="window-body"><aside class="rail"><div class="rail-brand"><img src="assets/temvio-icon-transparent.png"/><img src="assets/temvio-wordmark-transparent.png"/></div><div class="rail-label">WORKSPACE</div><div class="rail-item on"><i class="rail-ico"></i>Agent</div><div class="rail-item"><i class="rail-ico"></i>今天</div><div class="rail-item"><i class="rail-ico"></i>日历</div><div class="rail-item"><i class="rail-ico"></i>任务</div><div class="rail-item"><i class="rail-ico"></i>规划</div><div class="rail-item"><i class="rail-ico"></i>历史</div><div class="rail-foot">Local-first · Context assembled by app</div></aside>
+        <div class="work"><div class="work-head"><span class="work-title">Agent 可以查到刚刚发生了什么</span><span class="work-tag">历史读取 · 只读</span></div>
+          <div class="conversation"><div class="user-label reveal" data-at="32.313">YOU</div><div class="msg user reveal" data-at="32.313">刚才做了哪些更改？</div><div class="agent-label reveal" data-at="32.879">TEMVIO AGENT</div><div class="msg assistant reveal" data-at="32.879">我会从结构化历史读取操作结果。</div><div class="tool-row reveal" data-at="34.011"><i class="tool-dot blue"></i><code>history.timeline</code><span class="status">只读查询</span></div><div class="msg assistant reveal" data-at="34.577">创建了 1 项 Task，并应用了 1 个计划分支。两步均已记录。</div><div class="user-label reveal" data-at="35.143">YOU</div><div class="msg user reveal" data-at="35.143">请为刚才应用的计划生成撤销预览。</div><div class="agent-label reveal" data-at="35.709">TEMVIO AGENT</div><div class="msg assistant reveal" data-at="35.709">我会先检查当前状态，再生成预览。</div><div class="tool-row reveal" data-at="36.275"><i class="tool-dot blue"></i><code>history.undo</code><span class="status">预览已生成</span></div><div class="tool-row reveal" id="undo-result" data-at="40.237"><i class="tool-dot"></i><code>ToolResult</code><span class="status">Undo · 已追加记录</span></div></div>
+          <div class="sidepanel"><div class="panel-title">操作时间线 <span class="panel-meta">本机 AgentAction</span></div><div class="small-label">今天 · 10:42</div><div class="tool-row"><i class="tool-dot"></i><div><b>创建任务</b><small>Task · 整理访谈记录 · LOW</small></div><span class="status">SUCCEEDED</span></div><div class="tool-row"><i class="tool-dot"></i><div><b>应用计划分支</b><small>FocusBlock · 15:00–15:45</small></div><span class="status">SUCCEEDED</span></div><div class="mini-card reveal" id="undo-card" data-at="37.407" style="margin-top:15px"><div class="mini-head"><span>撤销预览</span><span class="pill" id="undo-badge">待确认</span></div><div class="proposal"><b>移除已应用的专注时段</b><small>补偿操作 · 不删除原始历史</small></div><div class="inline-note">Agent 可提出撤销；仍须按权限与当前状态重新验证。</div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="action primary" id="undo-confirm">确认撤销</button></div></div></div>
+          <div class="inputbar"><span>向 Agent 描述你要做的事…</span><span class="send">↑</span></div>
+        </div>
+      </div>
+    </div><div class="cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <section class="scene paper" data-start="41.4" data-end="55" id="agent">
-    <div class="agent-layout"><div class="agent-copy"><div class="eyebrow">AGENT · D9 正在进行</div><h2 class="agent-head">描述你要做的事。<br>检查之后，再确认。</h2><p class="agent-sub">Temvio Agent 用类型化工具读取和提出变更。每次写入先展示内容，再由你决定。</p><div class="agent-status"><i></i><span>受本地权限控制 · 操作结果进入历史</span></div></div>
-      <div class="phone"><div class="phone-head"><img class="phone-icon" src="assets/temvio-icon-transparent.png" alt=""/><div><div class="phone-brand"><img class="phone-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/><b>Assistant</b></div><small>本地 Agent 对话</small></div><span class="badge">D9 进行中</span></div><div class="chat">
-        <div class="bubble user" id="agent-user"></div>
-        <div class="bubble agent" id="agent-reply">我会先检查任务输入，再准备创建预览。</div>
-        <div class="tool-card" id="tool-card"><div class="tool-top"><span>类型化工具调用</span><span id="tool-state">等待确认</span></div><div class="tool-main"><div class="tool-step"><i></i><span>task.create · 输入已校验</span></div><div class="confirm-box"><strong>整理访谈记录</strong><small>开放任务　·　优先级 LOW　·　预计 45 分钟</small><div class="confirm-row"><button class="btn" id="agent-deny">拒绝</button><button class="btn primary" id="agent-confirm">确认并创建</button></div></div></div></div>
-        <div class="chat-input"><span>输入消息…</span><span class="send" id="agent-send">↑</span></div>
-      </div></div>
-    </div>
-    <div class="cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
+  <section class="scene paper" data-start="40.804" data-end="49.860" id="core">
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="kicker">05 / AGENTIC SURFACE · DETERMINISTIC CORE</div>
+    <div class="copy" style="top:298px"><div class="eyebrow">A TRUSTED PATH FOR EVERY ACTION</div><h2 class="headline">Agent 是入口。<br>你仍掌握决定权。</h2><p class="support">模型提供提案；类型、规则、权限和事务边界由应用负责。</p><div class="proof"><i></i><span>失败、拒绝与成功都会返回真实结果</span></div></div>
+    <div class="architecture"><p class="arch-title">从自然语言到可审计的应用变更</p><div class="flow"><div class="node" data-node="0"><span class="node-num">01 · INTENT</span><div class="node-icon">⌁</div><h3>用户意图</h3><p>请求、当前页面与明确条件</p></div><span class="flow-arrow" style="left:22.0%">›</span><div class="node" data-node="1"><span class="node-num">02 · TYPED TOOL</span><div class="node-icon">{} </div><h3>类型化工具</h3><p>读取、提案与结构化结果</p></div><span class="flow-arrow" style="left:41.5%">›</span><div class="node" data-node="2"><span class="node-num">03 · CORE</span><div class="node-icon">◇</div><h3>Domain / Planner</h3><p>确定性规则与当前状态校验</p></div><span class="flow-arrow" style="left:61.0%">›</span><div class="node" data-node="3"><span class="node-num">04 · PERMISSION</span><div class="node-icon">✓</div><h3>预览与确认</h3><p>按本地权限决定是否继续</p></div><span class="flow-arrow" style="left:80.5%">›</span><div class="node" data-node="4"><span class="node-num">05 · TRANSACTION</span><div class="node-icon">▤</div><h3>变更与历史</h3><p>事务提交 · ToolResult · ChangeLog</p></div></div><div class="bottom-rule"><span class="rule-copy"><b>Agent 可更换，</b>用户的时间语义、权限与历史由应用持有。</span><span class="rule-status"><i></i>D9-01 · 正在进行</span></div></div>
+    <div class="cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <section class="scene paper" data-start="55" data-end="60" id="outro">
-    <div class="outro"><div class="logo-card" data-show="55.15"><img class="lockup-icon" src="assets/temvio-icon-transparent.png" alt=""/><img class="lockup-wordmark" src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="outro-line" data-show="55.55">把计划，变成可执行的日常。</div><div class="outro-sub" data-show="56">从日历开始，始终由你掌控。</div><div class="outro-bar" data-show="56.45"><span>日历</span><i></i><span>规划</span><i></i><span>历史</span><i></i><span>Agent</span></div></div>
+  <section class="scene paper" data-start="49.860" data-end="58.917" id="sync">
+    <div class="brand"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="kicker">06 / APPROVED CHANGES · END-TO-END ENCRYPTED</div>
+    <div class="copy" style="top:288px"><div class="eyebrow">LOCAL-FIRST · MULTI-DEVICE</div><h2 class="headline">确认的安排，<br>安全抵达另一端。</h2><p class="support">写入提交后，日历与任务变更才进入加密同步；中继只转发加密信封。</p><div class="proof"><i></i><span>Agent 提交后，日程变化才进入同步</span></div></div>
+    <div class="sync-panel"><div class="sync-top"><span class="sync-title">已确认的安排 · 设备同步</span><span class="sync-meta">D8 · ENCRYPTED ENVELOPE</span></div><div class="devices"><div class="device"><div class="device-head"><i class="tool-dot"></i>Android · 本地日程</div><div class="device-screen"><div class="device-date">今天　9 月 29 日</div><div class="device-event">09:00　晨间回顾<small>固定安排 · 45 分钟</small></div><div class="device-event">11:00　项目同步<small>Event · 30 分钟</small></div><div class="device-event">14:00　课程阅读<small>固定安排 · 60 分钟</small></div><div class="device-event new" id="sync-event-a">15:00　整理访谈记录<small>FocusBlock · 45 分钟 · 已确认</small></div></div></div><div class="sync-lane"><div class="lock-chip"><i class="lock-icon"></i>客户端加密</div><div class="encrypted"><i class="packet" id="packet"></i></div><div class="sync-caption" id="sync-state">准备同步已提交的日历更改</div><div class="small-label">SERVER · OPAQUE RELAY</div></div><div class="device"><div class="device-head"><i class="tool-dot"></i>Desktop · 已验证</div><div class="device-screen"><div class="device-date">Agenda / Day</div><div class="device-event">09:00　晨间回顾<small>固定安排 · 45 分钟</small></div><div class="device-event">11:00　项目同步<small>Event · 30 分钟</small></div><div class="device-event">14:00　课程阅读<small>固定安排 · 60 分钟</small></div><div class="device-event new" id="sync-event-b">15:00　整理访谈记录<small>FocusBlock · 45 分钟 · 已接收</small></div></div></div></div><div class="sync-foot"><span><b>Agent 确认 → 应用事务 → 加密封装 → 另一台设备验证</b></span><span>仅已提交的业务数据</span></div></div>
+    <div class="cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div><div class="ripple"></div>
   </section>
 
-  <div class="cursor" id="global-cursor" aria-hidden="true"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div>
+  <section class="scene dark" data-start="58.917" data-end="63.433" id="outro">
+    <div class="outro"><div class="hero-mark reveal" data-at="58.967"><img src="assets/temvio-icon-transparent.png" alt=""/><img src="assets/temvio-wordmark-transparent.png" alt="Temvio"/></div><div class="outro-line reveal" data-at="59.533">把计划交给 Agent。</div><div class="outro-sub reveal" data-at="60.099">把决定，留给自己。</div><div class="outro-tag reveal" data-at="60.665"><span class="pulse"></span>AGENTIC SURFACE · DETERMINISTIC CORE</div></div>
+  </section>
+  <div class="cursor" id="global-cursor"><svg viewBox="0 0 40 54"><path d="M3 2 L3 39 L13 30 L20 47 L27 44 L20 27 L34 27 Z" fill="#101820" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg></div>
 </main>
 <script>
-  const scenes = [...document.querySelectorAll('.scene')];
-  const stage = document.getElementById('stage');
-  const mix = (a,b,t) => a + (b-a) * t;
-  const clamp = (v,lo,hi) => Math.max(lo,Math.min(hi,v));
-  const ease = x => { const t=clamp(x,0,1); return 1-Math.pow(1-t,3); };
-  const easeInOut = x => { const t=clamp(x,0,1); return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; };
-  const phase = (time,start,duration) => clamp((time-start)/duration,0,1);
-  const sceneFor = id => document.getElementById(id);
-  const cursorEvents = [
-    {scene:'agenda',target:'#task-add',start:4.0,click:5.05,hide:5.58,from:[380,790]},
-    {scene:'agenda',target:'#task-save',start:8.05,click:8.85,hide:9.35,fromTarget:'#task-add'},
-    {scene:'planner',target:'#planner-run',start:14.2,click:15.0,hide:15.5,from:[390,780]},
-    {scene:'planner',target:'#planner-apply',start:20.35,click:21.15,hide:21.62,fromTarget:'#planner-run'},
-    {scene:'history',target:'#undo-button',start:25.1,click:25.88,hide:26.35,from:[400,780]},
-    {scene:'history',target:'#undo-confirm',start:29.35,click:30.05,hide:30.55,fromTarget:'#undo-button'},
-    {scene:'agent',target:'#agent-send',start:43.25,click:44.0,hide:44.45,from:[1380,785]},
-    {scene:'agent',target:'#agent-confirm',start:50.8,click:51.65,hide:52.1,fromTarget:'#agent-send'},
+  const D=63.433333, BPM=106, BEAT=60/BPM, PHASE=.05, scenes=[...document.querySelectorAll('.scene')], stage=document.getElementById('stage');
+  const clamp=(x,a,b)=>Math.max(a,Math.min(b,x)), mix=(a,b,p)=>a+(b-a)*p;
+  const ease=x=>{const t=clamp(x,0,1);return 1-Math.pow(1-t,3)}, smooth=x=>{const t=clamp(x,0,1);return t*t*(3-2*t)};
+  const atBeat=n=>PHASE+n*BEAT;
+  const cursorEvents=[
+    {scene:'task',target:'#task-confirm',start:atBeat(32),click:atBeat(34),hide:atBeat(36),from:[1396,858]},
+    {scene:'planner',target:'#plan-apply',start:atBeat(52),click:atBeat(54),hide:atBeat(55),from:[1392,857]},
+    {scene:'history',target:'#undo-confirm',start:atBeat(68),click:atBeat(70),hide:atBeat(71),from:[1392,855]}
   ];
-
-  function rectIn(target,container) {
-    const tr=target.getBoundingClientRect(), cr=container.getBoundingClientRect();
-    return {left:tr.left-cr.left,top:tr.top-cr.top,width:tr.width,height:tr.height,right:tr.right-cr.left,bottom:tr.bottom-cr.top,cx:(tr.left+tr.width/2)-cr.left,cy:(tr.top+tr.height/2)-cr.top};
-  }
-  function placeAnchored(pop,target,container) {
-    const t=rectIn(target,container), w=pop.offsetWidth, h=pop.offsetHeight;
-    const left=clamp(t.left-w-22,12,container.clientWidth-w-12);
-    const top=clamp(t.cy-h/2,12,container.clientHeight-h-12);
-    pop.style.left=`${left}px`; pop.style.top=`${top}px`;
-    pop.style.transformOrigin=`${clamp(t.left-left,0,w)}px ${clamp(t.cy-top,0,h)}px`;
-  }
-  function animateCursor(time) {
-    const cursor=document.getElementById('global-cursor');
-    const event=cursorEvents.find(e=>time>=e.start-.18 && time<=e.hide);
-    if(!event){cursor.style.opacity='0';for(const ripple of document.querySelectorAll('.ripple')){ripple.style.opacity='0';ripple.style.transform='scale(.5)';}return;}
-    const scene=sceneFor(event.scene), target=scene.querySelector(event.target);
-    const dest=rectIn(target,stage);
-    let from=event.from;
-    if(event.fromTarget){const prior=scene.querySelector(event.fromTarget);const r=rectIn(prior,stage);from=[r.cx,r.cy];}
-    const p=easeInOut((time-event.start)/(event.click-event.start));
-    const x=mix(from[0],dest.cx,p), y=mix(from[1],dest.cy,p);
-    cursor.style.left=`${x}px`;cursor.style.top=`${y}px`;
-    const opacity=clamp((time-(event.start-.18))/.18,0,1)*clamp((event.hide-time)/.18,0,1);
-    cursor.style.opacity=String(opacity);
-    const clickAge=time-event.click;
-    cursor.style.transform=`scale(${clickAge>=0&&clickAge<.18?.92:1})`;
-    const ripple=scene.querySelector('.ripple');
-    ripple.style.left=`${dest.cx-25}px`;ripple.style.top=`${dest.cy-25}px`;
-    if(clickAge>=0&&clickAge<.5){const q=clickAge/.5;ripple.style.opacity=String(1-q);ripple.style.transform=`scale(${.55+q*1.3})`;}
-    else {ripple.style.opacity='0';ripple.style.transform='scale(.5)';}
-  }
-  function setButtonState(selector,time,clickAt) {
-    const target=document.querySelector(selector);if(!target)return;
-    target.classList.toggle('pressed',time>=clickAt&&time<clickAt+.24);
-  }
-  window.renderAt = timeInSeconds => {
-    const t=clamp(Number(timeInSeconds)||0,0,60-1/30);
-    for(const scene of scenes){
-      const start=Number(scene.dataset.start),end=Number(scene.dataset.end),fade=.34;
-      const opacity=Math.min(ease((t-start)/fade),scene===scenes[scenes.length-1]?1:ease((end-t)/fade));
-      scene.style.opacity=String(opacity);scene.style.visibility=opacity>.002?'visible':'hidden';
-      const view=scene.querySelector('.browser');
-      if(view){view.style.opacity=String(opacity);view.style.transform=`translateY(${(1-opacity)*18}px) scale(${.985+.015*opacity})`;}
-    }
-    const intro=sceneFor('intro');
-    intro.querySelectorAll('[data-show]').forEach(el=>{
-      const p=ease((t-Number(el.dataset.show))/.42);el.style.opacity=String(p);
-      const scale=el.classList.contains('logo-card')?mix(.96,1,p):1;
-      el.style.transform=`translateY(${(1-p)*18}px) scale(${scale})`;
-    });
-    const agenda=sceneFor('agenda'), taskPop=agenda.querySelector('#task-pop');
-    placeAnchored(taskPop,agenda.querySelector('#task-add'),agenda.querySelector('.main'));
-    const taskP=ease((t-5.55)/.42)*(1-ease((t-9.15)/.30));taskPop.style.opacity=String(taskP);taskPop.style.visibility=taskP>.002?'visible':'hidden';taskPop.style.transform=`scale(${mix(.94,1,Math.min(taskP,1))})`;
-    const typeP=phase(t,5.72,.90);agenda.querySelector('#task-title').textContent='整理访谈记录'.slice(0,Math.ceil(typeP*6));
-    agenda.querySelector('#task-title').style.minWidth='100%';
-    const taskAdded=ease((t-9.05)/.35);const taskList=agenda.querySelector('.task-surface');
-    let newTask=taskList.querySelector('#created-task');
-    if(!newTask){newTask=document.createElement('div');newTask.id='created-task';newTask.className='task added';newTask.innerHTML='<i class="check"></i><span>整理访谈记录</span><span class="badge" style="margin-left:auto">LOW · 45 分钟</span>';taskList.appendChild(newTask);}
-    newTask.style.opacity=String(taskAdded);newTask.style.transform=`translateY(${(1-taskAdded)*12}px)`;
-    setButtonState('#task-add',t,5.05);setButtonState('#task-save',t,8.85);
-
-    const planner=sceneFor('planner'), planP=ease((t-15.55)/.8),applyP=ease((t-21.35)/.32);
-    planner.querySelector('#plan-fill').style.setProperty('--fill',`${planP*100}%`);
-    planner.querySelector('#branch-badge').style.opacity=String(ease((t-17.6)/.3));
-    planner.querySelector('#proposal-tag').style.setProperty('--show',String(ease((t-17.4)/.3)));
-    planner.querySelector('#proposed-row').style.setProperty('--shift',`${(1-planP)*12}px`);
-    planner.querySelector('#branch-status').textContent=t<15.3?'选择重排范围，然后生成预览':t<18.1?'正在计算确定性计划…':t<21.25?'预览已生成　·　1 项新增安排':applyP<1?'正在重新检查基础状态…':'已应用　·　操作已记录';
-    planner.querySelector('#planner-apply').textContent=applyP>.98?'已应用':'应用提案';
-    setButtonState('#planner-run',t,15.0);setButtonState('#planner-apply',t,21.15);
-
-    const history=sceneFor('history'),undoDone=ease((t-30.35)/.35);
-    history.querySelector('#undo-preview').style.opacity=String(ease((t-27.0)/.3));
-    history.querySelector('#undo-confirm').textContent=undoDone>.98?'已记录补偿操作':'确认撤销';
-    history.querySelector('#undo-confirm').classList.toggle('green',undoDone>.98);
-    const undoRow=history.querySelector('#undo-target');undoRow.classList.toggle('selected',t>26.2&&t<31.4);
-    setButtonState('#undo-button',t,25.88);setButtonState('#undo-confirm',t,30.05);
-
-    const sync=sceneFor('sync'),syncP=phase(t,34.2,6.0),packet=sync.querySelector('#packet');
-    packet.style.setProperty('--packet',`${syncP*440}px`);
-    sync.querySelector('#sync-state').textContent=syncP<.15?'准备加密信封':syncP<.72?'加密内容正在中继':syncP<.97?'另一台设备正在验证并解密':'两端日历已同步';
-    packet.style.opacity=String(syncP>.99?0:1);
-
-    const agent=sceneFor('agent');
-    const prompt='请创建任务“整理访谈记录”，优先级 LOW，预计 45 分钟。';
-    const charP=phase(t,41.8,1.5);agent.querySelector('#agent-user').textContent=prompt.slice(0,Math.ceil(prompt.length*charP));
-    const toolP=ease((t-44.45)/.45);const tool=agent.querySelector('#tool-card');tool.style.opacity=String(toolP);tool.style.visibility=toolP>.002?'visible':'hidden';tool.style.transform=`translateY(${(1-toolP)*10}px) scale(${.985+.015*toolP})`;
-    const confirmed=ease((t-52.15)/.4);agent.querySelector('#tool-state').textContent=confirmed>.98?'SUCCESS':'等待用户确认';
-    agent.querySelector('#agent-confirm').textContent=confirmed>.98?'已确认':'确认并创建';
-    setButtonState('#agent-send',t,44.0);setButtonState('#agent-confirm',t,51.65);
-
-    const outro=sceneFor('outro');outro.querySelectorAll('[data-show]').forEach(el=>{
-      const p=ease((t-Number(el.dataset.show))/.32);el.style.opacity=String(p);el.style.transform=`translateY(${(1-p)*12}px) scale(${el.classList.contains('logo-card')?mix(.97,1,p):1})`;
-    });
-    animateCursor(t);
-    document.documentElement.dataset.time=t.toFixed(3);
-  };
-  document.fonts.ready.then(()=>window.renderAt(0));
-  window.renderAt(0);
+  function rectIn(el,container){const r=el.getBoundingClientRect(),c=container.getBoundingClientRect();return {x:r.left-c.left,y:r.top-c.top,w:r.width,h:r.height,cx:r.left-c.left+r.width/2,cy:r.top-c.top+r.height/2}}
+  function revealElements(t){document.querySelectorAll('.reveal').forEach(el=>{const p=ease((t-Number(el.dataset.at))/.34);el.style.opacity=p;el.style.transform=`translateY(${(1-p)*12}px) scale(${el.classList.contains('hero-mark')?.98+.02*p:1})`})}
+  function setPressed(id,t,click){const el=document.querySelector(id);if(el)el.classList.toggle('pressed',t>=click&&t<click+.24)}
+  function moveCursor(t){const cursor=document.getElementById('global-cursor');const ev=cursorEvents.find(x=>t>=x.start-.18&&t<=x.hide);if(!ev){cursor.style.opacity='0';document.querySelectorAll('.ripple').forEach(x=>x.style.opacity='0');return}const scene=document.getElementById(ev.scene),target=scene.querySelector(ev.target),r=rectIn(target,stage);const p=smooth((t-ev.start)/(ev.click-ev.start));cursor.style.left=`${mix(ev.from[0],r.cx,p)}px`;cursor.style.top=`${mix(ev.from[1],r.cy,p)}px`;cursor.style.opacity=clamp((t-(ev.start-.18))/.18,0,1)*clamp((ev.hide-t)/.18,0,1);const age=t-ev.click;cursor.style.transform=`scale(${age>=0&&age<.16?.91:1})`;const ripple=scene.querySelector('.ripple');ripple.style.left=`${r.cx-22}px`;ripple.style.top=`${r.cy-22}px`;ripple.style.opacity=age>=0&&age<.42?1-age/.42:0;ripple.style.transform=`scale(${age>=0&&age<.42?.65+age/.42:0.65})`}
+  window.renderAt=t0=>{const t=clamp(Number(t0)||0,0,D-1/30);for(const [i,s] of scenes.entries()){const a=Number(s.dataset.start),b=Number(s.dataset.end),p=Math.min(ease((t-a)/.26),i===scenes.length-1?1:ease((b-t)/.26));s.style.opacity=p;s.style.visibility=p>.002?'visible':'hidden';const win=s.querySelector('.window,.architecture,.sync-panel');if(win){win.style.opacity=p;win.style.transform=`translateY(${(1-p)*12}px) scale(${.994+.006*p})`}}
+    revealElements(t);
+    const ctx='帮我创建“整理访谈记录”，低优先级、预计 45 分钟；再放进今天的空档。';const user=document.getElementById('ctx-user');user.textContent=ctx.slice(0,Math.ceil(ctx.length*clamp((t-5.143)/1.42,0,1)));
+    const taskUser=document.getElementById('task-user');taskUser.style.opacity=ease((t-14.766)/.30);taskUser.style.transform=`translateY(${(1-ease((t-14.766)/.30))*8}px)`;const taskCreated=document.getElementById('task-created');const created=ease((t-19.86)/.34);taskCreated.style.opacity=created;taskCreated.style.transform=`translateY(${(1-created)*6}px)`;setPressed('#task-confirm',t,atBeat(34));if(t>=atBeat(36))document.querySelector('#task-confirm').textContent='已确认 · 已创建';
+    setPressed('#plan-apply',t,atBeat(54));if(t>=atBeat(56))document.querySelector('#plan-apply').textContent='已应用 · 已记录';
+    setPressed('#undo-confirm',t,atBeat(70));if(t>=atBeat(71)){document.querySelector('#undo-confirm').textContent='已撤销';document.querySelector('#undo-badge').textContent='已确认'}
+    document.querySelectorAll('.node').forEach((el,i)=>{const p=ease((t-(40.804+i*BEAT))/.28);el.style.opacity=.35+.65*p;el.style.transform=`translateY(${(1-p)*8}px)`;el.classList.toggle('active',p>.85)});
+    const syncP=smooth((t-51.558)/(58.354-51.558)),packet=document.getElementById('packet');packet.style.transform=`translateX(${syncP*235}px)`;document.getElementById('sync-state').textContent=syncP<.18?'等待加密封装':syncP<.82?'加密信封由中继转发':'目标设备验证并接收';
+    moveCursor(t);document.documentElement.dataset.time=t.toFixed(3);};
+  document.fonts.ready.then(()=>window.renderAt(0));window.renderAt(0);
 </script>
 </body>
 </html>
