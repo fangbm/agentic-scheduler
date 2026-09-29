@@ -2,7 +2,7 @@
   "source": "D:\\codex\\ASP\\promo\\promo.html",
   "sourceSha256": "F9380DBE414394EDF38BCA2B3EC8D74FCCC55085282645D3E996BB4A6B8035CC",
   "output": "D:\\codex\\ASP\\promo\\artifacts\\Temvio-promo.mp4",
-  "outputSha256": "93034C25E0357EF1E224411B920A4718AC0F419D91EECE6AB93C31720E446E0C",
+  "outputSha256": "9E074A65EA7C6C471E3C57122826CDCD63087A7574E90189E4D310CB3E694E5F",
   "duration": 60.0,
   "fps": 30,
   "cueTimes": [
@@ -21,6 +21,8 @@
     55.2
   ],
   "audioAttribution": "D:\\codex\\ASP\\promo\\artifacts\\Temvio-promo.audio.md",
+  "audioSource": "D:\\codex\\TermLens\\artifacts\\termpop-promo-v4-60s-16x9.mp4",
+  "audioSourceSha256": "830E6DDC448DD62293B8FFFF3262DFADCB802AD4DF921D9C9AEE9151D112E6F8",
   "publishable": false,
   "renderedAtUtc": "2026-09-29T04:08:50.3098655Z"
 }

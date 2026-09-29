@@ -1,6 +1,6 @@
 # Temvio 宣传片
 
-当前成片：`artifacts/Temvio-promo.mp4`，60 秒，1920 × 1080，30 FPS。按用户提供的 TermPop 参考片重新剪辑，采用更紧凑的段落、更连续的鼠标操作和页面状态反馈，并加入原创合成配乐。
+当前成片：`artifacts/Temvio-promo.mp4`，60 秒，1920 × 1080，30 FPS。按用户提供的 TermPop 参考片重新剪辑，采用更紧凑的段落、更连续的鼠标操作和页面状态反馈，并复用参考片中的完整音轨。
 
 ## 故事线
 
@@ -22,7 +22,7 @@
 - `artifacts/Temvio-promo.mp4`：H.264 High、yuv420p、AAC 48 kHz、faststart。
 - `artifacts/Temvio-promo.audio.md`：音频说明。
 - `artifacts/Temvio-promo.render.json`：源文件和输出文件哈希、渲染参数。
-- `tools/create_bgm.py`：生成确定性的原创 60 秒立体声合成配乐；生成的 WAV 保留在本地忽略目录，不纳入版本控制。
+- `tools/create_bgm.py`：生成确定性的原创 60 秒立体声合成配乐，可用于本地备用；当前交付片使用用户提供的参考片完整音轨。
 - `artifacts/approved-stills/`：编码前批准的场景静帧。
 - `artifacts/final-mp4-stills/`：从成片抽取并用于关键帧比对的静帧。
 
@@ -32,10 +32,10 @@
 
 Temvio 是项目当前选定的工作品牌，本片是本地评审稿。仓库重命名和对外发布仍须遵循 `docs/TEMVIO_REBRAND_PLAN.md` 的命名核查门槛；本片不代表商标或市场可用性已获确认。
 
-音轨为 `tools/create_bgm.py` 生成的原创柔和氛围配乐：76 BPM，以缓慢铺开的和弦为主，不含鼓点或噪声节拍，也不使用第三方采样。它没有取得公开发行或商业使用授权，成片仍为本地评审稿；公开发布前须完成音乐使用权确认，或替换为已授权曲目。
+音轨从用户提供的 `D:\codex\TermLens\artifacts\termpop-promo-v4-60s-16x9.mp4` 直接复用，包含该参考片混合在内的完整音轨（AAC 48 kHz 立体声）。这是为匹配参考片的本地评审稿复用；公开或商业发布的音乐权利未确认，发布前须完成授权核查。
 
 ## 验证
 
-- `validate_video.ps1`：60.0 秒、1920 × 1080、30 FPS、1800 帧、H.264 High、yuv420p、AAC 48 kHz、faststart 均通过。
+- `validate_video.ps1`：60.0 秒、1920 × 1080、30 FPS、1800 帧、H.264 High、yuv420p、AAC 48 kHz 立体声、faststart 均通过；最终成片视频流保留原编码，音轨来自参考片。
 - 最后一帧可解码，没有持续 0.4 秒以上的黑帧空档。
 - 17 个最终 MP4 检查帧与批准静帧 SSIM 记录在 `artifacts/validation.json`。

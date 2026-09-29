@@ -15,7 +15,7 @@
     "sampleRateHz": 48000,
     "channels": 2,
     "durationSeconds": 60.0,
-    "source": "Original soft ambient composition at 76 BPM; no percussion or noise ticks; public-use rights not cleared"
+    "source": "User-provided reference MP4 complete AAC track; decoded PCM SHA-256 matches reference; public-use rights not confirmed"
   },
   "finalFrameDecoded": true,
   "blackFrameGapsOver400ms": [],
