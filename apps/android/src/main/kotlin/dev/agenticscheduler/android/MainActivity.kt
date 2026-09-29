@@ -437,7 +437,9 @@ private fun AndroidScheduler(
             if (taskRead is ConflictAwareRead.Unprojectable || focusRead is ConflictAwareRead.Unprojectable) Text("Sync conflict source facts require resolution before they can be displayed.")
         }
         item { AndroidAgentPanel(agentState, agentRun, secureStore, enrollments, ids) }
-        item { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
+        // Calendar source facts above can add or remove lazy items. Keep the pending
+        // PlanBranch preview attached to this semantic panel rather than its list index.
+        item(key = "planner-dogfood") { PlannerDogfoodPanel(reads, focusBlocks, dogfoodPlanner, profileSettings) }
     }
 
     if (creatingEvent) EventEditorDialog(null, selectedDate, displayTimeZone, eventEditor, { creatingEvent = false }, { creatingEvent = false })
