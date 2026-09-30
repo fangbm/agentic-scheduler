@@ -258,6 +258,7 @@ class AgentSyncPersistenceTest {
             db.useWriterConnection { it.exec("DROP INDEX agent_sync_record_identity_idx") }
             val corrupted = db.useReaderConnection { it.agentSyncCatalogSql() }
             assertFailsWith<IllegalStateException> { AgentSyncSchema.validateCatalog(corrupted) }
+            Unit
         } finally { db.close() }
     }
 
