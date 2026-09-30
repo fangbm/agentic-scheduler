@@ -168,7 +168,13 @@ data class TurnFinalized(
     val parentTurnIds: List<AgentTurnSyncId>,
     val orderedMembers: List<TurnMemberReference>,
     val outcome: AgentTurnOutcome,
-) : AgentSyncEvent
+) : AgentSyncEvent {
+    init {
+        require(parentTurnIds.distinct().size == parentTurnIds.size) { "Turn parent IDs must be unique." }
+        require(turnId !in parentTurnIds) { "A turn cannot be its own parent." }
+        require(orderedMembers.distinct().size == orderedMembers.size) { "Turn members must be unique." }
+    }
+}
 
 @Serializable
 sealed interface TurnMemberReference
@@ -295,7 +301,7 @@ object AgentSyncWireCodec {
         }
         val eventType = eventTypePrimitive?.contentOrNull
         if (eventType != null && eventType !in knownEventTypes) return AgentPayloadDecodeResult.UnsupportedEvent(eventType)
-        if (containsForbiddenMetadata(root)) return AgentPayloadDecodeResult.Invalid("V3 payload contains prohibited provider or local-only metadata.")
+        if (containsForbiddenEventMetadata(eventJson)) return AgentPayloadDecodeResult.Invalid("V3 event contains prohibited provider or local-only metadata.")
         return try {
             val payload = json.decodeFromJsonElement(SyncPayloadV3.serializer(), root)
             if (payload.operation.operationId != authenticatedMutationId) {
@@ -321,9 +327,7 @@ object AgentSyncWireCodec {
         "confirmationReference", "planBranchReference", "contextSummary",
     )
 
-    private fun containsForbiddenMetadata(value: JsonElement): Boolean = when (value) {
-        is JsonObject -> value.any { (key, child) -> key in forbiddenMetadataKeys || containsForbiddenMetadata(child) }
-        is kotlinx.serialization.json.JsonArray -> value.any(::containsForbiddenMetadata)
-        else -> false
-    }
+    /** Only event-level protocol fields are checked; Tool input/result JSON is opaque business data. */
+    private fun containsForbiddenEventMetadata(event: JsonObject?): Boolean =
+        event?.keys?.any(forbiddenMetadataKeys::contains) == true
 }

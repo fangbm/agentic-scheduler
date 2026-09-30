@@ -83,6 +83,62 @@ class AgentSyncWireProtocolTest {
         assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(fixture, operationId))
     }
 
+    @Test fun `tool input and result JSON are opaque and round trip even with apiKey fields`() {
+        val inputs = kotlinx.serialization.json.buildJsonObject {
+            put("apiKey", kotlinx.serialization.json.JsonPrimitive("user-defined-input"))
+        }
+        val toolCallPayload = SyncPayloadV3(operation = AgentSyncOperation(
+            operationId,
+            AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 1)),
+            AgentHlcSnapshot(100, 0, agentReplica),
+            ToolCallFinalized(
+                AgentToolCallSyncId(id(40)), AgentThreadSyncId(id(3)), AgentTurnSyncId(id(41)),
+                AgentMessageSyncId(id(42)), "custom.submit", inputs, FinalAgentToolCallStatus.COMPLETED,
+            ),
+        ))
+        val encodedToolCall = AgentSyncWireCodec.encodePayload(toolCallPayload)
+        assertEquals(toolCallPayload, assertIs<AgentPayloadDecodeResult.Supported>(AgentSyncWireCodec.decodePayload(encodedToolCall, operationId)).payload)
+
+        val resultPayload = toolCallPayload.copy(operation = toolCallPayload.operation.copy(
+            agentEvent = ToolResultAppended(
+                AgentToolResultSyncId(id(43)), AgentToolCallSyncId(id(40)), AgentThreadSyncId(id(3)),
+                AgentTurnSyncId(id(41)), AgentToolResultStatusV3.SUCCESS, inputs,
+                emptyList(),
+            ),
+        ))
+        val encodedResult = AgentSyncWireCodec.encodePayload(resultPayload)
+        assertEquals(resultPayload, assertIs<AgentPayloadDecodeResult.Supported>(AgentSyncWireCodec.decodePayload(encodedResult, operationId)).payload)
+    }
+
+    @Test fun `turn manifest rejects duplicate parents self-parenting and duplicate members at construction`() {
+        val turnId = AgentTurnSyncId(id(13))
+        val parentId = AgentTurnSyncId(id(10))
+        val message = MessageMember(AgentMessageSyncId(id(14)))
+        val duplicateParent = assertFailsWith<IllegalArgumentException> {
+            TurnFinalized(turnId, AgentThreadSyncId(id(3)), listOf(parentId, parentId), listOf(message), AgentTurnOutcome.SUCCEEDED)
+        }
+        assertEquals("Turn parent IDs must be unique.", duplicateParent.message)
+        assertFailsWith<IllegalArgumentException> {
+            TurnFinalized(turnId, AgentThreadSyncId(id(3)), listOf(turnId), listOf(message), AgentTurnOutcome.SUCCEEDED)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            TurnFinalized(turnId, AgentThreadSyncId(id(3)), emptyList(), listOf(message, message), AgentTurnOutcome.SUCCEEDED)
+        }
+    }
+
+    @Test fun `turn manifest decoder rejects duplicate parents self-parenting and duplicate members`() {
+        val valid = validTurnPayload()
+        val parent = "\"parentTurnIds\":[\"${id(10)}\"]"
+        val duplicateParents = valid.replace(parent, "\"parentTurnIds\":[\"${id(10)}\",\"${id(10)}\"]")
+        val selfParent = valid.replace(parent, "\"parentTurnIds\":[\"${id(13)}\"]")
+        val member = "\"orderedMembers\":[{\"type\":\"MESSAGE\",\"id\":\"${id(14)}\"}]"
+        val duplicateMembers = valid.replace(member, "\"orderedMembers\":[{\"type\":\"MESSAGE\",\"id\":\"${id(14)}\"},{\"type\":\"MESSAGE\",\"id\":\"${id(14)}\"}]")
+
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(duplicateParents, MutationId(id(11))))
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(selfParent, MutationId(id(11))))
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(duplicateMembers, MutationId(id(11))))
+    }
+
     @Test fun `turn Action references must match its turn thread and source message`() {
         val threadId = AgentThreadSyncId(id(3))
         val turnId = AgentTurnSyncId(id(40))
@@ -147,6 +203,16 @@ class AgentSyncWireProtocolTest {
             orderedMutations = listOf(EventPut(null, EventImage(id(32), "Read", EventTimeImage.AllDay(AllDayRangeImage("2026-01-01", "2026-01-02")), FlexibilityImage.HARD, PinStateImage.UNPINNED))),
         ),
     ))
+
+    private fun validTurnPayload(): String = AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = AgentSyncOperation(
+        MutationId(id(11)),
+        AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 1)),
+        AgentHlcSnapshot(100, 0, agentReplica),
+        TurnFinalized(
+            AgentTurnSyncId(id(13)), AgentThreadSyncId(id(3)), listOf(AgentTurnSyncId(id(10))),
+            listOf(MessageMember(AgentMessageSyncId(id(14)))), AgentTurnOutcome.SUCCEEDED,
+        ),
+    )))
 
     private fun id(value: Int) = "00000000-0000-7000-8000-${value.toString().padStart(12, '0')}"
 }

@@ -17,6 +17,9 @@ rejects unsupported versions/event discriminators or malformed DTOs as whole
 payload outcomes. The authenticated outer ID is supplied to the codec and
 must equal `operation.operationId`. Encoded plaintext is limited to 262144
 UTF-8 bytes and oversize encode fails as `AGENT_SYNC_PAYLOAD_TOO_LARGE`.
+The receiver checks prohibited provider/local-only fields only at the event's
+protocol-structure level. `normalizedInputs` and tool `result` remain opaque JSON
+and round-trip without interpreting user/tool-defined property names.
 
 Golden samples live in `shared/sync/src/desktopTest/resources/agent-sync-v3/`.
 They pin every currently defined event discriminator (`ThreadCreated`,
@@ -42,6 +45,10 @@ turn manifest. `AgentTurnLinkValidator` provides this pure typed check; the
 later runtime projection must call it before making a turn visible. This
 proposal prevents a remote audit record from borrowing another turn's
 transcript or tool result.
+
+The `TurnFinalized` wire DTO itself rejects duplicate parent IDs, self-parenting,
+and duplicate typed members during construction and decode, before runtime
+projection or link validation.
 
 Agent authoring-clock consistency is also explicit: `AgentHlcSnapshot.replicaId`
 must equal `AgentDvvSnapshot.dot.replicaId`; if the author replica appears in
