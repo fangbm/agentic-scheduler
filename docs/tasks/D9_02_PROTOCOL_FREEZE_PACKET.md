@@ -96,3 +96,27 @@ An Agent V3 turn with **no** dependency on held business writes may upload if W4
 | L1 | APPROVED 2026-09-30 | Frozen architectural policy |
 
 **Approval recorded:** the maintainer explicitly approved **all seven W1/W2/P1/D1/W4/W5/L1 choices on 2026-09-30** in the project conversation. A future semantic change requires a new explicit amendment. **Not yet complete:** exact serialized JSON and normative event/resolution fixtures, concrete migration DDL, runtime code or multi-device evidence; those must pass separate review before production enablement.
+
+## Maintainer follow-up amendment — C1 and D2
+
+> Status: **APPROVED 2026-09-30 by maintainer review on PR #20**. This amendment resolves the D9-02-02 Agent counter/frontier decision and fixes the semantic contract for D9-02-03 delete-conflict resolution. It does not enable production V3 receive or upload.
+
+### C1 — Agent counter allocation and contiguous frontier
+
+- Agent counters start at **0**, matching D7. `agent_sync_space_state.local_counter` is the **next counter to allocate**; provisioning a new Agent replica initializes it to 0. A restored installation without its Agent causal state provisions a new `AgentReplicaId`.
+- Local dot allocation and immutable operation/outbox persistence are one atomic transaction: allocate `(localReplicaId, nextCounter)`, persist the operation and outbox row, then persist `nextCounter + 1`. Counter overflow fails without wrap or replica reuse. Each local dot with counter `c > 0` includes its own replica component at `c - 1` in context.
+- For each replica, the contiguous handled frontier is conceptually **-1** initially. Do not store -1; an absent row means -1, and an empty frontier is a valid available empty map.
+- A context component `(replica, k)` is satisfied only when that replica's contiguous frontier is at least `k`. A stored or handled higher dot does not bridge a gap.
+- A handled inbound dot is durably bound to its operation ID, then advances only through consecutive already-handled dots (`frontier + 1`). Local durably authored dots advance the local frontier in allocation order.
+- Frontier advancement resolves all covered `AGENT_DOT` dependencies and retries the affected persistence-stage eligibility/turn checks. It must not advance the D7 business cursor, DVV, or handled-dot ledger.
+
+### D2 — delete/append conflict resolution semantics for D9-02-03
+
+- Add immutable V3 event `ThreadDeleteConflictResolved` with `threadId`, `participantOperationIds`, `resolution` (`KEEP_DELETION` or `COPY_CONTENT_TO_NEW_THREAD`), and nullable `replacementThreadId`.
+- `participantOperationIds` contains unique, lexicographically sorted full operation IDs for the current conflict component. The first resolution includes at least one delete and one competing content/turn operation. There is no authoritative wire `conflictId`; derive the local conflict key from `(threadId, sorted participantOperationIds)`.
+- The resolution operation's Agent DVV context must causally observe every participant dot. Authoring requires an explicit user action on an enrolled V3-capable device; Agent/model/background code cannot resolve automatically.
+- The original thread remains tombstoned for both choices. `KEEP_DELETION` requires a null replacement ID. `COPY_CONTENT_TO_NEW_THREAD` requires a replacement ID different from the original; only after accepting the resolution may fresh `ThreadCreated` and fresh content turns use new operation/turn/message IDs. Do not carry/replay Tool executions or business mutations; existing AgentAction/D7 audit remains attached to the original history. Replacement content is inactive until resolution acceptance.
+- Disagreeing concurrent resolutions are another explicit semantic conflict; no LWW. A later user resolution must observe the expanded component, including competing resolution operations.
+- D9-02-02 records this decision only. The event DTO/Codec, conflict-key implementation and merge/projection behavior are D9-02-03 work.
+
+OD-012 is unchanged: it does not block implementation/test merging, but local-at-rest readiness remains a separate production gate. Production V3 receive/storage and upload stay disabled until that gate is resolved.

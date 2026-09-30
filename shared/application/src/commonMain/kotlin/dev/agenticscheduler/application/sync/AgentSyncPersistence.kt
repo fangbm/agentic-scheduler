@@ -1,7 +1,10 @@
 package dev.agenticscheduler.application.sync
 
 import dev.agenticscheduler.sync.AgentReplicaId
+import dev.agenticscheduler.sync.AgentHlcSnapshot
+import dev.agenticscheduler.sync.AgentSyncEvent
 import dev.agenticscheduler.sync.AgentSyncOperation
+import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.SyncPayloadV3
 import dev.agenticscheduler.sync.SyncSpaceId
 
@@ -23,10 +26,10 @@ data class AgentSyncPendingDependency(
     val key: String,
 )
 
-sealed interface AgentSyncFrontierState {
-    data class Available(val components: Map<AgentReplicaId, Long>) : AgentSyncFrontierState
-    data object BlockedByDecision : AgentSyncFrontierState
-}
+data class AgentSyncFrontierState(val components: Map<AgentReplicaId, Long>)
+
+/** Persisted counter is the next local Agent dot to allocate. */
+data class AgentSyncLocalClock(val replicaId: AgentReplicaId, val nextCounter: Long)
 
 data class AgentSyncBackfillState(
     val cursor: Long,
@@ -37,15 +40,16 @@ data class AgentSyncBackfillState(
 
 /** Local persistence port for D9-02. It never performs network I/O or D7 business writes. */
 interface AgentSyncPersistence {
-    suspend fun enqueueOutbound(syncSpaceId: SyncSpaceId, payload: SyncPayloadV3): AgentSyncPersistResult
+    suspend fun enqueueOutbound(syncSpaceId: SyncSpaceId, operationId: MutationId, hlc: AgentHlcSnapshot, event: AgentSyncEvent): AgentSyncOperation
     suspend fun acceptInbound(syncSpaceId: SyncSpaceId, payload: SyncPayloadV3): AgentSyncPersistResult
     suspend fun operation(syncSpaceId: SyncSpaceId, operationId: String): AgentSyncOperation?
     suspend fun direction(syncSpaceId: SyncSpaceId, operationId: String): Set<AgentSyncDirection>
 
-    suspend fun setLocalReplica(syncSpaceId: SyncSpaceId, replicaId: AgentReplicaId, counter: Long)
-    suspend fun localReplica(syncSpaceId: SyncSpaceId): Pair<AgentReplicaId, Long>?
+    suspend fun provisionLocalReplica(syncSpaceId: SyncSpaceId, replicaId: AgentReplicaId): AgentSyncLocalClock
+    suspend fun localReplica(syncSpaceId: SyncSpaceId): AgentSyncLocalClock?
     suspend fun dvvFrontier(syncSpaceId: SyncSpaceId): AgentSyncFrontierState
     suspend fun markHandled(syncSpaceId: SyncSpaceId, operationId: String)
+    suspend fun eligibleInboundOperations(syncSpaceId: SyncSpaceId): List<AgentSyncOperation>
 
     suspend fun addPendingDependency(syncSpaceId: SyncSpaceId, dependency: AgentSyncPendingDependency)
     suspend fun resolvePendingDependency(syncSpaceId: SyncSpaceId, dependency: AgentSyncPendingDependency)

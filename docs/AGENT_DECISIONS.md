@@ -553,6 +553,32 @@ backfill, partial-turn barriers, held-outbound/inbound progress, causally
 safe deletion and adversarial multi-device E2EE tests. These technical
 fixtures cannot silently amend the frozen choices above.
 
+## Approved D9-02 follow-up amendment — C1 / D2
+
+Maintainer review on PR #20 explicitly resolved C1 and D2 on 2026-09-30;
+the normative details are recorded in
+`docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md` under “Maintainer follow-up
+amendment — C1 and D2”.
+
+**C1 — Agent clock:** counters begin at 0 and the persisted local counter is
+the next value to allocate. Local dot, operation/outbox, and next-counter
+update are atomic. A local counter greater than 0 observes its own preceding
+counter. Missing per-replica frontier means conceptual -1; only consecutive
+durably handled inbound dots and durably authored local dots advance the
+Agent frontier. Context dependencies clear only when covered by that
+contiguous frontier. Agent causal state remains separate from D7.
+
+**D2 — delete conflict resolution:** the frozen semantic event is
+`ThreadDeleteConflictResolved(threadId, participantOperationIds,
+resolution, replacementThreadId)`, with unique lexicographically sorted
+participant operation IDs, causal observation of every participant dot,
+explicit enrolled-device user authorship, persistent original tombstone, and
+no LWW for conflicting resolutions. `COPY_CONTENT_TO_NEW_THREAD` creates
+only fresh Agent content identities after the resolution is accepted; it
+never replays Tool execution or business mutations. D9-02-02 records this
+decision; wire DTO/Codec and merge/projection implementation remain D9-02-03.
+OD-012 remains a production receive/storage gate and is not resolved here.
+
 ---
 
 # AGT-014 — Wear Agent gate

@@ -14,6 +14,10 @@ import dev.agenticscheduler.application.sync.*
 import dev.agenticscheduler.database.repository.AgentSyncIntegrityConflictException
 import dev.agenticscheduler.database.repository.RoomAgentSyncPersistence
 import dev.agenticscheduler.sync.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -89,21 +93,28 @@ class AgentSyncPersistenceTest {
         try {
             val persistence = RoomAgentSyncPersistence(db)
             val space = SyncSpaceId("personal")
-            val original = payload(10, 1, ThreadCreated(AgentThreadSyncId(id(20)), "Title", 1))
-            assertEquals(AgentSyncPersistResult.Inserted, persistence.enqueueOutbound(space, original))
-            assertEquals(AgentSyncPersistResult.Duplicate, persistence.enqueueOutbound(space, original))
-            assertEquals(setOf(AgentSyncDirection.OUTBOUND), persistence.direction(space, id(10)))
-            val dependsOnBusiness = payload(12, 2, ToolResultAppended(AgentToolResultSyncId(id(13)), AgentToolCallSyncId(id(14)), AgentThreadSyncId(id(15)), AgentTurnSyncId(id(16)), AgentToolResultStatusV3.SUCCESS, Json.parseToJsonElement("{\"ok\":true}"), listOf(MutationId(id(17)))))
-            persistence.enqueueOutbound(space, dependsOnBusiness)
+            val localReplica = replica(2)
+            persistence.provisionLocalReplica(space, localReplica)
+            val original = payload(10, ThreadCreated(AgentThreadSyncId(id(20)), "Title", 1), replica(1))
+            assertEquals(AgentSyncPersistResult.Inserted, persistence.acceptInbound(space, original))
+            assertEquals(AgentSyncPersistResult.Duplicate, persistence.acceptInbound(space, original))
+            assertEquals(setOf(AgentSyncDirection.INBOUND), persistence.direction(space, id(10)))
+            val dependsOnBusiness = persistence.enqueueOutbound(
+                space,
+                MutationId(id(12)),
+                AgentHlcSnapshot(12, 0, localReplica),
+                ToolResultAppended(AgentToolResultSyncId(id(13)), AgentToolCallSyncId(id(14)), AgentThreadSyncId(id(15)), AgentTurnSyncId(id(16)), AgentToolResultStatusV3.SUCCESS, Json.parseToJsonElement("{\"ok\":true}"), listOf(MutationId(id(17)))),
+            )
             assertEquals("HELD", db.useReaderConnection { it.scalarText("SELECT state FROM agent_sync_outbox WHERE sync_space_id = ? AND operation_id = ?", space.value, id(12)) })
             persistence.resolvePendingDependency(space, AgentSyncPendingDependency(id(12), AgentSyncDependencyKind.BUSINESS_MUTATION, id(17)))
             assertEquals("READY", db.useReaderConnection { it.scalarText("SELECT state FROM agent_sync_outbox WHERE sync_space_id = ? AND operation_id = ?", space.value, id(12)) })
             assertFailsWith<AgentSyncIntegrityConflictException> {
-                persistence.enqueueOutbound(space, original.copy(operation = original.operation.copy(agentEvent = ThreadCreated(AgentThreadSyncId(id(20)), "Different", 1))))
+                persistence.acceptInbound(space, original.copy(operation = original.operation.copy(agentEvent = ThreadCreated(AgentThreadSyncId(id(20)), "Different", 1))))
             }
             assertFailsWith<AgentSyncIntegrityConflictException> {
-                persistence.enqueueOutbound(space, payload(11, 1, ThreadTitleSet(AgentThreadSyncId(id(20)), "Rename")))
+                persistence.acceptInbound(space, payload(11, ThreadTitleSet(AgentThreadSyncId(id(21)), "Rename"), replica(1)))
             }
+            assertEquals(0L, dependsOnBusiness.agentDvv.dot.counter)
             assertEquals(2L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE sync_space_id = ?", space.value) })
             Unit
         } finally { db.close() }
@@ -115,10 +126,10 @@ class AgentSyncPersistenceTest {
             val db = openDesktopDatabase(path.toAbsolutePath().toString())
             val persistence = RoomAgentSyncPersistence(db)
             val space = SyncSpaceId("personal")
+            persistence.provisionLocalReplica(space, replica(1))
             db.useWriterConnection { it.exec("INSERT INTO sync_space_cursor(sync_space_id, server_cursor) VALUES (?, ?)", space.value, 44L) }
-            val value = payload(30, 2, ThreadTitleSet(AgentThreadSyncId(id(31)), "Waiting"))
+            val value = payload(30, ThreadTitleSet(AgentThreadSyncId(id(31)), "Waiting"), replica(2), 1, listOf(AgentVersionComponent(replica(2), 0)))
             persistence.acceptInbound(space, value)
-            persistence.addPendingDependency(space, AgentSyncPendingDependency(id(30), AgentSyncDependencyKind.AGENT_DOT, "${replica(1).value}:1"))
             persistence.addPendingDependency(space, AgentSyncPendingDependency(id(30), AgentSyncDependencyKind.PARENT_RECORD, id(32)))
             persistence.advanceBackfill(space, AgentSyncBackfillState(17, AgentSyncBackfillRecoveryState.RUNNING, 12, 100))
             db.close()
@@ -127,7 +138,7 @@ class AgentSyncPersistenceTest {
             try {
                 val recovered = RoomAgentSyncPersistence(reopened)
                 assertEquals(2, recovered.pendingDependencies(space, id(30)).size)
-                assertFailsWith<IllegalStateException> { recovered.resolvePendingDependency(space, AgentSyncPendingDependency(id(30), AgentSyncDependencyKind.AGENT_DOT, "${replica(1).value}:1")) }
+                assertFailsWith<IllegalStateException> { recovered.markHandled(space, id(30)) }
                 assertEquals(AgentSyncBackfillState(17, AgentSyncBackfillRecoveryState.RUNNING, 12, 100), recovered.backfillState(space))
                 assertEquals(44L, reopened.useReaderConnection { it.scalarLong("SELECT server_cursor FROM sync_space_cursor WHERE sync_space_id = ?", space.value) })
             } finally { reopened.close() }
@@ -142,56 +153,155 @@ class AgentSyncPersistenceTest {
             val thread = AgentThreadSyncId(id(40))
             val turn = AgentTurnSyncId(id(41))
             val message = AgentMessageSyncId(id(42))
-            persistence.setLocalReplica(space, replica(1), 0)
-            val manifest = payload(43, 1, TurnFinalized(turn, thread, emptyList(), listOf(MessageMember(message)), AgentTurnOutcome.SUCCEEDED))
+            persistence.provisionLocalReplica(space, replica(1))
+            val manifest = payload(43, TurnFinalized(turn, thread, emptyList(), listOf(MessageMember(message)), AgentTurnOutcome.SUCCEEDED))
             persistence.acceptInbound(space, manifest)
             persistence.markHandled(space, id(43))
             assertEquals(AgentSyncTurnState.INCOMPLETE, persistence.turnState(space, turn.value))
             assertFailsWith<IllegalArgumentException> { persistence.markTurnActive(space, turn.value) }
-            persistence.acceptInbound(space, payload(44, 2, MessageAppended(message, thread, turn, AgentMessageRoleV3.USER, "hi", 2)))
+            persistence.acceptInbound(space, payload(44, MessageAppended(message, thread, turn, AgentMessageRoleV3.USER, "hi", 2)))
             persistence.markHandled(space, id(44))
             assertEquals(AgentSyncTurnState.COMPLETE_VERIFIED, persistence.turnState(space, turn.value))
             persistence.markTurnActive(space, turn.value)
             assertTrue(persistence.isTurnActive(space, turn.value))
-            persistence.acceptInbound(space, payload(45, 3, ThreadDeleted(thread)))
+            persistence.acceptInbound(space, payload(45, ThreadDeleted(thread)))
             assertTrue(persistence.isThreadTombstoned(space, thread.value))
             assertFalse(persistence.isTurnActive(space, turn.value))
             assertFailsWith<IllegalStateException> { persistence.markTurnActive(space, turn.value) }
-            persistence.acceptInbound(space, payload(49, 1, MessageAppended(AgentMessageSyncId(id(50)), thread, turn, AgentMessageRoleV3.USER, "concurrent append", 4), replica(3)))
+            persistence.acceptInbound(space, payload(49, MessageAppended(AgentMessageSyncId(id(50)), thread, turn, AgentMessageRoleV3.USER, "concurrent append", 4)))
             assertEquals(1L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE conflict_kind = 'THREAD_DELETE_APPEND_CONFLICT' AND entity_id = ?", thread.value) })
-            persistence.acceptInbound(space, payload(47, 4, ActionFinalized(AgentActionSyncId(id(48)), null, thread, message, emptyList(), emptyList(), emptyList(), FinalAgentActionStatus.SUCCEEDED)))
+            persistence.acceptInbound(space, payload(47, ActionFinalized(AgentActionSyncId(id(48)), null, thread, message, emptyList(), emptyList(), emptyList(), FinalAgentActionStatus.SUCCEEDED)))
             assertEquals(AgentSyncAuditParentState.PARENT_REMOVED_BY_TOMBSTONE, persistence.auditParentState(space, id(48), "MESSAGE", message.value))
         } finally { db.close() }
     }
 
-    @Test fun `agent replica identities and handled dots stay per SyncSpace while frontier remains decision blocked`() = runBlocking {
+    @Test fun `agent replica identities and handled dots stay per SyncSpace`() = runBlocking {
         val db = openInMemoryDesktopDatabase()
         try {
             val persistence = RoomAgentSyncPersistence(db)
             val a = SyncSpaceId("a")
             val b = SyncSpaceId("b")
-            persistence.setLocalReplica(a, replica(1), 4)
-            persistence.setLocalReplica(b, replica(1), 0)
-            val inboundA = payload(60, 1, ThreadTitleSet(AgentThreadSyncId(id(61)), "A"), replica(3))
-            val inboundB = payload(62, 1, ThreadTitleSet(AgentThreadSyncId(id(63)), "B"), replica(4))
+            persistence.provisionLocalReplica(a, replica(1))
+            persistence.provisionLocalReplica(b, replica(1))
+            val inboundA = payload(60, ThreadTitleSet(AgentThreadSyncId(id(61)), "A"), replica(3))
+            val inboundB = payload(62, ThreadTitleSet(AgentThreadSyncId(id(63)), "B"), replica(4))
             persistence.acceptInbound(a, inboundA)
             persistence.markHandled(a, id(60))
             persistence.acceptInbound(b, inboundB)
             persistence.markHandled(b, id(62))
-            assertEquals(AgentSyncFrontierState.BlockedByDecision, persistence.dvvFrontier(a))
-            assertEquals(AgentSyncFrontierState.BlockedByDecision, persistence.dvvFrontier(b))
+            assertEquals(AgentSyncFrontierState(mapOf(replica(3) to 0L)), persistence.dvvFrontier(a))
+            assertEquals(AgentSyncFrontierState(mapOf(replica(4) to 0L)), persistence.dvvFrontier(b))
             assertEquals(1L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_handled_dot WHERE sync_space_id = ?", a.value) })
             assertEquals(1L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_handled_dot WHERE sync_space_id = ?", b.value) })
-            assertEquals(replica(1) to 4L, persistence.localReplica(a))
-            assertEquals(replica(1) to 0L, persistence.localReplica(b))
-            assertFailsWith<IllegalArgumentException> { persistence.setLocalReplica(a, replica(3), 5) }
-            assertFailsWith<IllegalArgumentException> { persistence.setLocalReplica(a, replica(1), 3) }
+            assertEquals(AgentSyncLocalClock(replica(1), 0), persistence.localReplica(a))
+            assertEquals(AgentSyncLocalClock(replica(1), 0), persistence.localReplica(b))
+            assertFailsWith<IllegalArgumentException> { persistence.provisionLocalReplica(a, replica(3)) }
             Unit
         } finally { db.close() }
     }
 
-    private fun payload(operation: Int, counter: Long, event: AgentSyncEvent, dotReplica: AgentReplicaId = replica(1)) = SyncPayloadV3(operation = AgentSyncOperation(
-        MutationId(id(operation)), AgentDvvSnapshot(emptyList(), AgentDot(dotReplica, counter)), AgentHlcSnapshot(counter, 0, dotReplica), event,
+    @Test fun `C1 starts at zero and concurrent local allocations are atomic across restart`() = runBlocking {
+        val path = Files.createTempFile("agent-local-clock-", ".db")
+        val space = SyncSpaceId("personal")
+        val local = replica(1)
+        val events = (0 until 24).map { index ->
+            MutationId(id(100 + index)) to ThreadCreated(AgentThreadSyncId(id(1000 + index)), "thread-$index", index.toLong())
+        }
+        try {
+            val db = openDesktopDatabase(path.toAbsolutePath().toString())
+            val persistence = RoomAgentSyncPersistence(db)
+            assertEquals(AgentSyncLocalClock(local, 0), persistence.provisionLocalReplica(space, local))
+            assertEquals(AgentSyncFrontierState(emptyMap()), persistence.dvvFrontier(space))
+            val created = coroutineScope {
+                events.mapIndexed { index, (operationId, event) ->
+                    async(Dispatchers.Default) {
+                        persistence.enqueueOutbound(space, operationId, AgentHlcSnapshot(index.toLong(), 0, local), event)
+                    }
+                }.awaitAll()
+            }
+            assertEquals((0L until events.size.toLong()).toList(), created.map { it.agentDvv.dot.counter }.sorted())
+            created.forEach { operation ->
+                val counter = operation.agentDvv.dot.counter
+                val authorContext = operation.agentDvv.context.singleOrNull { it.replicaId == local }?.counter
+                assertEquals(if (counter == 0L) null else counter - 1L, authorContext)
+            }
+            assertEquals(AgentSyncLocalClock(local, events.size.toLong()), persistence.localReplica(space))
+            assertEquals(AgentSyncFrontierState(mapOf(local to events.size.toLong() - 1L)), persistence.dvvFrontier(space))
+            val retry = created.first()
+            assertEquals(retry, persistence.enqueueOutbound(space, retry.operationId, retry.hlc, retry.agentEvent))
+            assertEquals(AgentSyncLocalClock(local, events.size.toLong()), persistence.localReplica(space))
+            db.close()
+
+            val reopened = openDesktopDatabase(path.toAbsolutePath().toString())
+            try {
+                val recovered = RoomAgentSyncPersistence(reopened)
+                assertEquals(AgentSyncLocalClock(local, events.size.toLong()), recovered.localReplica(space))
+                assertEquals(AgentSyncFrontierState(mapOf(local to events.size.toLong() - 1L)), recovered.dvvFrontier(space))
+            } finally { reopened.close() }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test fun `C1 remote gaps remain pending until contiguous dots catch up`() = runBlocking {
+        val db = openInMemoryDesktopDatabase()
+        try {
+            val persistence = RoomAgentSyncPersistence(db)
+            val space = SyncSpaceId("personal")
+            val remote = replica(2)
+            persistence.provisionLocalReplica(space, replica(1))
+            val turn = AgentTurnSyncId(id(173))
+            val dot2 = payload(72, TurnFinalized(turn, AgentThreadSyncId(id(172)), emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED), remote, 2, listOf(AgentVersionComponent(remote, 1)))
+            persistence.acceptInbound(space, dot2)
+            assertEquals(listOf(id(72)), persistence.pendingDependencies(space, id(72)).map { it.operationId })
+            assertEquals(emptyList(), persistence.eligibleInboundOperations(space).map { it.operationId.value })
+            assertFailsWith<IllegalStateException> { persistence.markHandled(space, id(72)) }
+
+            persistence.acceptInbound(space, payload(70, ThreadTitleSet(AgentThreadSyncId(id(170)), "zero"), remote))
+            assertEquals(listOf(id(70)), persistence.eligibleInboundOperations(space).map { it.operationId.value })
+            persistence.markHandled(space, id(70))
+            assertEquals(AgentSyncFrontierState(mapOf(remote to 0L)), persistence.dvvFrontier(space))
+            assertEquals(1, persistence.pendingDependencies(space, id(72)).size)
+
+            persistence.acceptInbound(space, payload(71, ThreadTitleSet(AgentThreadSyncId(id(171)), "one"), remote, 1, listOf(AgentVersionComponent(remote, 0))))
+            assertEquals(listOf(id(71)), persistence.eligibleInboundOperations(space).map { it.operationId.value })
+            persistence.markHandled(space, id(71))
+            assertEquals(AgentSyncFrontierState(mapOf(remote to 1L)), persistence.dvvFrontier(space))
+            assertTrue(persistence.pendingDependencies(space, id(72)).isEmpty())
+            assertEquals(listOf(id(72)), persistence.eligibleInboundOperations(space).map { it.operationId.value })
+            persistence.markHandled(space, id(72))
+            assertEquals(AgentSyncFrontierState(mapOf(remote to 2L)), persistence.dvvFrontier(space))
+            assertEquals(AgentSyncTurnState.COMPLETE_VERIFIED, persistence.turnState(space, turn.value))
+        } finally { db.close() }
+    }
+
+    @Test fun `C1 rejects bad author predecessor and counter overflow without reuse`() = runBlocking {
+        val db = openInMemoryDesktopDatabase()
+        try {
+            val persistence = RoomAgentSyncPersistence(db)
+            val space = SyncSpaceId("personal")
+            val local = replica(1)
+            persistence.provisionLocalReplica(space, local)
+            val malformed = payload(80, ThreadTitleSet(AgentThreadSyncId(id(180)), "bad"), replica(2), 2, listOf(AgentVersionComponent(replica(2), 0)))
+            assertFailsWith<IllegalArgumentException> { persistence.acceptInbound(space, malformed) }
+
+            db.useWriterConnection {
+                it.exec("UPDATE agent_sync_space_state SET local_counter = ? WHERE sync_space_id = ?", Long.MAX_VALUE, space.value)
+                it.exec("INSERT INTO agent_sync_dvv_frontier(sync_space_id, agent_replica_id, counter) VALUES (?, ?, ?)", space.value, local.value, Long.MAX_VALUE - 1)
+            }
+            assertFailsWith<IllegalStateException> {
+                persistence.enqueueOutbound(space, MutationId(id(81)), AgentHlcSnapshot(81, 0, local), ThreadCreated(AgentThreadSyncId(id(181)), "overflow", 81))
+            }
+            assertEquals(0L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_outbox WHERE sync_space_id = ?", space.value) })
+        } finally { db.close() }
+    }
+
+    private fun payload(
+        operation: Int,
+        event: AgentSyncEvent,
+        dotReplica: AgentReplicaId = replica(100 + operation),
+        counter: Long = 0,
+        context: List<AgentVersionComponent> = emptyList(),
+    ) = SyncPayloadV3(operation = AgentSyncOperation(
+        MutationId(id(operation)), AgentDvvSnapshot(context, AgentDot(dotReplica, counter)), AgentHlcSnapshot(counter, 0, dotReplica), event,
     ))
 
     private fun id(number: Int) = "00000000-0000-7000-8000-${number.toString().padStart(12, '0')}"

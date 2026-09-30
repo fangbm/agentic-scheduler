@@ -39,7 +39,7 @@ Indexes cover immutable record uniqueness, inbox/outbox scheduling, dependency l
 
 ## Blocked / follow-up decisions
 
-- `BLOCKED_BY_DECISION`: exact wire encoding and owner resolution semantics for deletion-conflict resolution remain out of scope for D9-02-03.
-- `BLOCKED_BY_DECISION`: the frozen V3 DTO permits Agent counters `>= 0`, but the freeze packet does not set the first counter or contiguous-frontier advancement rule. The immutable handled-dot ledger is persisted; frontier reads and Agent-dot dependency resolution fail closed until that rule is frozen. Non-empty Agent DVV contexts therefore remain pending.
+- C1 is resolved by the maintainer follow-up amendment in `D9_02_PROTOCOL_FREEZE_PACKET.md`: counter origin 0, next-counter semantics, atomic local dot/outbox allocation, implicit -1 frontier, contiguous advancement, and covered dependency release are implemented in this slice. Local authored contexts use only the persisted contiguous frontier and include their own preceding dot; overflow is rejected. Inbound gaps remain ineligible until every context component is covered, with staged turns reevaluated after release.
+- D2 resolution semantics are frozen in the same amendment and summarized in `AGENT_DECISIONS.md`. `ThreadDeleteConflictResolved` wire DTO/Codec, conflict-component merge and projection remain D9-02-03 implementation; no resolution event is implemented here.
 - OD-012 local database encryption at rest remains unresolved. This work does not claim that locally persisted V3 payloads receive encryption-at-rest protection; production receive/storage remains disabled.
 - This slice records a minimal turn-completion/activation gate. Cross-device merge, complete projection ordering, sibling conflict resolution, and Provider continuation policy are not implemented here.
