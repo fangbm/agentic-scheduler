@@ -267,6 +267,7 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
     override suspend fun markTurnActive(syncSpaceId: SyncSpaceId, turnId: String) = database.withWriteTransaction {
         val stage = query("SELECT thread_id, manifest_operation_id, state FROM agent_sync_turn_stage WHERE sync_space_id = ? AND turn_id = ?", listOf(syncSpaceId.value, turnId)) { Triple(it.getText(0), it.getText(1), AgentSyncTurnState.valueOf(it.getText(2))) }.singleOrNull()
             ?: error("Unknown staged Agent turn.")
+        check(stage.third != AgentSyncTurnState.TOMBSTONED) { "A tombstoned thread cannot be restored by an older event." }
         require(stage.third == AgentSyncTurnState.COMPLETE_VERIFIED) { "An incomplete turn cannot be made active." }
         check(query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(syncSpaceId.value, stage.first)) { it.getLong(0) }.isEmpty()) { "A tombstoned thread cannot be restored by an older event." }
         val unresolved = query("SELECT 1 FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id IN (SELECT operation_id FROM agent_sync_operation_identity WHERE sync_space_id = ? AND immutable_record_id IN (SELECT member_id FROM agent_sync_turn_member WHERE sync_space_id = ? AND turn_id = ?)) LIMIT 1", listOf(syncSpaceId.value, syncSpaceId.value, syncSpaceId.value, turnId)) { it.getLong(0) }
