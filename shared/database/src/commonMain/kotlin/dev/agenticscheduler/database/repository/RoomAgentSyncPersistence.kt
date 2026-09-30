@@ -190,6 +190,13 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         val binding = query("SELECT operation_id FROM agent_sync_handled_dot WHERE sync_space_id = ? AND agent_replica_id = ? AND counter = ?", listOf(syncSpaceId.value, row.first, row.second)) { it.getText(0) }.single()
         if (binding != operationId) throw AgentSyncIntegrityConflictException("An Agent handled dot is already bound to another operation ID.")
         execute("UPDATE agent_sync_inbox SET state = 'HANDLED' WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId))
+        val handledOperation = query(
+            "SELECT payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
+            listOf(syncSpaceId.value, operationId),
+        ) { decodePayload(it.getText(0), operationId).operation }.single()
+        if (handledOperation.agentEvent is ThreadDeleted) {
+            materializeThreadDelete(syncSpaceId.value, handledOperation)
+        }
         val identity = query("SELECT immutable_record_kind, immutable_record_id FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId)) { (if (it.isNull(0)) null else it.getText(0)) to (if (it.isNull(1)) null else it.getText(1)) }.single()
         if (identity.first != null && identity.second != null) {
             execute("UPDATE agent_sync_turn_member SET present = 1 WHERE sync_space_id = ? AND member_kind = ? AND member_id = ?", listOf(syncSpaceId.value, identity.first, identity.second))
@@ -295,11 +302,40 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
     }
 
     override suspend fun advanceBackfill(syncSpaceId: SyncSpaceId, value: AgentSyncBackfillState) = database.withWriteTransaction {
-        val earliestQuarantinedCursor = value.earliestQuarantinedCursor
-        require(value.cursor >= 0 && (earliestQuarantinedCursor == null || earliestQuarantinedCursor >= 0))
-        val old = query("SELECT cursor FROM agent_sync_backfill_state WHERE sync_space_id = ?", listOf(syncSpaceId.value)) { it.getLong(0) }.firstOrNull()
-        require(old == null || value.cursor >= old) { "Agent V3 backfill cursor cannot move backwards." }
-        execute("INSERT INTO agent_sync_backfill_state(sync_space_id, cursor, recovery_state, earliest_quarantined_cursor, updated_at_epoch_millis) VALUES (?, ?, ?, ?, ?) ON CONFLICT(sync_space_id) DO UPDATE SET cursor = excluded.cursor, recovery_state = excluded.recovery_state, earliest_quarantined_cursor = excluded.earliest_quarantined_cursor, updated_at_epoch_millis = excluded.updated_at_epoch_millis", listOf(syncSpaceId.value, value.cursor, value.recoveryState.name, value.earliestQuarantinedCursor, value.updatedAtEpochMillis))
+        val incomingEarliest = value.earliestQuarantinedCursor
+        require(value.cursor >= 0 && (incomingEarliest == null || incomingEarliest >= 0))
+        val old = query(
+            "SELECT cursor, recovery_state, earliest_quarantined_cursor FROM agent_sync_backfill_state WHERE sync_space_id = ?",
+            listOf(syncSpaceId.value),
+        ) { Triple(it.getLong(0), AgentSyncBackfillRecoveryState.valueOf(it.getText(1)), if (it.isNull(2)) null else it.getLong(2)) }.singleOrNull()
+        val previousCursor = old?.first
+        val previousGenerationOpen = old == null || old.second != AgentSyncBackfillRecoveryState.COMPLETE
+        val previousEarliest = old?.third
+        val earlierQuarantineDiscovered = incomingEarliest != null &&
+            (previousEarliest == null || incomingEarliest < previousEarliest)
+
+        // A recovery generation retains the minimum quarantine cursor. Discovering a
+        // lower cursor explicitly restarts from its predecessor, even though this is
+        // the one permitted transition that may move the progress cursor backwards.
+        val earliestQuarantinedCursor = when {
+            old == null || !previousGenerationOpen -> incomingEarliest
+            previousEarliest == null -> incomingEarliest
+            incomingEarliest == null -> previousEarliest
+            else -> minOf(previousEarliest, incomingEarliest)
+        }
+        val restartCursor = earliestQuarantinedCursor?.let { maxOf(0L, it - 1L) }
+        val nextCursor = if (earlierQuarantineDiscovered && restartCursor != null) {
+            minOf(value.cursor, previousCursor ?: value.cursor, restartCursor)
+        } else {
+            require(previousCursor == null || value.cursor >= previousCursor) { "Agent V3 backfill cursor cannot move backwards without discovering an earlier quarantine." }
+            value.cursor
+        }
+        val nextRecoveryState = if (earlierQuarantineDiscovered) AgentSyncBackfillRecoveryState.RUNNING else value.recoveryState
+        execute(
+            "INSERT INTO agent_sync_backfill_state(sync_space_id, cursor, recovery_state, earliest_quarantined_cursor, updated_at_epoch_millis) VALUES (?, ?, ?, ?, ?) " +
+                "ON CONFLICT(sync_space_id) DO UPDATE SET cursor = excluded.cursor, recovery_state = excluded.recovery_state, earliest_quarantined_cursor = excluded.earliest_quarantined_cursor, updated_at_epoch_millis = excluded.updated_at_epoch_millis",
+            listOf(syncSpaceId.value, nextCursor, nextRecoveryState.name, earliestQuarantinedCursor, value.updatedAtEpochMillis),
+        )
     }
 
     private suspend fun PooledConnection.frontierInTransaction(space: String): Map<AgentReplicaId, Long> =
@@ -387,11 +423,10 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
             }
         }
         when (event) {
-            is ThreadDeleted -> {
-                execute("INSERT INTO agent_sync_thread_tombstone(sync_space_id, thread_id, operation_id, agent_replica_id, counter, dvv_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(sync_space_id, operation_id) DO NOTHING", listOf(space.value, event.threadId.value, operation.operationId.value, operation.agentDvv.dot.replicaId.value, operation.agentDvv.dot.counter, encodeDvv(operation.agentDvv)))
-                execute("DELETE FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND thread_id = ?", listOf(space.value, event.threadId.value))
-                execute("UPDATE agent_sync_audit_parent_link SET state = 'PARENT_REMOVED_BY_TOMBSTONE' WHERE sync_space_id = ? AND thread_id = ? AND state != 'PARENT_REMOVED_BY_TOMBSTONE'", listOf(space.value, event.threadId.value))
-            }
+            // Inbound deletes remain immutable staged facts until markHandled proves
+            // their causal dependencies. Authoritative tombstone materialization is
+            // performed in that same handling transaction.
+            is ThreadDeleted -> Unit
             is TurnFinalized -> {
                 execute("INSERT INTO agent_sync_turn_stage(sync_space_id, turn_id, thread_id, manifest_operation_id, outcome, state) VALUES (?, ?, ?, ?, ?, 'INCOMPLETE') ON CONFLICT(sync_space_id, turn_id) DO NOTHING", listOf(space.value, event.turnId.value, event.threadId.value, operation.operationId.value, event.outcome.name))
                 event.orderedMembers.forEachIndexed { index, member ->
@@ -437,14 +472,41 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
     }
 
     private suspend fun PooledConnection.recomputeTurnState(space: String, turnId: String) {
-        val incomplete = query("SELECT count(*) FROM agent_sync_turn_member WHERE sync_space_id = ? AND turn_id = ? AND present = 0", listOf(space, turnId)) { it.getLong(0) }.single() > 0
-        val op = query("SELECT manifest_operation_id FROM agent_sync_turn_stage WHERE sync_space_id = ? AND turn_id = ?", listOf(space, turnId)) { it.getText(0) }.singleOrNull() ?: return
+        val stage = query("SELECT manifest_operation_id, thread_id, state FROM agent_sync_turn_stage WHERE sync_space_id = ? AND turn_id = ?", listOf(space, turnId)) { Triple(it.getText(0), it.getText(1), it.getText(2)) }.singleOrNull() ?: return
+        val op = stage.first
+        if (stage.third == AgentSyncTurnState.TOMBSTONED.name) return
+        if (query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(space, stage.second)) { it.getLong(0) }.isNotEmpty()) {
+            execute("DELETE FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND turn_id = ?", listOf(space, turnId))
+            execute("UPDATE agent_sync_turn_stage SET state = 'TOMBSTONED' WHERE sync_space_id = ? AND turn_id = ?", listOf(space, turnId))
+            return
+        }
+        val manifestHandled = query(
+            "SELECT 1 FROM agent_sync_inbox b JOIN agent_sync_handled_dot h USING(sync_space_id, operation_id) " +
+                "WHERE b.sync_space_id = ? AND b.operation_id = ? AND b.state = 'HANDLED' LIMIT 1",
+            listOf(space, op),
+        ) { it.getLong(0) }.isNotEmpty()
+        val incomplete = !manifestHandled || query("SELECT count(*) FROM agent_sync_turn_member WHERE sync_space_id = ? AND turn_id = ? AND present = 0", listOf(space, turnId)) { it.getLong(0) }.single() > 0
         val dependencies = query("SELECT count(*) FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id IN (SELECT operation_id FROM agent_sync_operation_identity WHERE sync_space_id = ? AND (operation_id = ? OR immutable_record_id IN (SELECT member_id FROM agent_sync_turn_member WHERE sync_space_id = ? AND turn_id = ?)))", listOf(space, space, op, space, turnId)) { it.getLong(0) }.single() > 0
         val parents = query("SELECT count(*) FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id = ? AND dependency_kind = 'PARENT_TURN'", listOf(space, op)) { it.getLong(0) }.single() > 0
         val linkError = if (incomplete || dependencies || parents) null else turnLinkError(space, turnId)
         if (linkError != null) recordTurnLinkConflict(space, turnId, op, linkError)
         val next = if (incomplete || dependencies || parents || linkError != null) "INCOMPLETE" else "COMPLETE_VERIFIED"
         execute("UPDATE agent_sync_turn_stage SET state = ? WHERE sync_space_id = ? AND turn_id = ?", listOf(next, space, turnId))
+    }
+
+    /** Commit the authoritative delete only after its inbound operation is causally handled. */
+    private suspend fun PooledConnection.materializeThreadDelete(space: String, operation: AgentSyncOperation) {
+        val event = operation.agentEvent as? ThreadDeleted ?: error("Expected a handled ThreadDeleted operation.")
+        execute(
+            "INSERT INTO agent_sync_thread_tombstone(sync_space_id, thread_id, operation_id, agent_replica_id, counter, dvv_json) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(sync_space_id, operation_id) DO NOTHING",
+            listOf(space, event.threadId.value, operation.operationId.value, operation.agentDvv.dot.replicaId.value, operation.agentDvv.dot.counter, encodeDvv(operation.agentDvv)),
+        )
+        execute("DELETE FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND thread_id = ?", listOf(space, event.threadId.value))
+        execute("UPDATE agent_sync_turn_stage SET state = 'TOMBSTONED' WHERE sync_space_id = ? AND thread_id = ?", listOf(space, event.threadId.value))
+        execute(
+            "UPDATE agent_sync_audit_parent_link SET state = 'PARENT_REMOVED_BY_TOMBSTONE' WHERE sync_space_id = ? AND thread_id = ? AND state != 'PARENT_REMOVED_BY_TOMBSTONE'",
+            listOf(space, event.threadId.value),
+        )
     }
 
     private suspend fun PooledConnection.turnLinkError(space: String, turnId: String): String? {

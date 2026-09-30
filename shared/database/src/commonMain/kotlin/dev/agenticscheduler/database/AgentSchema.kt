@@ -92,8 +92,46 @@ internal object AgentSyncSchema {
         "SELECT sync_space_id, cursor, recovery_state, earliest_quarantined_cursor, updated_at_epoch_millis FROM agent_sync_backfill_state LIMIT 0",
     )
 
+    /**
+     * Unlike Room entities, this catalog has no generated structural validator. Keep a
+     * normalized copy of every explicit table/index DDL as the extension's schema contract.
+     * SQLite auto-indexes are intentionally excluded; their owning table DDL is compared.
+     */
+    private val CATALOG_OBJECT = Regex(
+        "^CREATE\\s+(?:UNIQUE\\s+)?(?:TABLE|INDEX)\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?([A-Za-z0-9_]+).*$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    private val expectedCatalogSql = createStatements.associate { sql ->
+        val match = requireNotNull(CATALOG_OBJECT.matchEntire(sql)) { "Unrecognized Agent sync DDL: $sql" }
+        match.groupValues[1] to normalizeCatalogSql(sql)
+    }
+
     fun create(connection: SQLiteConnection) { createStatements.forEach { connection.prepare(it).use { statement -> statement.step() } } }
-    fun validate(connection: SQLiteConnection) { validationQueries.forEach { connection.prepare(it).use { statement -> statement.step() } } }
+    fun validate(connection: SQLiteConnection) {
+        validationQueries.forEach { connection.prepare(it).use { statement -> statement.step() } }
+        val actualCatalogSql = connection.prepare(
+            "SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name LIKE 'agent_sync_%' AND sql IS NOT NULL ORDER BY name",
+        ).use { statement ->
+            buildMap {
+                while (statement.step()) put(statement.getText(0), statement.getText(1))
+            }
+        }
+        validateCatalog(actualCatalogSql)
+    }
+
+    internal fun validateCatalog(actualCatalogSql: Map<String, String>) {
+        val normalized = actualCatalogSql.mapValues { (_, sql) -> normalizeCatalogSql(sql) }
+        check(normalized == expectedCatalogSql) {
+            "Agent sync schema catalog is incompatible. Expected ${expectedCatalogSql.keys.sorted()}, found ${normalized.keys.sorted()}."
+        }
+    }
+
+    private fun normalizeCatalogSql(sql: String): String = sql
+        .replace(Regex("\\bIF\\s+NOT\\s+EXISTS\\b", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .lowercase()
 }
 
 /** Explicit v11→v12 migration; prior Room tables and data are untouched. */

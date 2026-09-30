@@ -120,7 +120,7 @@ class AgentSyncPersistenceTest {
         } finally { db.close() }
     }
 
-    @Test fun `pending causal and parent dependencies survive reopening and backfill is separate from D8 cursor`() = runBlocking {
+    @Test fun `pending dependencies and quarantine restart survive reopening and backfill is separate from D8 cursor`() = runBlocking {
         val path = Files.createTempFile("agent-sync-state-", ".db")
         try {
             val db = openDesktopDatabase(path.toAbsolutePath().toString())
@@ -132,6 +132,10 @@ class AgentSyncPersistenceTest {
             persistence.acceptInbound(space, value)
             persistence.addPendingDependency(space, AgentSyncPendingDependency(id(30), AgentSyncDependencyKind.PARENT_RECORD, id(32)))
             persistence.advanceBackfill(space, AgentSyncBackfillState(17, AgentSyncBackfillRecoveryState.RUNNING, 12, 100))
+            assertEquals(AgentSyncBackfillState(11, AgentSyncBackfillRecoveryState.RUNNING, 12, 100), persistence.backfillState(space))
+            persistence.advanceBackfill(space, AgentSyncBackfillState(17, AgentSyncBackfillRecoveryState.RUNNING, 12, 101))
+            persistence.advanceBackfill(space, AgentSyncBackfillState(30, AgentSyncBackfillRecoveryState.RUNNING, 7, 102))
+            assertEquals(AgentSyncBackfillState(6, AgentSyncBackfillRecoveryState.RUNNING, 7, 102), persistence.backfillState(space))
             db.close()
 
             val reopened = openDesktopDatabase(path.toAbsolutePath().toString())
@@ -139,7 +143,11 @@ class AgentSyncPersistenceTest {
                 val recovered = RoomAgentSyncPersistence(reopened)
                 assertEquals(2, recovered.pendingDependencies(space, id(30)).size)
                 assertFailsWith<IllegalStateException> { recovered.markHandled(space, id(30)) }
-                assertEquals(AgentSyncBackfillState(17, AgentSyncBackfillRecoveryState.RUNNING, 12, 100), recovered.backfillState(space))
+                assertEquals(AgentSyncBackfillState(6, AgentSyncBackfillRecoveryState.RUNNING, 7, 102), recovered.backfillState(space))
+                recovered.advanceBackfill(space, AgentSyncBackfillState(30, AgentSyncBackfillRecoveryState.RUNNING, null, 103))
+                assertEquals(AgentSyncBackfillState(30, AgentSyncBackfillRecoveryState.RUNNING, 7, 103), recovered.backfillState(space))
+                recovered.advanceBackfill(space, AgentSyncBackfillState(31, AgentSyncBackfillRecoveryState.RUNNING, 20, 104))
+                assertEquals(AgentSyncBackfillState(31, AgentSyncBackfillRecoveryState.RUNNING, 7, 104), recovered.backfillState(space))
                 assertEquals(44L, reopened.useReaderConnection { it.scalarLong("SELECT server_cursor FROM sync_space_cursor WHERE sync_space_id = ?", space.value) })
             } finally { reopened.close() }
         } finally { Files.deleteIfExists(path) }
@@ -156,6 +164,7 @@ class AgentSyncPersistenceTest {
             persistence.provisionLocalReplica(space, replica(1))
             val manifest = payload(43, TurnFinalized(turn, thread, emptyList(), listOf(MessageMember(message)), AgentTurnOutcome.SUCCEEDED))
             persistence.acceptInbound(space, manifest)
+            assertEquals(AgentSyncTurnState.INCOMPLETE, persistence.turnState(space, turn.value))
             persistence.markHandled(space, id(43))
             assertEquals(AgentSyncTurnState.INCOMPLETE, persistence.turnState(space, turn.value))
             assertFailsWith<IllegalArgumentException> { persistence.markTurnActive(space, turn.value) }
@@ -172,6 +181,83 @@ class AgentSyncPersistenceTest {
             assertEquals(1L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE conflict_kind = 'THREAD_DELETE_APPEND_CONFLICT' AND entity_id = ?", thread.value) })
             persistence.acceptInbound(space, payload(47, ActionFinalized(AgentActionSyncId(id(48)), null, thread, message, emptyList(), emptyList(), emptyList(), FinalAgentActionStatus.SUCCEEDED)))
             assertEquals(AgentSyncAuditParentState.PARENT_REMOVED_BY_TOMBSTONE, persistence.auditParentState(space, id(48), "MESSAGE", message.value))
+        } finally { db.close() }
+    }
+
+    @Test fun `causally pending thread delete leaves active projection until handled`() = runBlocking {
+        val db = openInMemoryDesktopDatabase()
+        try {
+            val persistence = RoomAgentSyncPersistence(db)
+            val space = SyncSpaceId("personal")
+            val thread = AgentThreadSyncId(id(310))
+            val turn = AgentTurnSyncId(id(311))
+            val owner = replica(2)
+            val deletingReplica = replica(3)
+            persistence.provisionLocalReplica(space, replica(1))
+
+            persistence.acceptInbound(space, payload(312, TurnFinalized(turn, thread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED), owner))
+            assertEquals(AgentSyncTurnState.INCOMPLETE, persistence.turnState(space, turn.value))
+            persistence.markHandled(space, id(312))
+            assertEquals(AgentSyncTurnState.COMPLETE_VERIFIED, persistence.turnState(space, turn.value))
+            persistence.markTurnActive(space, turn.value)
+            assertTrue(persistence.isTurnActive(space, turn.value))
+
+            val delete = payload(313, ThreadDeleted(thread), deletingReplica, context = listOf(AgentVersionComponent(owner, 1)))
+            persistence.acceptInbound(space, delete)
+            assertFalse(persistence.isThreadTombstoned(space, thread.value))
+            assertTrue(persistence.isTurnActive(space, turn.value))
+            assertTrue(persistence.eligibleInboundOperations(space).isEmpty())
+            assertFailsWith<IllegalStateException> { persistence.markHandled(space, id(313)) }
+
+            persistence.acceptInbound(space, payload(314, ThreadTitleSet(thread, "causal prerequisite"), owner, 1, listOf(AgentVersionComponent(owner, 0))))
+            persistence.markHandled(space, id(314))
+            assertEquals(listOf(id(313)), persistence.eligibleInboundOperations(space).map { it.operationId.value })
+            persistence.markHandled(space, id(313))
+            assertTrue(persistence.isThreadTombstoned(space, thread.value))
+            assertFalse(persistence.isTurnActive(space, turn.value))
+            assertEquals(AgentSyncTurnState.TOMBSTONED, persistence.turnState(space, turn.value))
+        } finally { db.close() }
+    }
+
+    @Test fun `handled manifest is required and tombstoned turns stay sticky after late members`() = runBlocking {
+        val db = openInMemoryDesktopDatabase()
+        try {
+            val persistence = RoomAgentSyncPersistence(db)
+            val space = SyncSpaceId("personal")
+            val thread = AgentThreadSyncId(id(320))
+            val completeTurn = AgentTurnSyncId(id(321))
+            val stagedTurn = AgentTurnSyncId(id(322))
+            val lateMessage = AgentMessageSyncId(id(323))
+            persistence.provisionLocalReplica(space, replica(1))
+
+            persistence.acceptInbound(space, payload(324, TurnFinalized(completeTurn, thread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED)))
+            assertEquals(AgentSyncTurnState.INCOMPLETE, persistence.turnState(space, completeTurn.value))
+            persistence.markHandled(space, id(324))
+            assertEquals(AgentSyncTurnState.COMPLETE_VERIFIED, persistence.turnState(space, completeTurn.value))
+
+            persistence.acceptInbound(space, payload(325, TurnFinalized(stagedTurn, thread, emptyList(), listOf(MessageMember(lateMessage)), AgentTurnOutcome.SUCCEEDED)))
+            persistence.markHandled(space, id(325))
+            assertEquals(AgentSyncTurnState.INCOMPLETE, persistence.turnState(space, stagedTurn.value))
+            persistence.acceptInbound(space, payload(326, ThreadDeleted(thread)))
+            persistence.markHandled(space, id(326))
+            assertEquals(AgentSyncTurnState.TOMBSTONED, persistence.turnState(space, completeTurn.value))
+            assertEquals(AgentSyncTurnState.TOMBSTONED, persistence.turnState(space, stagedTurn.value))
+
+            persistence.acceptInbound(space, payload(327, MessageAppended(lateMessage, thread, stagedTurn, AgentMessageRoleV3.USER, "late", 1)))
+            persistence.markHandled(space, id(327))
+            assertEquals(AgentSyncTurnState.TOMBSTONED, persistence.turnState(space, stagedTurn.value))
+            assertFalse(persistence.isTurnActive(space, stagedTurn.value))
+        } finally { db.close() }
+    }
+
+    @Test fun `Agent sync structural validation rejects a dropped unique index`() = runBlocking {
+        val db = openInMemoryDesktopDatabase()
+        try {
+            val before = db.useReaderConnection { it.agentSyncCatalogSql() }
+            AgentSyncSchema.validateCatalog(before)
+            db.useWriterConnection { it.exec("DROP INDEX agent_sync_record_identity_idx") }
+            val corrupted = db.useReaderConnection { it.agentSyncCatalogSql() }
+            assertFailsWith<IllegalStateException> { AgentSyncSchema.validateCatalog(corrupted) }
         } finally { db.close() }
     }
 
@@ -333,6 +419,12 @@ private fun SQLiteConnection.schemaSignatures(): List<String> = prepare("SELECT 
 
 private suspend fun PooledConnection.schemaSignatures(): List<String> = usePrepared("SELECT type || ':' || name || ':' || sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name") { statement ->
     buildList { while (statement.step()) add(statement.getText(0)) }
+}
+
+private suspend fun PooledConnection.agentSyncCatalogSql(): Map<String, String> = usePrepared(
+    "SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name LIKE 'agent_sync_%' AND sql IS NOT NULL ORDER BY name",
+) { statement ->
+    buildMap { while (statement.step()) put(statement.getText(0), statement.getText(1)) }
 }
 
 private suspend fun PooledConnection.exec(sql: String, vararg args: Any?) = usePrepared(sql) { statement ->
