@@ -174,6 +174,9 @@ class AgentSyncPersistenceTest {
             persistence.markTurnActive(space, turn.value)
             assertTrue(persistence.isTurnActive(space, turn.value))
             persistence.acceptInbound(space, payload(45, ThreadDeleted(thread)))
+            assertFalse(persistence.isThreadTombstoned(space, thread.value))
+            assertTrue(persistence.isTurnActive(space, turn.value))
+            persistence.markHandled(space, id(45))
             assertTrue(persistence.isThreadTombstoned(space, thread.value))
             assertFalse(persistence.isTurnActive(space, turn.value))
             assertFailsWith<IllegalStateException> { persistence.markTurnActive(space, turn.value) }
