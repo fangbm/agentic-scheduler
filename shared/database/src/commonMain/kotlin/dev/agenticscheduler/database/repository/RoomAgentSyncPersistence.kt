@@ -545,6 +545,19 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         ) { AgentTurnSyncId(it.getText(0)) }.toSet()
         val tombstoned = query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(space, threadId.value)) { it.getLong(0) }.isNotEmpty()
         val conflicts = AgentSyncMergeProjection.project(threadId, operations, activeTurns, tombstoned).conflicts
+        // This namespace materializes the current projector output. Immutable operation facts
+        // and integrity/legacy candidate rows retain history; only obsolete derived keys retire.
+        val currentKeys = conflicts.map { semanticConflictStorageKey(space, it) }.toSet()
+        val storedKeys = query(
+            "SELECT conflict_id FROM agent_sync_conflict WHERE sync_space_id = ? AND entity_kind = 'THREAD' AND entity_id = ? AND conflict_kind GLOB 'D9_02_03_*'",
+            listOf(space, threadId.value),
+        ) { it.getText(0) }
+        for (staleKey in storedKeys.filterNot(currentKeys::contains)) {
+            execute(
+                "DELETE FROM agent_sync_conflict WHERE conflict_id = ? AND sync_space_id = ? AND entity_kind = 'THREAD' AND entity_id = ? AND conflict_kind GLOB 'D9_02_03_*'",
+                listOf(staleKey, space, threadId.value),
+            )
+        }
         for (conflict in conflicts) {
             val participantIds = conflict.participantOperationIds
             val firstId = participantIds.firstOrNull()?.value ?: continue
@@ -558,7 +571,7 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
                 putJsonArray("participantOperationIds") { participantIds.forEach { add(it.value) } }
                 putJsonArray("resolutionOperationIds") { conflict.resolutionOperationIds.forEach { add(it.value) } }
             }
-            val storageKey = "${conflict.localConflictKey}|${conflict.kind.name}"
+            val storageKey = semanticConflictStorageKey(space, conflict)
             execute(
                 "INSERT INTO agent_sync_conflict(conflict_id, sync_space_id, entity_kind, entity_id, conflict_kind, local_operation_id, remote_operation_id, candidate_payload_json, metadata_json) " +
                     "VALUES (?, ?, 'THREAD', ?, ?, ?, ?, ?, ?) ON CONFLICT(conflict_id) DO UPDATE SET conflict_kind = excluded.conflict_kind, " +
@@ -567,6 +580,10 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
             )
         }
     }
+
+    /** Global SQL key: length-prefix the space (which may contain separators); keep the semantic tuple unchanged. */
+    private fun semanticConflictStorageKey(space: String, conflict: AgentSemanticConflict): String =
+        "${space.length}:$space|${conflict.localConflictKey}|${conflict.kind.name}"
 
     override suspend fun setAuditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String, state: AgentSyncAuditParentState, threadId: String?) = database.withWriteTransaction {
         execute("INSERT INTO agent_sync_audit_parent_link(sync_space_id, action_id, thread_id, parent_kind, parent_id, state) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(sync_space_id, action_id, parent_kind, parent_id) DO UPDATE SET thread_id = excluded.thread_id, state = excluded.state", listOf(syncSpaceId.value, actionId, threadId, parentKind, parentId, state.name))

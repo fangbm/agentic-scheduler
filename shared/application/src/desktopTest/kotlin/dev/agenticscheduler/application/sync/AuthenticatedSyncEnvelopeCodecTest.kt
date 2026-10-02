@@ -18,7 +18,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNotEquals
+import kotlin.test.assertContentEquals
 import kotlinx.coroutines.runBlocking
+import java.util.Base64
 
 class AuthenticatedSyncEnvelopeCodecTest {
     private val binding = SyncEnvelopeBinding(
@@ -53,7 +55,8 @@ class AuthenticatedSyncEnvelopeCodecTest {
     fun `rejects tampered ciphertext and every aad identity component`() {
         runBlocking {
         val envelope = assertIs<EncryptSyncPayloadResult.Encrypted>(codec.encrypt(binding, payload())).envelope
-        val alteredCiphertext = envelope.copy(ciphertextBase64Url = envelope.ciphertextBase64Url.dropLast(1) + "A")
+        val alteredCiphertext = envelope.copy(ciphertextBase64Url = tamperCiphertext(envelope.ciphertextBase64Url))
+        assertNotEquals(envelope.ciphertextBase64Url, alteredCiphertext.ciphertextBase64Url)
         assertEquals(DecryptSyncEnvelopeResult.AuthenticationFailed, codec.decrypt(alteredCiphertext))
 
         val aadCodec = AuthenticatedSyncEnvelopeCodec(PermissiveKeys(aead), StaticCurrentKey(binding.syncSpaceId, binding.keyEpoch, aead))
@@ -119,6 +122,22 @@ class AuthenticatedSyncEnvelopeCodecTest {
         assertEquals(EncryptSyncPayloadResult.NonActiveKeyEpoch(8), rotatedCodec.encrypt(oldBinding, payload()))
         assertEquals(DecryptSyncEnvelopeResult.MissingContentKey, rotatedCodec.decrypt(oldEnvelope.copy(keyEpoch = 9)))
         }
+    }
+
+    @Test
+    fun `tampering changes decoded bytes even when Base64Url already ends in A`() {
+        val original = Base64.getUrlEncoder().withoutPadding().encodeToString(byteArrayOf(0))
+        assertEquals("AA", original)
+        val altered = tamperCiphertext(original)
+        assertNotEquals(original, altered)
+        assertContentEquals(byteArrayOf(1), Base64.getUrlDecoder().decode(altered))
+    }
+
+    private fun tamperCiphertext(ciphertextBase64Url: String): String {
+        val bytes = Base64.getUrlDecoder().decode(ciphertextBase64Url)
+        require(bytes.isNotEmpty())
+        bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
     private fun payload(): SyncPayloadV1 = SyncPayloadV1(
