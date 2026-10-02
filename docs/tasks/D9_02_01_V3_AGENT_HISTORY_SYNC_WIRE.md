@@ -58,11 +58,10 @@ author attribution without changing D7 or any frozen cryptographic policy.
 
 ## Deliberate boundary
 
-This PR is not production V3 transmission. Exact serializer/fixture review is
-still a mandatory gate in the freeze packet. In particular, AGT-013 requires
-the deletion-resolution event encoding to be fixed in canonical fixtures;
-that event is not defined here because its exact cross-device semantics and
-wire fields are not frozen. It remains `BLOCKED_BY_DECISION` for a later
-reviewed amendment. The D9-02 runtime, per-SyncSpace durable Agent clock,
-database migration, worker dispatch, inbound staging and V3 opt-in are also
-outside D9-02-01.
+This milestone did not implement production V3 transmission. At the time of
+the D9-02-01 review, deletion-resolution encoding was `BLOCKED_BY_DECISION`.
+That block was superseded by the maintainer-approved C1/D2 amendment in
+`D9_02_PROTOCOL_FREEZE_PACKET.md` (PR #20 review, 2026-09-30). D9-02-03 owns
+the frozen event DTO, canonical fixtures, conflict projection and explicit
+resolution behavior. The D9-02 runtime, worker dispatch and production V3
+opt-in remain out of scope; OD-012 remains a production release gate.

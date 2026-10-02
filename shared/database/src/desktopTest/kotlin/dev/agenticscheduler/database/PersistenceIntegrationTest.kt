@@ -85,6 +85,15 @@ import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.SyncPayloadV1
 import dev.agenticscheduler.sync.SyncWireCodec
+import dev.agenticscheduler.sync.SyncPayloadV3
+import dev.agenticscheduler.sync.AgentSyncOperation
+import dev.agenticscheduler.sync.AgentDvvSnapshot
+import dev.agenticscheduler.sync.AgentDot
+import dev.agenticscheduler.sync.AgentHlcSnapshot
+import dev.agenticscheduler.sync.AgentReplicaId
+import dev.agenticscheduler.sync.AgentThreadSyncId
+import dev.agenticscheduler.sync.ThreadCreated
+import dev.agenticscheduler.sync.AgentSyncWireCodec
 import dev.agenticscheduler.sync.HlcSnapshot
 import dev.agenticscheduler.sync.EventPut
 import dev.agenticscheduler.sync.EventImage
@@ -1000,6 +1009,42 @@ class PersistenceIntegrationTest {
         assertEquals("Concurrent", RoomEventRepository(database).get(EventId(id(66)))?.title)
         assertEquals(9L, receive.serverCursor(space))
         assertEquals(concurrent, journal.mutation(concurrent.mutationId)?.operation)
+        database.close()
+    }
+
+    @Test fun `real legacy SyncEngine quarantines V3 then applies independent V1 business operation`() = runBlocking {
+        val database = openInMemoryDesktopDatabase()
+        val ids = RfcUuidV7Generator(EpochMillisecondsClock { 1 }, RandomBytes { ByteArray(it) { 1 } })
+        val journal = RoomMutationJournalRepository(database)
+        val receive = RoomSyncReceiveRepository(database)
+        val engine = SyncEngine(
+            RoomApplicationTransactionRunner(database), journal, journal, receive,
+            RoomEventRepository(database), RoomTaskRepository(database), RoomPlanningProfileRepository(database), RoomAcademicRepository(database),
+            ids, MutationWallClock { 1 },
+        )
+        val space = SyncSpaceId("legacy-client")
+        val agentReplica = AgentReplicaId(id(81))
+        val v3OperationId = id(80)
+        val v3Bytes = AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = AgentSyncOperation(
+            MutationId(v3OperationId), AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 0)),
+            AgentHlcSnapshot(1, 0, agentReplica), ThreadCreated(AgentThreadSyncId(id(82)), "Agent history", 1),
+        )))
+
+        assertEquals(
+            SyncReceiveResult.Quarantined(v3OperationId, ProtocolQuarantineReason.UNSUPPORTED_PAYLOAD_VERSION),
+            engine.receive(DecryptedPayloadReceipt(space, v3OperationId, 5, v3Bytes)),
+        )
+        assertEquals(ProtocolQuarantineReason.UNSUPPORTED_PAYLOAD_VERSION, receive.quarantine(space, v3OperationId)?.reason)
+        assertEquals(5L, receive.serverCursor(space))
+
+        val business = remoteEventOperation(id(83), id(84), id(85), "Independent V1")
+        assertEquals(
+            SyncReceiveResult.Applied(MutationId(business.mutationId)),
+            engine.receive(DecryptedPayloadReceipt(space, business.mutationId, 6, SyncWireCodec.encodePayload(SyncPayloadV1(operation = business)))),
+        )
+        assertEquals("Independent V1", RoomEventRepository(database).get(EventId(id(85)))?.title)
+        assertEquals(business, journal.mutation(business.mutationId)?.operation)
+        assertEquals(6L, receive.serverCursor(space))
         database.close()
     }
 

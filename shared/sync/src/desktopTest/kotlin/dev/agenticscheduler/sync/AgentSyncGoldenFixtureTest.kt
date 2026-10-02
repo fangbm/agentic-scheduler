@@ -17,6 +17,8 @@ class AgentSyncGoldenFixtureTest {
         assertEquals(fixture("action-finalized-in-turn.json"), AgentSyncWireCodec.encodePayload(payload(35, 6, 150, 5, actionInTurn())))
         assertEquals(fixture("action-finalized-standalone.json"), AgentSyncWireCodec.encodePayload(payload(36, 7, 160, 6, ActionFinalized(AgentActionSyncId(id(37)), null, null, null, emptyList(), emptyList(), listOf(MutationId(id(30))), FinalAgentActionStatus.SUCCEEDED))))
         assertEquals(fixture("thread-deleted.json"), AgentSyncWireCodec.encodePayload(payload(38, 8, 170, 7, ThreadDeleted(AgentThreadSyncId(id(3))))))
+        assertEquals(fixture("thread-delete-conflict-resolved-keep.json"), AgentSyncWireCodec.encodePayload(deleteResolutionPayload(90, AgentThreadDeleteResolution.KEEP_DELETION, null)))
+        assertEquals(fixture("thread-delete-conflict-resolved-copy.json"), AgentSyncWireCodec.encodePayload(deleteResolutionPayload(91, AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, AgentThreadSyncId(id(92)))))
     }
 
     @Test fun `checked in exceptional fixtures fail closed`() {
@@ -61,6 +63,14 @@ class AgentSyncGoldenFixtureTest {
     )
 
     private fun jsonObject(encoded: String) = Json.parseToJsonElement(encoded) as JsonObject
+
+    private fun deleteResolutionPayload(operation: Int, resolution: AgentThreadDeleteResolution, replacement: AgentThreadSyncId?) = SyncPayloadV3(operation = AgentSyncOperation(
+        MutationId(id(operation)), AgentDvvSnapshot(emptyList(), AgentDot(AgentReplicaId(id(2)), operation.toLong())),
+        AgentHlcSnapshot(operation.toLong(), 0, AgentReplicaId(id(2))),
+        ThreadDeleteConflictResolved(
+            AgentThreadSyncId(id(3)), listOf(MutationId(id(10)), MutationId(id(11))), resolution, replacement,
+        ),
+    ))
 
     private fun id(value: Int) = "00000000-0000-7000-8000-${value.toString().padStart(12, '0')}"
 }
