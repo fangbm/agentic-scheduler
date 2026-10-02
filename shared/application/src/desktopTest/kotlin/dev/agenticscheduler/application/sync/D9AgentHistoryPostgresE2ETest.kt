@@ -318,6 +318,15 @@ class D9AgentHistoryPostgresE2ETest {
         a.publishRaw(id(4), AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = original))) // authenticated outer/inner mismatch
         b.worker().run(space)
         assertNotNull(b.receive.quarantine(space, id(3))); assertNotNull(b.receive.quarantine(space, id(4)))
+        val otherAuthor = AgentReplicaId(id(555))
+        val unequalRecord = AgentSyncOperation(MutationId(id(5)), AgentDvvSnapshot(emptyList(), AgentDot(otherAuthor, 0)),
+            AgentHlcSnapshot(1, 0, otherAuthor), ThreadCreated(thread(100), "unequal immutable value", 1))
+        a.publishRaw(id(5), AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = unequalRecord)))
+        assertEquals("AGENT_SYNC_INTEGRITY_FAILURE", b.worker().run(space).agentHistoryReceiveFailure)
+        assertNotNull(b.receive.quarantine(space, id(5)))
+        assertNull(b.agent.operation(space, id(5)))
+        b.reopen()
+        assertNotNull(b.receive.quarantine(space, id(5)))
         assertEquals(before, b.agent.dvvFrontier(space))
         assertEquals(emptyList(), b.receive.handledDots(space)); assertEquals(emptyList(), b.journal.timeline())
         assertEquals(original, b.agent.operation(space, id(1)))

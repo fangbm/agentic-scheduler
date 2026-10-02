@@ -40,7 +40,7 @@ instrumentation result text are uploaded by CI, not client DBs/keys/configuratio
 | Held V2/full suffix, independent inbound V1/V3, dependent complete turn hold/release | PASS; actual relay, no early member publication, authorization drains once, lookup-only inbound audit. |
 | Consent/default OFF/owner acknowledgement/no automatic legacy export | PASS for consent behavior; local ProviderConfig/secret/legacy rows seeded and preserved. Explicit historical export remains BLOCKED_BY_DECISION. |
 | Existing local ordinal0 and remote V3 projection | PASS, two enrolled clients; local ordinal-unique table unchanged after restart. |
-| Frozen crypto/wire/bounds | Component suites plus new real route quarantine/preflight and actual Tink tamper/wrong-key checks; no crypto/wire implementation changes. |
+| Frozen crypto/wire/bounds | Component suites plus new real route quarantine/preflight and actual Tink tamper/wrong-key checks; same immutable record ID with unequal value is quarantined despite a valid fresh author dot, original record/frontier unchanged after restart. No crypto/wire implementation changes. |
 | Actual Android↔Desktop encrypted round trip | PASS local: Desktop seed/resume/verify each 1 test, 0 failures/skips; Android seed/resume each `OK (1 test)` across process restart; equal independent Agent frontiers, empty D7 journal/handled dots, no partial transcript. |
 | Opaque server | PASS: actual route Tool/input/result/message/title traffic, local-only provider credential and SecretRef canaries, actual credentials and content-key encodings absent across all public tables. Separate platform scan also PASS. |
 | Android consent controls | PASS actual Compose instrumentation clicks: acknowledgement required, explicit ON/OFF, V2 remains OFF, no automatic outbox, durable OFF, incomplete warning. |
@@ -87,6 +87,12 @@ New PostgreSQL suite has 17 tests, 0 failures/skips on Windows. Platform harness
 is intentionally SKIPPED in ordinary JVM builds without the explicit phase;
 this skip is not counted as a passing cross-platform test.
 
+The final additional immutable-ID adversarial assertion was verified with
+`:shared:application:desktopTest --tests=dev.agenticscheduler.application.sync.D9AgentHistoryPostgresE2ETest
+--no-daemon --no-configuration-cache --max-workers=1`: BUILD SUCCESSFUL in45s,
+17 tests, 0 failures/errors/skips. This separate run does not replace the combined
+suite counts above.
+
 ```powershell
 $env:ANDROID_AVD_HOME = 'D:\android-avds-d90205'
 test-support\d9-02-05\run-platform-acceptance.ps1 -Python <python.exe> -Avd temvio-d90205-ascii
@@ -120,9 +126,15 @@ Windows/Android/Wear jobs are retained alongside this added platform job.
 
 ## Current CI and remaining gates
 
-CI on implementation head `e0adc85`:
-[37045497723](https://github.com/fangbm/temvio/actions/runs/37045497723).
-Final job results and counts pending live completion; do not read this link as PASS.
+Full CI on head `cf2d0df`:
+[37046317581](https://github.com/fangbm/temvio/actions/runs/37046317581) **PASS**:
+`build`, `desktop-windows`, `android-keystore`, `wear-keystore` and
+`agent-history-platform-e2e` all completed successfully. This includes actual
+Linux Secret Service and enrolled Linux Desktop↔Android HTTPS/process-restart
+acceptance. Earlier `37045497723` was cancelled by the documentation push, not a
+test failure. The final supplemental adversarial assertion and this evidence
+update receive a new complete CI run; the actual final-head result is recorded
+in [PR #24 checks](https://github.com/fangbm/temvio/pull/24/checks) and the PR body.
 
 BLOCKED_BY_DECISION: D9-01 has no durable turn completion, complete membership,
 ancestry or terminal run outcome. `AgentRunService.handleResponse` persists an
