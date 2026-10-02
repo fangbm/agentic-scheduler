@@ -4,6 +4,9 @@ import dev.agenticscheduler.sync.AgentReplicaId
 import dev.agenticscheduler.sync.AgentHlcSnapshot
 import dev.agenticscheduler.sync.AgentSyncEvent
 import dev.agenticscheduler.sync.AgentSyncOperation
+import dev.agenticscheduler.sync.AgentThreadHistoryProjection
+import dev.agenticscheduler.sync.AgentThreadSyncId
+import dev.agenticscheduler.sync.ThreadDeleteConflictResolved
 import dev.agenticscheduler.sync.MutationId
 import dev.agenticscheduler.sync.SyncPayloadV3
 import dev.agenticscheduler.sync.SyncSpaceId
@@ -38,6 +41,21 @@ data class AgentSyncBackfillState(
     val updatedAtEpochMillis: Long,
 )
 
+/** A caller-supplied fresh immutable event in a user-approved replacement-thread batch. */
+data class AgentSyncOutboundEventDraft(
+    val operationId: MutationId,
+    val hlc: AgentHlcSnapshot,
+    val event: AgentSyncEvent,
+)
+
+/** The exact user-selected resolution and optional fresh text-only replacement history. */
+data class AgentSyncExplicitDeleteResolution(
+    val operationId: MutationId,
+    val hlc: AgentHlcSnapshot,
+    val event: ThreadDeleteConflictResolved,
+    val replacementEvents: List<AgentSyncOutboundEventDraft> = emptyList(),
+)
+
 /** Local persistence port for D9-02. It never performs network I/O or D7 business writes. */
 interface AgentSyncPersistence {
     suspend fun enqueueOutbound(syncSpaceId: SyncSpaceId, operationId: MutationId, hlc: AgentHlcSnapshot, event: AgentSyncEvent): AgentSyncOperation
@@ -61,9 +79,21 @@ interface AgentSyncPersistence {
     suspend fun isTurnActive(syncSpaceId: SyncSpaceId, turnId: String): Boolean
 
     suspend fun isThreadTombstoned(syncSpaceId: SyncSpaceId, threadId: String): Boolean
+    suspend fun threadHistoryProjection(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): AgentThreadHistoryProjection
     suspend fun setAuditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String, state: AgentSyncAuditParentState, threadId: String? = null)
     suspend fun auditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String): AgentSyncAuditParentState?
 
     suspend fun backfillState(syncSpaceId: SyncSpaceId): AgentSyncBackfillState?
     suspend fun advanceBackfill(syncSpaceId: SyncSpaceId, value: AgentSyncBackfillState)
+}
+
+/**
+ * Deliberately separate from the generic Agent outbox port. UI/user-action code may inject this
+ * capability; Agent Tools and background schedulers receive only AgentSyncPersistence.
+ */
+interface AgentSyncExplicitUserResolutionPersistence {
+    suspend fun commitExplicitUserDeleteResolution(
+        syncSpaceId: SyncSpaceId,
+        resolution: AgentSyncExplicitDeleteResolution,
+    ): List<AgentSyncOperation>
 }

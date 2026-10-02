@@ -253,6 +253,116 @@ class AgentSyncPersistenceTest {
         } finally { db.close() }
     }
 
+    @Test fun `delete resolution conflict and tombstone recover after restart without LWW`() = runBlocking {
+        val path = Files.createTempFile("agent-delete-resolution-", ".db")
+        val space = SyncSpaceId("personal")
+        val thread = AgentThreadSyncId(id(610))
+        val deletionId = MutationId(id(611))
+        val appendId = MutationId(id(612))
+        val localReplica = replica(1)
+        try {
+            val db = openDesktopDatabase(path.toAbsolutePath().toString())
+            val persistence = RoomAgentSyncPersistence(db)
+            persistence.provisionLocalReplica(space, localReplica)
+
+            val deletion = payload(611, ThreadDeleted(thread), replica(2))
+            persistence.acceptInbound(space, deletion)
+            persistence.markHandled(space, deletionId.value)
+            val append = payload(612, MessageAppended(
+                AgentMessageSyncId(id(613)), thread, AgentTurnSyncId(id(614)), AgentMessageRoleV3.USER, "concurrent text", 1,
+            ), replica(3))
+            persistence.acceptInbound(space, append)
+            persistence.markHandled(space, appendId.value)
+
+            val participants = listOf(deletionId, appendId).sortedBy { it.value }
+            val explicit = persistence as AgentSyncExplicitUserResolutionPersistence
+            val keep = explicit.commitExplicitUserDeleteResolution(space, AgentSyncExplicitDeleteResolution(
+                MutationId(id(615)), AgentHlcSnapshot(615, 0, localReplica),
+                ThreadDeleteConflictResolved(thread, participants, AgentThreadDeleteResolution.KEEP_DELETION, null),
+            )).single()
+            assertTrue(persistence.isThreadTombstoned(space, thread.value))
+            assertTrue(persistence.threadHistoryProjection(space, thread).turns.isEmpty())
+
+            // A second device resolves the same component differently without observing the first resolution.
+            val remoteCopy = payload(616, ThreadDeleteConflictResolved(
+                thread, participants, AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, AgentThreadSyncId(id(617)),
+            ), replica(4), context = listOf(AgentVersionComponent(replica(2), 0), AgentVersionComponent(replica(3), 0)))
+            persistence.acceptInbound(space, remoteCopy)
+            persistence.markHandled(space, id(616))
+            val projection = persistence.threadHistoryProjection(space, thread)
+            val conflict = projection.conflicts.single { it.kind == AgentSemanticConflictKind.DELETE_RESOLUTION }
+            assertEquals(AgentSemanticConflictState.OPEN, conflict.state)
+            assertEquals(listOf(keep.operationId, remoteCopy.operation.operationId).sortedBy { it.value }, conflict.resolutionOperationIds)
+            assertTrue(projection.tombstoned)
+            db.close()
+
+            val reopened = openDesktopDatabase(path.toAbsolutePath().toString())
+            try {
+                val recovered = RoomAgentSyncPersistence(reopened)
+                val afterRestart = recovered.threadHistoryProjection(space, thread)
+                assertTrue(afterRestart.tombstoned)
+                assertTrue(afterRestart.turns.isEmpty())
+                assertEquals(conflict, afterRestart.conflicts.single { it.kind == AgentSemanticConflictKind.DELETE_RESOLUTION })
+                assertTrue(recovered.isThreadTombstoned(space, thread.value))
+            } finally { reopened.close() }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test fun `explicit COPY resolution persists fresh text-only replacement batch and keeps source tombstoned`() = runBlocking {
+        val db = openInMemoryDesktopDatabase()
+        try {
+            val persistence = RoomAgentSyncPersistence(db)
+            val explicit = persistence as AgentSyncExplicitUserResolutionPersistence
+            val space = SyncSpaceId("personal")
+            val thread = AgentThreadSyncId(id(630))
+            val localReplica = replica(1)
+            persistence.provisionLocalReplica(space, localReplica)
+            val deleteId = MutationId(id(631))
+            val messageOperationId = MutationId(id(632))
+            persistence.acceptInbound(space, payload(631, ThreadDeleted(thread), replica(2)))
+            persistence.markHandled(space, deleteId.value)
+            persistence.acceptInbound(space, payload(632, MessageAppended(
+                AgentMessageSyncId(id(633)), thread, AgentTurnSyncId(id(634)), AgentMessageRoleV3.USER, "source text", 2,
+            ), replica(3)))
+            persistence.markHandled(space, messageOperationId.value)
+
+            val replacement = AgentThreadSyncId(id(640))
+            val newTurn = AgentTurnSyncId(id(641))
+            val newMessage = AgentMessageSyncId(id(642))
+            val participants = listOf(deleteId, messageOperationId).sortedBy { it.value }
+            val resolution = ThreadDeleteConflictResolved(thread, participants, AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, replacement)
+            assertFailsWith<IllegalArgumentException> {
+                persistence.enqueueOutbound(space, MutationId(id(635)), AgentHlcSnapshot(635, 0, localReplica), resolution)
+            }
+            val createdEvent = ThreadCreated(replacement, "user-selected copy", 10)
+            val messageEvent = MessageAppended(newMessage, replacement, newTurn, AgentMessageRoleV3.USER, "selected text", 11)
+            val turnEvent = TurnFinalized(newTurn, replacement, emptyList(), listOf(MessageMember(newMessage)), AgentTurnOutcome.SUCCEEDED)
+            val result = explicit.commitExplicitUserDeleteResolution(space, AgentSyncExplicitDeleteResolution(
+                MutationId(id(636)), AgentHlcSnapshot(636, 0, localReplica), resolution,
+                listOf(
+                    AgentSyncOutboundEventDraft(MutationId(id(637)), AgentHlcSnapshot(637, 0, localReplica), createdEvent),
+                    AgentSyncOutboundEventDraft(MutationId(id(638)), AgentHlcSnapshot(638, 0, localReplica), messageEvent),
+                    AgentSyncOutboundEventDraft(MutationId(id(639)), AgentHlcSnapshot(639, 0, localReplica), turnEvent),
+                ),
+            ))
+
+            assertEquals(4, result.size)
+            assertEquals(listOf(resolution, createdEvent, messageEvent, turnEvent), result.map { it.agentEvent })
+            assertTrue(persistence.isThreadTombstoned(space, thread.value))
+            assertTrue(persistence.threadHistoryProjection(space, thread).turns.isEmpty())
+            assertEquals(1L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ?", space.value, thread.value) })
+
+            val matchingRemoteResolution = payload(650, resolution, replica(4), context = listOf(
+                AgentVersionComponent(replica(2), 0), AgentVersionComponent(replica(3), 0),
+            ))
+            persistence.acceptInbound(space, matchingRemoteResolution)
+            persistence.markHandled(space, id(650))
+            val converged = persistence.threadHistoryProjection(space, thread)
+            assertEquals(AgentSemanticConflictState.RESOLVED, converged.conflicts.single { it.kind == AgentSemanticConflictKind.THREAD_DELETE_APPEND }.state)
+            assertFalse(converged.conflicts.any { it.kind == AgentSemanticConflictKind.DELETE_RESOLUTION })
+        } finally { db.close() }
+    }
+
     @Test fun `Agent sync structural validation rejects a dropped unique index`() = runBlocking {
         val db = openInMemoryDesktopDatabase()
         try {

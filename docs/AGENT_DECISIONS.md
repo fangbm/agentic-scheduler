@@ -576,8 +576,8 @@ explicit enrolled-device user authorship, persistent original tombstone, and
 no LWW for conflicting resolutions. `COPY_CONTENT_TO_NEW_THREAD` creates
 only fresh Agent content identities after the resolution is accepted; it
 never replays Tool execution or business mutations. D9-02-02 records this
-decision; wire DTO/Codec and merge/projection implementation remain D9-02-03.
-OD-012 remains a production receive/storage gate and is not resolved here.
+decision. D9-02-03 implements the DTO/Codec and merge/projection within the
+D2 scope. OD-012 remains a separate production receive/storage release gate.
 
 ---
 

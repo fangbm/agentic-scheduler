@@ -117,7 +117,7 @@ object AgentSyncMergeProjection {
                 threadOperations.firstOrNull { it.agentEvent.immutableRecordIdentityForMerge() == identity }
             }
             if (members.size != manifest.orderedMembers.size) null else manifestOperation to AgentProjectedTurn(manifestOperation.operationId, manifest, manifestOperation.hlc, members)
-        }.associate { it.second.manifest.turnId to it }
+        }.associate { it.second.manifest.turnId to it.second }
         val orderedTurns = topologicalPresentationOrder(turnsById.values.toList())
         val hasOpenConflict = conflicts.any { it.state == AgentSemanticConflictState.OPEN }
         return AgentThreadHistoryProjection(

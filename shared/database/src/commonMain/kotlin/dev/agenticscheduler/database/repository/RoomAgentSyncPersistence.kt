@@ -9,8 +9,11 @@ import dev.agenticscheduler.application.sync.AgentSyncBackfillRecoveryState
 import dev.agenticscheduler.application.sync.AgentSyncBackfillState
 import dev.agenticscheduler.application.sync.AgentSyncDependencyKind
 import dev.agenticscheduler.application.sync.AgentSyncDirection
+import dev.agenticscheduler.application.sync.AgentSyncExplicitDeleteResolution
+import dev.agenticscheduler.application.sync.AgentSyncExplicitUserResolutionPersistence
 import dev.agenticscheduler.application.sync.AgentSyncFrontierState
 import dev.agenticscheduler.application.sync.AgentSyncLocalClock
+import dev.agenticscheduler.application.sync.AgentSyncOutboundEventDraft
 import dev.agenticscheduler.application.sync.AgentSyncPendingDependency
 import dev.agenticscheduler.application.sync.AgentSyncPersistResult
 import dev.agenticscheduler.application.sync.AgentSyncPersistence
@@ -20,11 +23,15 @@ import dev.agenticscheduler.sync.*
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.add
 
 class AgentSyncIntegrityConflictException(message: String) : IllegalStateException(message)
 
 /** Room adapter for isolated D9-02 local state; it has no transport or receive-dispatch hooks. */
-class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) : AgentSyncPersistence {
+class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) : AgentSyncPersistence, AgentSyncExplicitUserResolutionPersistence {
     private val json = Json { encodeDefaults = true }
     override suspend fun enqueueOutbound(
         syncSpaceId: SyncSpaceId,
@@ -32,71 +39,18 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         hlc: AgentHlcSnapshot,
         event: AgentSyncEvent,
     ): AgentSyncOperation {
+        require(event !is ThreadDeleteConflictResolved) {
+            "ThreadDeleteConflictResolved may only be authored through the explicit local-user resolution capability."
+        }
         val outcome = database.withWriteTransaction {
-            val spaceState = query(
-                "SELECT local_replica_id, local_counter FROM agent_sync_space_state WHERE sync_space_id = ?",
-                listOf(syncSpaceId.value),
-            ) { AgentSyncLocalClock(AgentReplicaId(it.getText(0)), it.getLong(1)) }.singleOrNull()
-                ?: error("Provision an Agent replica before allocating a local operation.")
-            require(hlc.replicaId == spaceState.replicaId) { "Local Agent HLC must use the provisioned AgentReplicaId." }
-
-            val existing = query(
-                "SELECT operation_id, payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
-                listOf(syncSpaceId.value, operationId.value),
-            ) { decodePayload(it.getText(1), it.getText(0)).operation }.singleOrNull()
-            if (existing != null) {
-                if (existing.agentEvent != event || existing.hlc != hlc || AgentSyncDirection.OUTBOUND !in directionInTransaction(syncSpaceId.value, operationId.value)) {
-                    val candidate = existing.copy(agentEvent = event, hlc = hlc)
-                    recordIntegrityConflict(
-                        syncSpaceId,
-                        candidate,
-                        candidate.agentEvent.immutableRecordIdentity(),
-                        existing.operationId.value,
-                        AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = candidate)),
-                    )
-                    return@withWriteTransaction LocalEnqueueOutcome.Conflict("A retried outbound Agent operation ID is already bound to different immutable content or metadata.")
-                }
-                return@withWriteTransaction LocalEnqueueOutcome.Success(existing)
+            val threadId = event.threadIdForConflictCheck()
+            if (threadId != null && event.isContentEvent() && query(
+                    "SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1",
+                    listOf(syncSpaceId.value, threadId),
+                ) { it.getLong(0) }.isNotEmpty()) {
+                return@withWriteTransaction LocalEnqueueOutcome.Conflict("A tombstoned Agent thread cannot receive new active content.")
             }
-
-            val next = spaceState.nextCounter
-            check(next < Long.MAX_VALUE) { "Agent counter exhausted; refusing counter wrap or reuse of this AgentReplicaId." }
-            val frontier = frontierInTransaction(syncSpaceId.value).toMutableMap()
-            val expectedLocalFrontier = if (next == 0L) null else next - 1L
-            check(frontier[spaceState.replicaId] == expectedLocalFrontier) {
-                "Persisted local Agent counter and contiguous frontier are inconsistent; do not reuse this AgentReplicaId."
-            }
-            val dot = AgentDot(spaceState.replicaId, next)
-            if (next > 0L) frontier[spaceState.replicaId] = next - 1L
-            val dvv = AgentDvvSnapshot(
-                context = frontier.entries
-                    .sortedBy { it.key.value }
-                    .map { AgentVersionComponent(it.key, it.value) },
-                dot = dot,
-            )
-            val operation = AgentSyncOperation(operationId, dvv, hlc, event)
-            val encoded = AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = operation))
-            val record = event.immutableRecordIdentity()
-            val conflicting = query(
-                "SELECT operation_id FROM agent_sync_operation_identity WHERE sync_space_id = ? AND (" +
-                    "(agent_replica_id = ? AND agent_counter = ?) OR " +
-                    "(? IS NOT NULL AND immutable_record_kind = ? AND immutable_record_id = ?))",
-                listOf(syncSpaceId.value, dot.replicaId.value, dot.counter, record?.first, record?.first, record?.second),
-            ) { it.getText(0) }.firstOrNull()
-            if (conflicting != null) {
-                recordIntegrityConflict(syncSpaceId, operation, record, conflicting, encoded)
-                return@withWriteTransaction LocalEnqueueOutcome.Conflict("Agent dot or immutable record identity is already bound to another operation.")
-            }
-            execute(
-                "INSERT INTO agent_sync_operation_identity(sync_space_id, operation_id, agent_replica_id, agent_counter, event_type, immutable_record_kind, immutable_record_id, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                listOf(syncSpaceId.value, operationId.value, dot.replicaId.value, dot.counter,
-                    event::class.simpleName ?: "AgentSyncEvent", record?.first, record?.second, encoded),
-            )
-            addDirection(syncSpaceId, operationId.value, AgentSyncDirection.OUTBOUND)
-            execute("UPDATE agent_sync_space_state SET local_counter = ? WHERE sync_space_id = ?", listOf(next + 1L, syncSpaceId.value))
-            advanceAgentFrontier(syncSpaceId.value, dot.replicaId)
-            persistEventIndexes(syncSpaceId, operation, AgentSyncDirection.OUTBOUND)
-            LocalEnqueueOutcome.Success(operation)
+            enqueueOutboundInTransaction(syncSpaceId, operationId, hlc, event, allowResolution = false)
         }
         return when (outcome) {
             is LocalEnqueueOutcome.Success -> outcome.operation
@@ -181,19 +135,31 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         AgentSyncFrontierState(connection.frontierInTransaction(syncSpaceId.value))
     }
 
-    override suspend fun markHandled(syncSpaceId: SyncSpaceId, operationId: String) = database.withWriteTransaction {
+    override suspend fun markHandled(syncSpaceId: SyncSpaceId, operationId: String): Unit = database.withWriteTransaction {
         val row = query("SELECT agent_replica_id, agent_counter FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId)) { it.getText(0) to it.getLong(1) }.singleOrNull()
             ?: error("Cannot mark an unknown Agent operation handled.")
-        check(query("SELECT 1 FROM agent_sync_inbox WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId)) { it.getLong(0) }.isNotEmpty()) { "Only inbound Agent operations can be marked handled." }
-        check(query("SELECT 1 FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id = ? LIMIT 1", listOf(syncSpaceId.value, operationId)) { it.getLong(0) }.isEmpty()) { "Agent operations with unresolved causal or parent dependencies cannot be marked handled." }
-        execute("INSERT INTO agent_sync_handled_dot(sync_space_id, agent_replica_id, counter, operation_id) VALUES (?, ?, ?, ?) ON CONFLICT(sync_space_id, operation_id) DO NOTHING", listOf(syncSpaceId.value, row.first, row.second, operationId))
-        val binding = query("SELECT operation_id FROM agent_sync_handled_dot WHERE sync_space_id = ? AND agent_replica_id = ? AND counter = ?", listOf(syncSpaceId.value, row.first, row.second)) { it.getText(0) }.single()
-        if (binding != operationId) throw AgentSyncIntegrityConflictException("An Agent handled dot is already bound to another operation ID.")
-        execute("UPDATE agent_sync_inbox SET state = 'HANDLED' WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId))
         val handledOperation = query(
             "SELECT payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
             listOf(syncSpaceId.value, operationId),
         ) { decodePayload(it.getText(0), operationId).operation }.single()
+        check(query("SELECT 1 FROM agent_sync_inbox WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId)) { it.getLong(0) }.isNotEmpty()) { "Only inbound Agent operations can be marked handled." }
+        check(query("SELECT 1 FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id = ? LIMIT 1", listOf(syncSpaceId.value, operationId)) { it.getLong(0) }.isEmpty()) { "Agent operations with unresolved causal or parent dependencies cannot be marked handled." }
+        val resolutionEvent = handledOperation.agentEvent as? ThreadDeleteConflictResolved
+        if (resolutionEvent != null) {
+            val prior = threadOperationsInTransaction(syncSpaceId.value, resolutionEvent.threadId)
+                .filterNot { it.operationId == handledOperation.operationId }
+            val validation = AgentSyncMergeProjection.validateDeleteResolution(handledOperation, prior)
+            if (validation !is AgentDeleteResolutionValidation.Valid) {
+                val reason = (validation as AgentDeleteResolutionValidation.Invalid).reason
+                throw AgentSyncIntegrityConflictException("Invalid Agent thread-delete resolution: $reason")
+            }
+            validateFreshReplacementThreadId(syncSpaceId.value, handledOperation)
+        }
+        validateReplacementThreadEvent(syncSpaceId.value, handledOperation)
+        execute("INSERT INTO agent_sync_handled_dot(sync_space_id, agent_replica_id, counter, operation_id) VALUES (?, ?, ?, ?) ON CONFLICT(sync_space_id, operation_id) DO NOTHING", listOf(syncSpaceId.value, row.first, row.second, operationId))
+        val binding = query("SELECT operation_id FROM agent_sync_handled_dot WHERE sync_space_id = ? AND agent_replica_id = ? AND counter = ?", listOf(syncSpaceId.value, row.first, row.second)) { it.getText(0) }.single()
+        if (binding != operationId) throw AgentSyncIntegrityConflictException("An Agent handled dot is already bound to another operation ID.")
+        execute("UPDATE agent_sync_inbox SET state = 'HANDLED' WHERE sync_space_id = ? AND operation_id = ?", listOf(syncSpaceId.value, operationId))
         if (handledOperation.agentEvent is ThreadDeleted) {
             materializeThreadDelete(syncSpaceId.value, handledOperation)
         }
@@ -210,6 +176,8 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         }
         advanceAgentFrontier(syncSpaceId.value, AgentReplicaId(row.first))
         recomputeTurnsForOperation(syncSpaceId.value, operationId)
+        handledOperation.agentEvent.threadIdForAudit()?.let { refreshSemanticConflictRecords(syncSpaceId.value, AgentThreadSyncId(it)) }
+        Unit
     }
 
     override suspend fun eligibleInboundOperations(syncSpaceId: SyncSpaceId): List<AgentSyncOperation> = database.useReaderConnection { connection ->
@@ -286,6 +254,318 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
 
     override suspend fun isThreadTombstoned(syncSpaceId: SyncSpaceId, threadId: String): Boolean = database.useReaderConnection { connection ->
         connection.query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(syncSpaceId.value, threadId)) { it.getLong(0) }.isNotEmpty()
+    }
+
+    override suspend fun threadHistoryProjection(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): AgentThreadHistoryProjection =
+        database.useReaderConnection { connection ->
+            val operations = connection.threadOperationsInTransaction(syncSpaceId.value, threadId)
+            val activeTurns = connection.query(
+                "SELECT turn_id FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND thread_id = ? ORDER BY turn_id",
+                listOf(syncSpaceId.value, threadId.value),
+            ) { AgentTurnSyncId(it.getText(0)) }.toSet()
+            val tombstoned = connection.query(
+                "SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1",
+                listOf(syncSpaceId.value, threadId.value),
+            ) { it.getLong(0) }.isNotEmpty()
+            AgentSyncMergeProjection.project(threadId, operations, activeTurns, tombstoned)
+        }
+
+    override suspend fun commitExplicitUserDeleteResolution(
+        syncSpaceId: SyncSpaceId,
+        resolution: AgentSyncExplicitDeleteResolution,
+    ): List<AgentSyncOperation> = database.withWriteTransaction {
+        val event = resolution.event
+        require(resolution.operationId !in event.participantOperationIds) { "A resolution operation cannot be one of its own participants." }
+        val allDrafts = listOf(AgentSyncOutboundEventDraft(resolution.operationId, resolution.hlc, event)) + resolution.replacementEvents
+        require(allDrafts.map { it.operationId }.distinct().size == allDrafts.size) { "Resolution batch operation IDs must be unique." }
+        val retryRows = allDrafts.map { draft ->
+            query(
+                "SELECT operation_id, payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
+                listOf(syncSpaceId.value, draft.operationId.value),
+            ) { decodePayload(it.getText(1), it.getText(0)).operation }.singleOrNull()
+        }
+        if (retryRows.any { it != null }) {
+            require(retryRows.all { it != null }) { "A resolution batch cannot be partially retried." }
+            val existing = retryRows.filterNotNull()
+            require(existing.map { it.agentEvent } == allDrafts.map { it.event } && existing.map { it.hlc } == allDrafts.map { it.hlc }) {
+                "A retried explicit user resolution batch has different immutable content."
+            }
+            require(allDrafts.all { AgentSyncDirection.OUTBOUND in directionInTransaction(syncSpaceId.value, it.operationId.value) }) {
+                "An existing inbound event cannot be reused as a local explicit user resolution."
+            }
+            return@withWriteTransaction existing
+        }
+
+        val local = query("SELECT local_replica_id, local_counter FROM agent_sync_space_state WHERE sync_space_id = ?", listOf(syncSpaceId.value)) {
+            AgentSyncLocalClock(AgentReplicaId(it.getText(0)), it.getLong(1))
+        }.singleOrNull() ?: error("Provision an Agent replica before resolving a conflict.")
+        require(resolution.hlc.replicaId == local.replicaId) { "Explicit user resolution must use this SyncSpace's local Agent replica." }
+        val prior = threadOperationsInTransaction(syncSpaceId.value, event.threadId)
+        val preview = nextLocalOperation(syncSpaceId, resolution.operationId, resolution.hlc, event)
+        val validation = AgentSyncMergeProjection.validateDeleteResolution(preview, prior)
+        if (validation !is AgentDeleteResolutionValidation.Valid) {
+            throw AgentSyncIntegrityConflictException("Explicit user resolution is stale or causally incomplete: ${(validation as AgentDeleteResolutionValidation.Invalid).reason}")
+        }
+        check(query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(syncSpaceId.value, event.threadId.value)) { it.getLong(0) }.isNotEmpty()) {
+            "Delete conflict resolution cannot be authored before the original thread is tombstoned."
+        }
+        validateFreshReplacementThreadId(syncSpaceId.value, preview)
+        validateReplacementBatch(syncSpaceId.value, event, resolution.replacementEvents)
+
+        val inserted = mutableListOf<AgentSyncOperation>()
+        for (draft in allDrafts) {
+            val outcome = enqueueOutboundInTransaction(syncSpaceId, draft.operationId, draft.hlc, draft.event, allowResolution = draft.event is ThreadDeleteConflictResolved)
+            val operation = when (outcome) {
+                is LocalEnqueueOutcome.Success -> outcome.operation
+                is LocalEnqueueOutcome.Conflict -> throw AgentSyncIntegrityConflictException(outcome.message)
+            }
+            inserted += operation
+        }
+        refreshSemanticConflictRecords(syncSpaceId.value, event.threadId)
+        event.replacementThreadId?.let { refreshSemanticConflictRecords(syncSpaceId.value, it) }
+        inserted
+    }
+
+    private suspend fun PooledConnection.enqueueOutboundInTransaction(
+        syncSpaceId: SyncSpaceId,
+        operationId: MutationId,
+        hlc: AgentHlcSnapshot,
+        event: AgentSyncEvent,
+        allowResolution: Boolean,
+    ): LocalEnqueueOutcome {
+        if (event is ThreadDeleteConflictResolved && !allowResolution) {
+            return LocalEnqueueOutcome.Conflict("ThreadDeleteConflictResolved requires the explicit local-user capability.")
+        }
+        val spaceState = query(
+            "SELECT local_replica_id, local_counter FROM agent_sync_space_state WHERE sync_space_id = ?",
+            listOf(syncSpaceId.value),
+        ) { AgentSyncLocalClock(AgentReplicaId(it.getText(0)), it.getLong(1)) }.singleOrNull()
+            ?: error("Provision an Agent replica before allocating a local operation.")
+        require(hlc.replicaId == spaceState.replicaId) { "Local Agent HLC must use the provisioned AgentReplicaId." }
+
+        val existing = query(
+            "SELECT operation_id, payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
+            listOf(syncSpaceId.value, operationId.value),
+        ) { decodePayload(it.getText(1), it.getText(0)).operation }.singleOrNull()
+        if (existing != null) {
+            if (existing.agentEvent != event || existing.hlc != hlc || AgentSyncDirection.OUTBOUND !in directionInTransaction(syncSpaceId.value, operationId.value)) {
+                val candidate = existing.copy(agentEvent = event, hlc = hlc)
+                recordIntegrityConflict(syncSpaceId, candidate, candidate.agentEvent.immutableRecordIdentity(), existing.operationId.value,
+                    AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = candidate)))
+                return LocalEnqueueOutcome.Conflict("A retried outbound Agent operation ID is already bound to different immutable content or metadata.")
+            }
+            return LocalEnqueueOutcome.Success(existing)
+        }
+
+        val localThread = event.threadIdForConflictCheck()
+        if (localThread != null && event.isContentEvent() && query(
+                "SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1",
+                listOf(syncSpaceId.value, localThread),
+            ) { it.getLong(0) }.isNotEmpty()) {
+            return LocalEnqueueOutcome.Conflict("A tombstoned Agent thread cannot receive new active content.")
+        }
+
+        val next = spaceState.nextCounter
+        check(next < Long.MAX_VALUE) { "Agent counter exhausted; refusing counter wrap or reuse of this AgentReplicaId." }
+        val frontier = frontierInTransaction(syncSpaceId.value).toMutableMap()
+        val expectedLocalFrontier = if (next == 0L) null else next - 1L
+        check(frontier[spaceState.replicaId] == expectedLocalFrontier) {
+            "Persisted local Agent counter and contiguous frontier are inconsistent; do not reuse this AgentReplicaId."
+        }
+        val dot = AgentDot(spaceState.replicaId, next)
+        if (next > 0L) frontier[spaceState.replicaId] = next - 1L
+        val operation = AgentSyncOperation(
+            operationId,
+            AgentDvvSnapshot(frontier.entries.sortedBy { it.key.value }.map { AgentVersionComponent(it.key, it.value) }, dot),
+            hlc,
+            event,
+        )
+        val encoded = AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = operation))
+        val record = event.immutableRecordIdentity()
+        val conflicting = query(
+            "SELECT operation_id FROM agent_sync_operation_identity WHERE sync_space_id = ? AND (" +
+                "(agent_replica_id = ? AND agent_counter = ?) OR " +
+                "(? IS NOT NULL AND immutable_record_kind = ? AND immutable_record_id = ?))",
+            listOf(syncSpaceId.value, dot.replicaId.value, dot.counter, record?.first, record?.first, record?.second),
+        ) { it.getText(0) }.firstOrNull()
+        if (conflicting != null) {
+            recordIntegrityConflict(syncSpaceId, operation, record, conflicting, encoded)
+            return LocalEnqueueOutcome.Conflict("Agent dot or immutable record identity is already bound to another operation.")
+        }
+        execute(
+            "INSERT INTO agent_sync_operation_identity(sync_space_id, operation_id, agent_replica_id, agent_counter, event_type, immutable_record_kind, immutable_record_id, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            listOf(syncSpaceId.value, operationId.value, dot.replicaId.value, dot.counter,
+                event::class.simpleName ?: "AgentSyncEvent", record?.first, record?.second, encoded),
+        )
+        addDirection(syncSpaceId, operationId.value, AgentSyncDirection.OUTBOUND)
+        execute("UPDATE agent_sync_space_state SET local_counter = ? WHERE sync_space_id = ?", listOf(next + 1L, syncSpaceId.value))
+        advanceAgentFrontier(syncSpaceId.value, dot.replicaId)
+        persistEventIndexes(syncSpaceId, operation, AgentSyncDirection.OUTBOUND)
+        operation.agentEvent.threadIdForAudit()?.let { refreshSemanticConflictRecords(syncSpaceId.value, AgentThreadSyncId(it)) }
+        return LocalEnqueueOutcome.Success(operation)
+    }
+
+    private suspend fun PooledConnection.nextLocalOperation(
+        syncSpaceId: SyncSpaceId,
+        operationId: MutationId,
+        hlc: AgentHlcSnapshot,
+        event: AgentSyncEvent,
+    ): AgentSyncOperation {
+        val clock = query("SELECT local_replica_id, local_counter FROM agent_sync_space_state WHERE sync_space_id = ?", listOf(syncSpaceId.value)) {
+            AgentSyncLocalClock(AgentReplicaId(it.getText(0)), it.getLong(1))
+        }.singleOrNull() ?: error("Provision an Agent replica before resolving a conflict.")
+        require(hlc.replicaId == clock.replicaId)
+        check(clock.nextCounter < Long.MAX_VALUE)
+        val frontier = frontierInTransaction(syncSpaceId.value).toMutableMap()
+        if (clock.nextCounter > 0L) frontier[clock.replicaId] = clock.nextCounter - 1L
+        return AgentSyncOperation(
+            operationId,
+            AgentDvvSnapshot(frontier.entries.sortedBy { it.key.value }.map { AgentVersionComponent(it.key, it.value) }, AgentDot(clock.replicaId, clock.nextCounter)),
+            hlc,
+            event,
+        )
+    }
+
+    private suspend fun PooledConnection.validateReplacementBatch(
+        space: String,
+        resolution: ThreadDeleteConflictResolved,
+        drafts: List<AgentSyncOutboundEventDraft>,
+    ) {
+        if (resolution.resolution == AgentThreadDeleteResolution.KEEP_DELETION) {
+            require(drafts.isEmpty()) { "KEEP_DELETION cannot include replacement-thread events." }
+            return
+        }
+        val replacement = requireNotNull(resolution.replacementThreadId)
+        require(drafts.isNotEmpty()) { "COPY_CONTENT_TO_NEW_THREAD needs a fresh ThreadCreated and selected text turns." }
+        val events = drafts.map { it.event }
+        val creates = events.filterIsInstance<ThreadCreated>()
+        require(creates.size == 1 && creates.single().threadId == replacement && events.first() == creates.single()) {
+            "A copied thread batch must begin with exactly one ThreadCreated for its replacement ID."
+        }
+        require(events.all { event -> event is ThreadCreated || event is MessageAppended || event is TurnFinalized }) {
+            "Copied history may contain only a new thread, text messages, and sealed text turns; Tool and audit events are not copied."
+        }
+        val messages = events.filterIsInstance<MessageAppended>()
+        require(messages.all { it.threadId == replacement && it.role in setOf(AgentMessageRoleV3.USER, AgentMessageRoleV3.ASSISTANT) }) {
+            "Copied content must be fresh USER/ASSISTANT text messages in the replacement thread."
+        }
+        val turns = events.filterIsInstance<TurnFinalized>()
+        val turnIds = turns.map { it.turnId }.toSet()
+        require(turnIds.size == turns.size && turns.all { it.threadId == replacement && it.parentTurnIds.all(turnIds::contains) }) {
+            "Copied turns need fresh identities and may parent only other copied turns."
+        }
+        val copiedMessages = messages.associateBy { it.messageId }
+        require(turns.all { turn ->
+            turn.orderedMembers.all { it is MessageMember } &&
+                turn.orderedMembers.map { (it as MessageMember).id }.toSet() == copiedMessages.values.filter { it.turnId == turn.turnId }.map { it.messageId }.toSet() &&
+                copiedMessages.values.filter { it.turnId == turn.turnId }.all { it.threadId == replacement }
+        } && messages.all { it.turnId in turnIds }) {
+            "Every copied text message must belong to exactly one fresh message-only finalized turn."
+        }
+        val recordIds = events.mapNotNull { it.immutableRecordIdentity()?.second }
+        require(recordIds.distinct().size == recordIds.size)
+        val allIds = drafts.map { it.operationId.value } + recordIds + resolution.participantOperationIds.map { it.value }
+        require(allIds.distinct().size == allIds.size) { "Copied operation and entity IDs must all be fresh and distinct from conflict participants." }
+        for (id in drafts.map { it.operationId.value } + recordIds) {
+            val reused = query(
+                "SELECT 1 FROM agent_sync_operation_identity WHERE sync_space_id = ? AND (operation_id = ? OR immutable_record_id = ?) LIMIT 1",
+                listOf(space, id, id),
+            ) { it.getLong(0) }.isNotEmpty()
+            require(!reused) { "COPY_CONTENT_TO_NEW_THREAD requires fresh operation and record IDs." }
+        }
+    }
+
+    private suspend fun PooledConnection.threadOperationsInTransaction(space: String, threadId: AgentThreadSyncId): List<AgentSyncOperation> =
+        allHandledOrOutboundOperations(space).filter { it.agentEvent.threadIdForAudit() == threadId.value }
+
+    private suspend fun PooledConnection.allHandledOrOutboundOperations(space: String): List<AgentSyncOperation> = query(
+        "SELECT i.operation_id, i.payload_json FROM agent_sync_operation_identity i WHERE i.sync_space_id = ? AND (" +
+            "EXISTS (SELECT 1 FROM agent_sync_inbox b WHERE b.sync_space_id = i.sync_space_id AND b.operation_id = i.operation_id AND b.state = 'HANDLED') OR " +
+            "EXISTS (SELECT 1 FROM agent_sync_outbox o WHERE o.sync_space_id = i.sync_space_id AND o.operation_id = i.operation_id)) " +
+            "ORDER BY i.agent_replica_id, i.agent_counter, i.operation_id",
+        listOf(space),
+    ) { decodePayload(it.getText(1), it.getText(0)).operation }
+
+    private suspend fun PooledConnection.validateFreshReplacementThreadId(space: String, operation: AgentSyncOperation) {
+        val event = operation.agentEvent as ThreadDeleteConflictResolved
+        if (event.resolution != AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD) return
+        val replacement = requireNotNull(event.replacementThreadId)
+        val allOperations = query(
+            "SELECT i.operation_id, i.payload_json FROM agent_sync_operation_identity i WHERE i.sync_space_id = ?",
+            listOf(space),
+        ) { decodePayload(it.getText(1), it.getText(0)).operation }
+        val existing = allOperations.filter { it.agentEvent.threadIdForAudit() == replacement.value }
+        val equivalentAcceptedResolutions = allOperations.filter { candidate ->
+            val prior = candidate.agentEvent as? ThreadDeleteConflictResolved ?: return@filter false
+            val sameDecision = prior.threadId == event.threadId && prior.resolution == event.resolution &&
+                prior.replacementThreadId == event.replacementThreadId &&
+                prior.participantOperationIds == event.participantOperationIds
+            if (!sameDecision) return@filter false
+            AgentSyncDirection.OUTBOUND in directionInTransaction(space, candidate.operationId.value) ||
+                query(
+                    "SELECT 1 FROM agent_sync_inbox WHERE sync_space_id = ? AND operation_id = ? AND state = 'HANDLED' LIMIT 1",
+                    listOf(space, candidate.operationId.value),
+                ) { it.getLong(0) }.isNotEmpty()
+        }
+        check(existing.all { candidate ->
+            AgentCausality.observes(candidate, operation) || equivalentAcceptedResolutions.any { accepted -> AgentCausality.observes(candidate, accepted) }
+        }) {
+            "Replacement thread ID already has unrelated history; COPY must use a fresh thread identity."
+        }
+    }
+
+    private suspend fun PooledConnection.validateReplacementThreadEvent(space: String, operation: AgentSyncOperation) {
+        val threadId = operation.agentEvent.threadIdForAudit() ?: return
+        val resolutions = query(
+            "SELECT i.operation_id, i.payload_json FROM agent_sync_operation_identity i WHERE i.sync_space_id = ?",
+            listOf(space),
+        ) { decodePayload(it.getText(1), it.getText(0)).operation }.filter { candidate ->
+            val event = candidate.agentEvent as? ThreadDeleteConflictResolved
+            event?.resolution == AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD && event.replacementThreadId?.value == threadId
+        }
+        if (resolutions.isEmpty()) return
+        val acceptedResolution = resolutions.any { resolution ->
+            val handled = query(
+                "SELECT 1 FROM agent_sync_outbox WHERE sync_space_id = ? AND operation_id = ? UNION ALL " +
+                    "SELECT 1 FROM agent_sync_inbox WHERE sync_space_id = ? AND operation_id = ? AND state = 'HANDLED' LIMIT 1",
+                listOf(space, resolution.operationId.value, space, resolution.operationId.value),
+            ) { it.getLong(0) }.isNotEmpty()
+            handled && AgentCausality.observes(operation, resolution)
+        }
+        if (operation.agentEvent is ThreadCreated || operation.agentEvent is MessageAppended || operation.agentEvent is TurnFinalized) {
+            check(acceptedResolution) { "Replacement thread history is inactive until its COPY resolution is causally accepted." }
+        }
+    }
+
+    private suspend fun PooledConnection.refreshSemanticConflictRecords(space: String, threadId: AgentThreadSyncId) {
+        val operations = threadOperationsInTransaction(space, threadId)
+        val activeTurns = query(
+            "SELECT turn_id FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND thread_id = ?",
+            listOf(space, threadId.value),
+        ) { AgentTurnSyncId(it.getText(0)) }.toSet()
+        val tombstoned = query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(space, threadId.value)) { it.getLong(0) }.isNotEmpty()
+        val conflicts = AgentSyncMergeProjection.project(threadId, operations, activeTurns, tombstoned).conflicts
+        for (conflict in conflicts) {
+            val participantIds = conflict.participantOperationIds
+            val firstId = participantIds.firstOrNull()?.value ?: continue
+            val lastId = participantIds.lastOrNull()?.value
+            val candidate = query(
+                "SELECT payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
+                listOf(space, firstId),
+            ) { it.getText(0) }.singleOrNull() ?: continue
+            val metadata = buildJsonObject {
+                put("state", conflict.state.name)
+                putJsonArray("participantOperationIds") { participantIds.forEach { add(it.value) } }
+                putJsonArray("resolutionOperationIds") { conflict.resolutionOperationIds.forEach { add(it.value) } }
+            }
+            val storageKey = "${conflict.localConflictKey}|${conflict.kind.name}"
+            execute(
+                "INSERT INTO agent_sync_conflict(conflict_id, sync_space_id, entity_kind, entity_id, conflict_kind, local_operation_id, remote_operation_id, candidate_payload_json, metadata_json) " +
+                    "VALUES (?, ?, 'THREAD', ?, ?, ?, ?, ?, ?) ON CONFLICT(conflict_id) DO UPDATE SET conflict_kind = excluded.conflict_kind, " +
+                    "local_operation_id = excluded.local_operation_id, remote_operation_id = excluded.remote_operation_id, candidate_payload_json = excluded.candidate_payload_json, metadata_json = excluded.metadata_json",
+                listOf(storageKey, space, threadId.value, "D9_02_03_${conflict.kind.name}_${conflict.state.name}", firstId, lastId, candidate, json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), metadata)),
+            )
+        }
     }
 
     override suspend fun setAuditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String, state: AgentSyncAuditParentState, threadId: String?) = database.withWriteTransaction {
@@ -592,7 +872,7 @@ private fun AgentSyncEvent.immutableRecordIdentity(): Pair<String, String>? = wh
     is ToolResultAppended -> "TOOL_RESULT" to resultId.value
     is ActionFinalized -> "ACTION" to actionId.value
     is TurnFinalized -> "TURN" to turnId.value
-    is ThreadTitleSet, is ThreadDeleted -> null
+    is ThreadTitleSet, is ThreadDeleted, is ThreadDeleteConflictResolved -> null
 }
 
 private fun AgentSyncEvent.threadIdForConflictCheck(): String? = when (this) {
@@ -604,6 +884,7 @@ private fun AgentSyncEvent.threadIdForConflictCheck(): String? = when (this) {
     is ActionFinalized -> null
     is TurnFinalized -> threadId.value
     is ThreadDeleted -> null
+    is ThreadDeleteConflictResolved -> threadId.value
 }
 
 private fun AgentSyncEvent.threadIdForAudit(): String? = when (this) {
@@ -615,11 +896,12 @@ private fun AgentSyncEvent.threadIdForAudit(): String? = when (this) {
     is ActionFinalized -> threadId?.value
     is TurnFinalized -> threadId.value
     is ThreadDeleted -> threadId.value
+    is ThreadDeleteConflictResolved -> threadId.value
 }
 
 private fun AgentSyncEvent.isContentEvent(): Boolean = when (this) {
     is ThreadCreated, is ThreadTitleSet, is MessageAppended, is ToolCallFinalized, is ToolResultAppended, is TurnFinalized -> true
-    is ActionFinalized, is ThreadDeleted -> false
+    is ActionFinalized, is ThreadDeleted, is ThreadDeleteConflictResolved -> false
 }
 
 private fun AgentSyncEvent.businessMutationIdsForPersistence(): List<String> = when (this) {
