@@ -134,6 +134,7 @@ jobs:
           name: d9-agent-history-platform-reports
           path: |
             build/d90205-platform/*.xml
+            build/d90205-platform/android-*.txt
             apps/android/build/outputs/androidTest-results/connected/**/*.xml
           if-no-files-found: warn
           retention-days: 14

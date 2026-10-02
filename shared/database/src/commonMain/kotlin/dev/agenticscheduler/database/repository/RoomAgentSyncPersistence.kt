@@ -248,6 +248,8 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
             execute("DELETE FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id = ? AND dependency_kind = 'PARENT_TURN' AND dependency_key = ?", listOf(syncSpaceId.value, operation, key))
             query("SELECT turn_id FROM agent_sync_turn_stage WHERE sync_space_id = ? AND manifest_operation_id = ?", listOf(syncSpaceId.value, operation)) { it.getText(0) }.forEach { recomputeTurnState(syncSpaceId.value, it) }
         }
+        // Activation changes the projector's fork component even when no later event arrives.
+        refreshSemanticConflictRecords(syncSpaceId.value, AgentThreadSyncId(stage.first))
     }
 
     override suspend fun isTurnActive(syncSpaceId: SyncSpaceId, turnId: String): Boolean = database.useReaderConnection { connection ->
@@ -772,7 +774,7 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
                     event.toolResultIds.forEach { add(it.value) }
                 }.distinct().forEach { parentId ->
                     val resolved = query("SELECT 1 FROM agent_sync_operation_identity i JOIN agent_sync_inbox b USING(sync_space_id, operation_id) JOIN agent_sync_handled_dot h USING(sync_space_id, operation_id) WHERE i.sync_space_id = ? AND i.immutable_record_id = ? LIMIT 1", listOf(space.value, parentId)) { it.getLong(0) }.isNotEmpty()
-                    if (!resolved) addDependency(space.value, operation.operationId.value, AgentSyncDependencyKind.PARENT_RECORD.name, parentId)
+                    if (!resolved && parentState == AgentSyncAuditParentState.PARENT_PENDING.name) addDependency(space.value, operation.operationId.value, AgentSyncDependencyKind.PARENT_RECORD.name, parentId)
                 }
             }
             is ToolResultAppended -> Unit
@@ -821,6 +823,16 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         execute("UPDATE agent_sync_turn_stage SET state = 'TOMBSTONED' WHERE sync_space_id = ? AND thread_id = ?", listOf(space, event.threadId.value))
         execute(
             "UPDATE agent_sync_audit_parent_link SET state = 'PARENT_REMOVED_BY_TOMBSTONE' WHERE sync_space_id = ? AND thread_id = ? AND state != 'PARENT_REMOVED_BY_TOMBSTONE'",
+            listOf(space, event.threadId.value),
+        )
+        // D1 intentionally removed parents satisfy only the matching audit's record dependency.
+        // Agent-dot and D7 dependencies, and missing parents on other threads, remain untouched.
+        execute(
+            "DELETE FROM agent_sync_pending_dependency AS d WHERE d.sync_space_id = ? AND d.dependency_kind = 'PARENT_RECORD' " +
+                "AND EXISTS (SELECT 1 FROM agent_sync_operation_identity i JOIN agent_sync_audit_parent_link l " +
+                "ON l.sync_space_id = i.sync_space_id AND l.action_id = i.immutable_record_id " +
+                "WHERE i.sync_space_id = d.sync_space_id AND i.operation_id = d.operation_id AND i.immutable_record_kind = 'ACTION' " +
+                "AND l.thread_id = ? AND l.parent_id = d.dependency_key AND l.state = 'PARENT_REMOVED_BY_TOMBSTONE')",
             listOf(space, event.threadId.value),
         )
     }

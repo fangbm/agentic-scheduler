@@ -28,6 +28,9 @@ class D9PlatformRelayAcceptanceTest {
                 "verify" -> replica.verifyDesktop()
                 else -> error("Unknown acceptance phase")
             }
-        } finally { replica.close(); client.close() }
+        } finally {
+            if (phase == "verify") replica.destroyFixtureSecrets()
+            replica.close(); client.close()
+        }
     }
 }

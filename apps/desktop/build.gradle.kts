@@ -23,6 +23,7 @@ dependencies {
     implementation(compose.material3)
     testImplementation(compose.desktop.uiTestJUnit4)
     testImplementation(compose.desktop.currentOs)
+    testImplementation(libs.androidx.room3.runtime)
 }
 
 compose.desktop {

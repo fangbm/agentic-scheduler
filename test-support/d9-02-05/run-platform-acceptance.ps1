@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $env:SYNC_TEST_DATABASE_URL) { throw 'Disposable PostgreSQL configuration is required.' }
 $repo = (Resolve-Path "$PSScriptRoot\..\..").Path
-$root = Join-Path $repo 'build\d90205-platform'
+$root = Join-Path $repo "build\d90205-platform\run-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Force -Path $root | Out-Null
 $env:D9_PLATFORM_DIRECTORY = $root
 $env:SYNC_DATABASE_URL = $env:SYNC_TEST_DATABASE_URL
@@ -53,6 +53,7 @@ try {
     $emulator = Start-Process "$env:ANDROID_HOME\emulator\emulator.exe" -ArgumentList @('-avd', $Avd, '-no-window', '-no-audio', '-no-snapshot-save', '-gpu', 'swiftshader_indirect', '-port', '5580') -WindowStyle Hidden -PassThru -RedirectStandardOutput "$root\emulator.log" -RedirectStandardError "$root\emulator-error.log"
     $ready = $false
     for ($attempt = 0; $attempt -lt 180; $attempt++) {
+        if ($emulator.HasExited) { throw 'Dedicated acceptance emulator exited before boot; inspect emulator-error.log.' }
         if ((& $adb -s emulator-5580 shell getprop sys.boot_completed 2>$null) -eq '1') { $ready = $true; break }
         Start-Sleep -Seconds 1
     }
@@ -62,7 +63,22 @@ try {
     $account = [IO.File]::ReadAllText("$root\account.txt")
     $space = [IO.File]::ReadAllText("$root\space.txt")
     Remove-Item Env:\D9_PLATFORM_PHASE
-    Gradle -Tasks @(':apps:android:connectedDebugAndroidTest', '-Pandroid.testInstrumentationRunnerArguments.class=dev.agenticscheduler.android.D9PlatformRelayInstrumentedTest', "-Pandroid.testInstrumentationRunnerArguments.d9AcceptanceCertificate=$certificate", "-Pandroid.testInstrumentationRunnerArguments.d9AcceptanceAccount=$account", "-Pandroid.testInstrumentationRunnerArguments.d9AcceptanceSpace=$space")
+    Gradle -Tasks @(':apps:android:assembleDebug', ':apps:android:assembleDebugAndroidTest')
+    & $adb -s emulator-5580 install -r "$repo\apps\android\build\outputs\apk\debug\android-debug.apk"
+    if ($LASTEXITCODE) { throw 'Acceptance target APK installation failed.' }
+    & $adb -s emulator-5580 install -r "$repo\apps\android\build\outputs\apk\androidTest\debug\android-debug-androidTest.apk"
+    if ($LASTEXITCODE) { throw 'Acceptance test APK installation failed.' }
+    # This script owns a dedicated disposable emulator; reset only its acceptance app before enrollment.
+    & $adb -s emulator-5580 shell pm clear dev.agenticscheduler.android
+    foreach ($androidPhase in @('seed','resume')) {
+        & $adb -s emulator-5580 shell am force-stop dev.agenticscheduler.android
+        $result = & $adb -s emulator-5580 shell am instrument -w -e class dev.agenticscheduler.android.D9PlatformRelayInstrumentedTest -e d9AcceptancePhase $androidPhase -e d9AcceptanceCertificate $certificate -e d9AcceptanceAccount $account -e d9AcceptanceSpace $space dev.agenticscheduler.android.test/androidx.test.runner.AndroidJUnitRunner
+        $result | Tee-Object -FilePath "$root\android-$androidPhase.txt"
+        if ($LASTEXITCODE -or (($result -join "`n") -notmatch 'OK \(1 test\)')) { throw "Android $androidPhase instrumentation failed." }
+    }
+    $uiResult = & $adb -s emulator-5580 shell am instrument -w -e class dev.agenticscheduler.android.AgentConversationSyncControlsInstrumentedTest dev.agenticscheduler.android.test/androidx.test.runner.AndroidJUnitRunner
+    $uiResult | Tee-Object -FilePath "$root\android-consent-ui.txt"
+    if ($LASTEXITCODE -or (($uiResult -join "`n") -notmatch 'OK \(1 test\)')) { throw 'Android consent UI instrumentation failed.' }
     Phase 'verify'
     $tables = & docker exec $PostgresContainer psql -U $env:SYNC_TEST_DATABASE_USER -d agentic_d90205 -At -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"
     if ($LASTEXITCODE) { throw 'Opaque relay table scan failed.' }

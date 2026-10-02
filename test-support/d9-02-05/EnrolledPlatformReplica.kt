@@ -89,15 +89,17 @@ class EnrolledPlatformReplica(
         check(worker().run(space).agentOutbound.uploaded == 0)
     }
 
-    suspend fun androidRoundTripWithRestart() {
+    suspend fun androidSeedOffline() {
         check(worker().run(space).stoppedOnReceiveFailure == null)
         check(history.threadHistoryProjection(space, THREAD).turns.single().members.single().agentEvent is MessageAppended)
         check(reader.read(space, THREAD) is AgentHistoryContinuationRead.Ready)
         author(7003, MessageAppended(AgentMessageSyncId(id(7001)), THREAD, ANDROID_TURN, AgentMessageRoleV3.ASSISTANT, ANDROID_TEXT, 1))
         author(7004, TurnFinalized(ANDROID_TURN, THREAD, listOf(DESKTOP_TURN), listOf(MessageMember(AgentMessageSyncId(id(7001)))), AgentTurnOutcome.SUCCEEDED))
         loseAckAndPersistRetry()
+    }
+
+    suspend fun androidResumeAfterProcessRestart() {
         val retained = state.outboundRecords(space).mapNotNull { it.envelope }.associateBy { it.mutationId }
-        reopen()
         check(worker().run(space).agentOutbound.uploaded == 2)
         transport.fetch(space, 0, 100).filter { it.envelope.mutationId in retained }.forEach { check(retained.getValue(it.envelope.mutationId) == it.envelope) }
         assertConverged()
@@ -140,6 +142,11 @@ class EnrolledPlatformReplica(
                 AgentEnvelopeUploadLimits(1048576, 1200000)))
     }
     private fun reopen() { database.close(); database = open() }
+    suspend fun destroyFixtureSecrets() {
+        val references = ring.historicalDecryptKeys(space).map { it.contentKeyReference } +
+            listOf(active.deviceCredentialReference, active.accountMasterKeyReference, active.hpkePrivateKeyReference)
+        references.distinct().forEach { store.delete(it) }
+    }
     fun close() { database.close() }
 
     companion object {

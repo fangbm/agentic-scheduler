@@ -28,6 +28,17 @@ class D9PlatformRelayInstrumentedTest {
         val client = HttpClient(Android) { engine { sslManager = { connection -> connection.sslSocketFactory = ssl.socketFactory } } }
         val replica = EnrolledPlatformReplica(client, "https://localhost:18445", AccountId(requireNotNull(arguments.getString("d9AcceptanceAccount"))),
             SyncSpaceId(requireNotNull(arguments.getString("d9AcceptanceSpace"))), "android", AndroidKeystoreSecureStore(context), { openAndroidDatabase(context) })
-        try { replica.enrollOrRestore(); replica.androidRoundTripWithRestart() } finally { replica.close(); client.close() }
+        val phase = arguments.getString("d9AcceptancePhase") ?: error("Explicit platform phase required")
+        try {
+            replica.enrollOrRestore()
+            when (phase) {
+                "seed" -> replica.androidSeedOffline()
+                "resume" -> replica.androidResumeAfterProcessRestart()
+                else -> error("Unknown Android platform phase")
+            }
+        } finally {
+            if (phase == "resume") replica.destroyFixtureSecrets()
+            replica.close(); client.close()
+        }
     }
 }

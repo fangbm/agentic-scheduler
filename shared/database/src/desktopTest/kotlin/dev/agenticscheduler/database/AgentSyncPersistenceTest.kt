@@ -619,6 +619,7 @@ class AgentSyncPersistenceTest {
                     persistence.markHandled(space, event.operation.operationId.value)
                 }
                 for (turn in turns) persistence.markTurnActive(space, turn.value)
+                assertEquals(AgentSemanticConflictKind.CONCURRENT_TURN_FORK, assertSemanticRecordsMatchProjection(db, persistence, space, thread).conflicts.single().kind)
                 val rename = payload(916, ThreadTitleSet(thread, "after roots"), replica(2), 1, listOf(
                     AgentVersionComponent(replica(2), 0), AgentVersionComponent(replica(3), 0), AgentVersionComponent(replica(4), 0),
                 ))

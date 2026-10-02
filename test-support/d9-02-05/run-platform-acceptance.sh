@@ -52,11 +52,24 @@ wait "$server_pid" || true
 start_server # Actual server process restart, same durable PostgreSQL.
 phase resume
 adb reverse tcp:18445 tcp:18445
-./gradlew :apps:android:connectedDebugAndroidTest --no-daemon \
-  -Pandroid.testInstrumentationRunnerArguments.class=dev.agenticscheduler.android.D9PlatformRelayInstrumentedTest \
-  -Pandroid.testInstrumentationRunnerArguments.d9AcceptanceCertificate="$(base64 -w0 "$D9_PLATFORM_DIRECTORY/cert.pem")" \
-  -Pandroid.testInstrumentationRunnerArguments.d9AcceptanceAccount="$(cat "$D9_PLATFORM_DIRECTORY/account.txt")" \
-  -Pandroid.testInstrumentationRunnerArguments.d9AcceptanceSpace="$(cat "$D9_PLATFORM_DIRECTORY/space.txt")"
+./gradlew :apps:android:assembleDebug :apps:android:assembleDebugAndroidTest --no-daemon
+adb install -r apps/android/build/outputs/apk/debug/android-debug.apk
+adb install -r apps/android/build/outputs/apk/androidTest/debug/android-debug-androidTest.apk
+adb shell pm clear dev.agenticscheduler.android # Dedicated disposable emulator only; once, before enrollment.
+for android_phase in seed resume; do
+  adb shell am force-stop dev.agenticscheduler.android
+  adb shell am instrument -w \
+    -e class dev.agenticscheduler.android.D9PlatformRelayInstrumentedTest \
+    -e d9AcceptancePhase "$android_phase" \
+    -e d9AcceptanceCertificate "$(base64 -w0 "$D9_PLATFORM_DIRECTORY/cert.pem")" \
+    -e d9AcceptanceAccount "$(cat "$D9_PLATFORM_DIRECTORY/account.txt")" \
+    -e d9AcceptanceSpace "$(cat "$D9_PLATFORM_DIRECTORY/space.txt")" \
+    dev.agenticscheduler.android.test/androidx.test.runner.AndroidJUnitRunner | tee "$D9_PLATFORM_DIRECTORY/android-$android_phase.txt"
+  grep -F 'OK (1 test)' "$D9_PLATFORM_DIRECTORY/android-$android_phase.txt"
+done
+adb shell am instrument -w -e class dev.agenticscheduler.android.AgentConversationSyncControlsInstrumentedTest \
+  dev.agenticscheduler.android.test/androidx.test.runner.AndroidJUnitRunner | tee "$D9_PLATFORM_DIRECTORY/android-consent-ui.txt"
+grep -F 'OK (1 test)' "$D9_PLATFORM_DIRECTORY/android-consent-ui.txt"
 phase verify
 python3 - <<'PY'
 import base64, os, subprocess

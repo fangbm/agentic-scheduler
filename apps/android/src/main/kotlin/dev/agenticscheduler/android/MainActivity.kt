@@ -364,7 +364,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class D8StartupState { Activating, Ready, Blocked }
 @Composable
-private fun AndroidConversationSyncControls(settings: AgentConversationSyncSettings) {
+internal fun AndroidConversationSyncControls(settings: AgentConversationSyncSettings) {
     val scope = rememberCoroutineScope()
     var choices by remember { mutableStateOf<List<AgentConversationSyncSetting>>(emptyList()) }
     var acknowledgement by remember { mutableStateOf(false) }

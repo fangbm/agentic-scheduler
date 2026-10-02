@@ -313,7 +313,7 @@ fun main() = application {
 
 private enum class D8StartupState { Activating, Ready, Blocked }
 @Composable
-private fun DesktopConversationSyncControls(settings: AgentConversationSyncSettings) {
+internal fun DesktopConversationSyncControls(settings: AgentConversationSyncSettings) {
     val scope = rememberCoroutineScope()
     var choices by remember { mutableStateOf<List<AgentConversationSyncSetting>>(emptyList()) }
     var acknowledgement by remember { mutableStateOf(false) }

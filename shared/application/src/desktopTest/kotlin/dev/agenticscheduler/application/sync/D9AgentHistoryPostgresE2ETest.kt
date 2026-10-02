@@ -2,6 +2,7 @@ package dev.agenticscheduler.application.sync
 
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import androidx.room3.useReaderConnection
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.SyncEngine
 import dev.agenticscheduler.application.id.productionUuidV7Generator
@@ -124,9 +125,11 @@ class D9AgentHistoryPostgresE2ETest {
                 assertEquals(if (useParent) 3 else 2, projection.turns.size)
                 assertTrue(projection.conflicts.any { it.kind == AgentSemanticConflictKind.CONCURRENT_TURN_FORK && it.state == AgentSemanticConflictState.OPEN })
                 assertFalse(projection.providerContinuationAllowed)
+                assertEquals(listOf("D9_02_03_CONCURRENT_TURN_FORK_OPEN"), client.durableConflictKinds(t))
                 assertEquals(AgentHistoryContinuationRead.Blocked(AgentHistoryReadBlock.SEMANTIC_CONFLICT), client.reader.read(space, t))
                 client.reopen()
                 assertEquals(projection, client.agent.threadHistoryProjection(space, t))
+                assertEquals(listOf("D9_02_03_CONCURRENT_TURN_FORK_OPEN"), client.durableConflictKinds(t))
             }
         }
     }
@@ -173,6 +176,7 @@ class D9AgentHistoryPostgresE2ETest {
         b.worker(v3 = false).run(space)
         val forward = b.receive.serverCursor(space)
         b.store.delete(b.keyReferences.getValue(7))
+        b.references.remove(b.keyReferences.getValue(7)) // Linux secret-tool clear does not accept double deletion.
         b.install(8, KEY8); b.consent(true)
         assertEquals(AgentSyncBackfillRecoveryState.INCOMPLETE, b.backfill().run(space))
         b.reopen()
@@ -273,6 +277,137 @@ class D9AgentHistoryPostgresE2ETest {
         assertEquals(AgentHistoryContinuationRead.Blocked(AgentHistoryReadBlock.INCOMPLETE), b.reader.read(space, thread(100)))
         a.publish(11); b.worker().run(space)
         assertIs<AgentHistoryContinuationRead.Ready>(b.reader.read(space, thread(100)))
+    }
+
+    @Test fun `late deleted audit retains D7 references and removed links while unrelated missing parent stays pending`() = scenario {
+        a.consent(true); b.consent(true)
+        val deleted = thread(100); val unrelated = thread(200)
+        a.author(1, ThreadCreated(deleted, TITLE, 1)); a.worker().run(space); b.worker().run(space)
+        a.author(2, ThreadDeleted(deleted)); a.worker().run(space); b.worker().run(space)
+        a.business(business(50)); a.worker().run(space); b.worker().run(space)
+        val removedParent = AgentMessageSyncId(id(9990))
+        val action = ActionFinalized(AgentActionSyncId(id(1010)), null, deleted, removedParent, emptyList(), emptyList(), listOf(MutationId(id(50))), FinalAgentActionStatus.SUCCEEDED)
+        a.author(10, action); a.author(11, action.copy(actionId = AgentActionSyncId(id(1011)), threadId = unrelated, sourceMessageId = AgentMessageSyncId(id(9991))))
+        a.worker().run(space); b.worker().run(space)
+        assertEquals(AgentSyncAuditParentState.PARENT_REMOVED_BY_TOMBSTONE, b.agent.auditParentState(space, id(1010), "MESSAGE", removedParent.value))
+        assertEquals(AgentSyncAuditParentState.PARENT_PENDING, b.agent.auditParentState(space, id(1011), "MESSAGE", id(9991)))
+        assertEquals(action, b.agent.operation(space, id(10))!!.agentEvent)
+        assertTrue(b.state.pendingInboundOperations(space).none { it.operationId.value == id(10) })
+        assertTrue(b.state.pendingInboundOperations(space).any { it.operationId.value == id(11) })
+        assertEquals(1, b.journal.timeline().size)
+        b.reopen()
+        assertEquals(AgentSyncAuditParentState.PARENT_REMOVED_BY_TOMBSTONE, b.agent.auditParentState(space, id(1010), "MESSAGE", removedParent.value))
+        assertEquals(AgentSyncAuditParentState.PARENT_PENDING, b.agent.auditParentState(space, id(1011), "MESSAGE", id(9991)))
+        assertTrue(b.agent.isThreadTombstoned(space, deleted.value))
+        assertEquals(emptyList(), b.agent.threadHistoryProjection(space, deleted).turns)
+    }
+
+    @Test fun `authenticated adversarial V3 is quarantined without corrupting Agent or business frontier`() = scenario {
+        a.consent(true); b.consent(true)
+        val original = a.author(1, ThreadCreated(thread(100), TITLE, 1))
+        a.publish(1); b.worker().run(space)
+        val before = b.agent.dvvFrontier(space)
+        val reusedDot = original.copy(operationId = MutationId(id(2)), agentEvent = ThreadCreated(thread(200), "reused-dot", 1))
+        a.publishRaw(id(2), AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = reusedDot)))
+        val result = b.worker().run(space)
+        assertEquals("AGENT_SYNC_INTEGRITY_FAILURE", result.agentHistoryReceiveFailure)
+        assertNotNull(b.receive.quarantine(space, id(2)))
+        assertEquals(before, b.agent.dvvFrontier(space))
+        val unknown = AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = original.copy(operationId = MutationId(id(3))))).replace("\"ThreadCreated\"", "\"FutureEvent\"")
+        a.publishRaw(id(3), unknown)
+        a.publishRaw(id(4), AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = original))) // authenticated outer/inner mismatch
+        b.worker().run(space)
+        assertNotNull(b.receive.quarantine(space, id(3))); assertNotNull(b.receive.quarantine(space, id(4)))
+        assertEquals(before, b.agent.dvvFrontier(space))
+        assertEquals(emptyList(), b.receive.handledDots(space)); assertEquals(emptyList(), b.journal.timeline())
+        assertEquals(original, b.agent.operation(space, id(1)))
+        assertOpaque()
+    }
+
+    @Test fun `remote turns never collide with existing local thread ordinal zero`() = scenario {
+        a.consent(true); b.consent(true)
+        for (replica in listOf(a, b)) {
+            val localThread = AgentThreadId(thread(100).value)
+            replica.local.saveThread(AgentThread(localThread, "local thread", 0))
+            replica.local.appendMessage(AgentMessage(AgentMessageId(id(5000 + replica.n)), localThread, 0, AgentMessageRole.USER, "local ordinal zero", 0))
+        }
+        a.author(1, ThreadCreated(thread(100), TITLE, 1)); a.turn(10, thread(100), MESSAGE)
+        a.worker().run(space); b.worker().run(space)
+        for (replica in listOf(a, b)) {
+            replica.reopen()
+            assertEquals("local ordinal zero", replica.local.messages(AgentThreadId(thread(100).value)).single().content)
+            assertEquals(0L, replica.local.messages(AgentThreadId(thread(100).value)).single().ordinal)
+            assertEquals(MESSAGE, (replica.agent.threadHistoryProjection(space, thread(100)).turns.single().members.single().agentEvent as MessageAppended).content)
+        }
+    }
+
+    @Test fun `V3 bounds preflight whole turn and malformed ciphertext never authenticates`() = scenario {
+        a.consent(true); b.consent(true)
+        a.author(1, ThreadCreated(thread(100), TITLE, 1)); a.turn(10, thread(100), MESSAGE)
+        val lower = a.worker(limits = AgentEnvelopeUploadLimits(64, 100)).run(space)
+        assertIs<SyncUploadResult.NonRetryableFailure>(lower.agentOutbound.failure)
+        assertTrue(a.transport.fetch(space, 0, 100).isEmpty())
+        a.worker().run(space); b.worker().run(space)
+        val projection = b.agent.threadHistoryProjection(space, thread(100))
+        val envelope = a.transport.fetch(space, 0, 100).first().envelope
+        val bytes = decodeCanonicalBase64Url(envelope.ciphertextBase64Url, null, "ciphertext")
+        bytes[bytes.lastIndex] = (bytes.last().toInt() xor 1).toByte()
+        assertIs<DecryptSyncEnvelopeResult.AuthenticationFailed>(b.codec.decrypt(envelope.copy(ciphertextBase64Url = encodeCanonicalBase64Url(bytes))))
+        assertIs<DecryptSyncEnvelopeResult.AuthenticationFailed>(b.codec.decrypt(envelope.copy(mutationId = id(999))))
+        val anotherKey = TinkSyncPayloadAead.generate()
+        val wrong = envelope.copy(ciphertextBase64Url = anotherKey.encryptToBase64Url("{}", SyncEnvelopeBinding.from(envelope).authenticatedAssociatedData()))
+        assertIs<DecryptSyncEnvelopeResult.AuthenticationFailed>(b.codec.decrypt(wrong))
+        assertEquals(projection, b.agent.threadHistoryProjection(space, thread(100)))
+        val huge = AgentSyncOperation(MutationId(id(999)), AgentDvvSnapshot(emptyList(), AgentDot(a.replica, 99)), AgentHlcSnapshot(1, 0, a.replica),
+            MessageAppended(AgentMessageSyncId(id(9991)), thread(100), AgentTurnSyncId(id(9992)), AgentMessageRoleV3.USER, "x".repeat(262144), 1))
+        assertIs<EncryptSyncPayloadResult.InvalidPayload>(a.codec.encrypt(SyncEnvelopeBinding(space, huge.operationId.value, a.deviceId, 7), SyncPayloadV3(operation = huge)))
+        assertEquals(3, a.transport.fetch(space, 0, 100).size)
+    }
+
+    @Test fun `concurrent tombstone releases already pending matching audit record dependencies only`() = scenario {
+        a.consent(true); b.consent(true)
+        val t = thread(100)
+        a.author(1, ThreadCreated(t, TITLE, 1)); a.worker().run(space); b.worker().run(space)
+        val action = ActionFinalized(AgentActionSyncId(id(1010)), null, t, AgentMessageSyncId(id(9990)), emptyList(), emptyList(), emptyList(), FinalAgentActionStatus.SUCCEEDED)
+        b.author(10, action); b.worker().run(space); a.worker().run(space)
+        assertTrue(a.agent.pendingDependencies(space, id(10)).any { it.kind == AgentSyncDependencyKind.PARENT_RECORD })
+        a.author(2, ThreadDeleted(t)) // Does not observe the unhandled remote audit dot.
+        a.worker().run(space); b.worker().run(space); a.worker().run(space)
+        for (replica in listOf(a, b)) {
+            assertEquals(emptyList(), replica.agent.pendingDependencies(space, id(10)))
+            assertTrue(replica.state.pendingInboundOperations(space).none { it.operationId.value == id(10) })
+            assertEquals(AgentSyncAuditParentState.PARENT_REMOVED_BY_TOMBSTONE, replica.agent.auditParentState(space, id(1010), "MESSAGE", id(9990)))
+            assertTrue(replica.agent.isThreadTombstoned(space, t.value))
+            replica.reopen()
+            assertEquals(emptyList(), replica.agent.pendingDependencies(space, id(10)))
+        }
+    }
+
+    @Test fun `concurrent identical KEEP decisions converge and unobserved resolution fails closed`() = scenario {
+        a.consent(true); b.consent(true)
+        val t = thread(100)
+        a.author(1, ThreadCreated(t, TITLE, 1)); a.worker().run(space); b.worker().run(space)
+        a.author(2, ThreadDeleted(t)); b.turn(10, t, MESSAGE)
+        a.worker().run(space); b.worker().run(space); a.worker().run(space)
+        val participants = a.agent.threadHistoryProjection(space, t).conflicts.single { it.kind == AgentSemanticConflictKind.THREAD_DELETE_APPEND }.participantOperationIds
+        val attacker = AgentReplicaId(id(555))
+        val invalid = AgentSyncOperation(MutationId(id(20)), AgentDvvSnapshot(emptyList(), AgentDot(attacker, 0)), AgentHlcSnapshot(1, 0, attacker),
+            ThreadDeleteConflictResolved(t, participants, AgentThreadDeleteResolution.KEEP_DELETION, null))
+        a.publishRaw(id(20), AgentSyncWireCodec.encodePayload(SyncPayloadV3(operation = invalid)))
+        val rejected = b.worker().run(space)
+        assertEquals("AGENT_SYNC_INTEGRITY_FAILURE", rejected.agentHistoryReceiveFailure)
+        assertNull(b.agent.dvvFrontier(space).components[attacker])
+        assertTrue(b.agent.threadHistoryProjection(space, t).conflicts.any { it.state == AgentSemanticConflictState.OPEN })
+        a.resolve(30, t, participants); b.resolve(40, t, participants)
+        a.worker().run(space); b.worker().run(space); a.worker().run(space)
+        assertEquals(a.agent.threadHistoryProjection(space, t), b.agent.threadHistoryProjection(space, t))
+        for (replica in listOf(a, b)) {
+            val projection = replica.agent.threadHistoryProjection(space, t)
+            assertTrue(projection.tombstoned); assertTrue(projection.turns.isEmpty())
+            assertTrue(projection.conflicts.none { it.state == AgentSemanticConflictState.OPEN })
+            assertEquals(listOf(MutationId(id(30)), MutationId(id(40))), projection.conflicts.single().resolutionOperationIds)
+            replica.reopen(); assertEquals(projection, replica.agent.threadHistoryProjection(space, t))
+        }
     }
 
     private fun scenario(body: suspend Fixture.() -> Unit) {
@@ -410,6 +545,12 @@ class D9AgentHistoryPostgresE2ETest {
             agent.commitExplicitUserDeleteResolution(space, AgentSyncExplicitDeleteResolution(MutationId(id(index)), AgentHlcSnapshot(index.toLong(), 0, replica),
                 ThreadDeleteConflictResolved(thread, participants, if (replacement == null) AgentThreadDeleteResolution.KEEP_DELETION else AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, replacement), events))
         suspend fun business(op: SyncOperation) = transactions.inWriteTransaction { journal.appendCommittedMutation(CommittedMutation(op, 1)) }
+        suspend fun durableConflictKinds(thread: AgentThreadSyncId): List<String> = db.useReaderConnection { connection ->
+            connection.usePrepared("SELECT conflict_kind FROM agent_sync_conflict WHERE sync_space_id = ? AND entity_kind = 'THREAD' AND entity_id = ? AND conflict_kind GLOB 'D9_02_03_*' ORDER BY conflict_kind") { row ->
+                row.bindText(1, space.value); row.bindText(2, thread.value)
+                buildList { while (row.step()) add(row.getText(0)) }
+            }
+        }
         suspend fun publish(index: Int): EncryptedEnvelopeV1 {
             val op = requireNotNull(agent.operation(space, id(index)))
             val epoch = requireNotNull(ring.state(space)).activeEncryptionEpoch
@@ -418,6 +559,14 @@ class D9AgentHistoryPostgresE2ETest {
                 state.retainEnvelopes(space, listOf(it))
             }
             assertTrue(transport.upload(envelope).let { it is SyncUploadResult.Stored || it is SyncUploadResult.Idempotent })
+            return envelope
+        }
+        suspend fun publishRaw(operationId: String, payload: String): EncryptedEnvelopeV1 {
+            val key = assertIs<CurrentEncryptionKeyLookup.Available>(keys.currentEncryptionKey(space))
+            val binding = SyncEnvelopeBinding(space, operationId, deviceId, key.keyEpoch)
+            val envelope = EncryptedEnvelopeV1(syncSpaceId = space, mutationId = operationId, senderDeviceId = deviceId, keyEpoch = key.keyEpoch,
+                ciphertextBase64Url = key.aead.encryptToBase64Url(payload, binding.authenticatedAssociatedData()))
+            assertIs<SyncUploadResult.Stored>(transport.upload(envelope))
             return envelope
         }
         fun worker(v3: Boolean = true, limits: AgentEnvelopeUploadLimits = AgentEnvelopeUploadLimits(1048576, 1200000)): SyncTransportWorker {
