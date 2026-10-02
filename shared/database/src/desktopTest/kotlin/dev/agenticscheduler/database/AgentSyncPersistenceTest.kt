@@ -44,7 +44,7 @@ class AgentSyncPersistenceTest {
         { AgenticSchedulerDatabaseConstructor.initialize() },
     )
 
-    @Test fun `v12 to v13 preserves D9 local state and fresh schema parity`() = runBlocking {
+    @Test fun `v12 to latest preserves D9 local state and fresh schema parity`() = runBlocking {
         val v11 = migrations.createDatabase(11)
         v11.exec("INSERT INTO mutation_record(mutation_id, origin, dvv_json, hlc_physical_millis, hlc_logical, hlc_replica_id, committed_at_epoch_millis, outbound_eligible) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", id(90), "USER", "{}", 1L, 0L, id(91), 2L, 1L)
         v11.close()
@@ -66,7 +66,7 @@ class AgentSyncPersistenceTest {
         v12.exec("INSERT INTO sync_space_cursor(sync_space_id, server_cursor) VALUES (?, ?)", "personal", 44L)
         v12.close()
 
-        val upgraded = migrations.runMigrationsAndValidate(13, listOf(AgentSyncMigration12To13))
+        val upgraded = migrations.runMigrationsAndValidate(14, listOf(AgentSyncMigration12To13, AgentSyncTransportMigration13To14))
         try {
             AgentSchema.validate(upgraded)
             AgentSyncSchema.validate(upgraded)
@@ -80,7 +80,7 @@ class AgentSyncPersistenceTest {
             assertEquals("secure://provider/key", upgraded.scalarText("SELECT credential_secret_ref FROM provider_config WHERE config_id = ?", id(8)))
             assertEquals("44", upgraded.scalarText("SELECT server_cursor FROM sync_space_cursor WHERE sync_space_id = ?", "personal"))
             val agentTableNames = upgraded.agentSyncTableNames().filterNot { it.endsWith("_idx") }.toSet()
-            assertEquals(setOf("agent_sync_operation_identity", "agent_sync_inbox", "agent_sync_outbox", "agent_sync_space_state", "agent_sync_dvv_frontier", "agent_sync_handled_dot", "agent_sync_pending_dependency", "agent_sync_turn_stage", "agent_sync_turn_member", "agent_sync_active_turn_projection", "agent_sync_thread_tombstone", "agent_sync_conflict", "agent_sync_audit_parent_link", "agent_sync_backfill_state"), agentTableNames)
+            assertEquals(setOf("agent_sync_operation_identity", "agent_sync_inbox", "agent_sync_outbox", "agent_sync_space_state", "agent_sync_dvv_frontier", "agent_sync_handled_dot", "agent_sync_pending_dependency", "agent_sync_turn_stage", "agent_sync_turn_member", "agent_sync_active_turn_projection", "agent_sync_thread_tombstone", "agent_sync_conflict", "agent_sync_audit_parent_link", "agent_sync_backfill_state", "agent_sync_transport_consent", "agent_sync_outbound_envelope"), agentTableNames)
             agentTableNames.forEach { table -> assertEquals(0L, upgraded.scalarLong("SELECT count(*) FROM $table"), "$table must be empty after migration") }
 
             val migratedSchema = upgraded.schemaSignatures()

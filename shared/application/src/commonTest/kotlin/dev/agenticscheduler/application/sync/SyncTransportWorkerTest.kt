@@ -12,6 +12,7 @@ import dev.agenticscheduler.application.persistence.SyncReceiveRepository
 import dev.agenticscheduler.sync.DeviceId
 import dev.agenticscheduler.sync.DvvSnapshot
 import dev.agenticscheduler.sync.DotSnapshot
+import dev.agenticscheduler.sync.VersionComponent
 import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.EventImage
 import dev.agenticscheduler.sync.EventPut
@@ -128,7 +129,8 @@ class SyncTransportWorkerTest {
         )
 
         val denied = worker().run(SyncSpaceId("space"))
-        assertNotNull(denied.stoppedOnFailure)
+        assertNull(denied.stoppedOnFailure)
+        assertEquals(listOf(agent.mutationId), denied.heldBusinessOperationIds)
         assertEquals(0, transport.encryptions)
         assertEquals(0, transport.uploaded.size)
         assertNull(outbound.value)
@@ -152,7 +154,65 @@ class SyncTransportWorkerTest {
         },
     )
 
-    private class CountingKeys(private val onEncrypt: () -> Unit) : SyncPayloadKeyProvider, CurrentEncryptionKeyProvider {
+    @Test
+    fun `failed eligible upload does not label independent unattempted work held`() = runBlocking<Unit> {
+        val first = operation()
+        val second = independentOperation()
+        val transport = MemoryTransport()
+        val result = workerForOperations(listOf(first, second), transport).run(SyncSpaceId("space"))
+        assertTrue(result.stoppedOnFailure is SyncUploadResult.RetryableFailure)
+        assertEquals(emptyList(), result.heldBusinessOperationIds)
+        assertEquals(listOf(first.mutationId), transport.uploaded.map { it.mutationId })
+    }
+
+    @Test
+    fun `missing encryption key does not label eligible pending work held`() = runBlocking<Unit> {
+        val transport = MemoryTransport()
+        val result = workerForOperations(listOf(operation(), independentOperation()), transport,
+            CountingKeys(missing = true) {}).run(SyncSpaceId("space"))
+        assertTrue(result.stoppedOnFailure is SyncUploadResult.RetryableFailure)
+        assertEquals(emptyList(), result.heldBusinessOperationIds)
+        assertEquals(emptyList(), transport.uploaded)
+    }
+
+    @Test
+    fun `held V2 and causal successor remain held while independent V1 publishes`() = runBlocking<Unit> {
+        val agent = operation().copy(origin = MutationOrigin.Agent("00000000-0000-7000-8000-000000000092"))
+        val successor = operation().copy(mutationId = "successor",
+            dvv = DvvSnapshot(listOf(VersionComponent("replica", 1)), DotSnapshot("replica", 2)))
+        val independent = independentOperation()
+        val transport = MemoryTransport().apply { shouldFail = false }
+        val result = workerForOperations(listOf(agent, successor, independent), transport).run(SyncSpaceId("space"))
+        assertNull(result.stoppedOnFailure)
+        assertEquals(listOf(agent.mutationId, successor.mutationId), result.heldBusinessOperationIds)
+        assertEquals(1, result.uploaded)
+        assertEquals(listOf(independent.mutationId), transport.uploaded.map { it.mutationId })
+    }
+
+    @Test
+    fun `independent upload failure preserves only compatibility and causal holds`() = runBlocking<Unit> {
+        val agent = operation().copy(origin = MutationOrigin.Agent("00000000-0000-7000-8000-000000000092"))
+        val successor = operation().copy(mutationId = "successor",
+            dvv = DvvSnapshot(listOf(VersionComponent("replica", 1)), DotSnapshot("replica", 2)))
+        val transport = MemoryTransport()
+        val result = workerForOperations(listOf(agent, successor, independentOperation()), transport).run(SyncSpaceId("space"))
+        assertTrue(result.stoppedOnFailure is SyncUploadResult.RetryableFailure)
+        assertEquals(listOf(agent.mutationId, successor.mutationId), result.heldBusinessOperationIds)
+        assertEquals(listOf("independent"), transport.uploaded.map { it.mutationId })
+    }
+
+    private fun independentOperation() = operation().copy(mutationId = "independent",
+        dvv = DvvSnapshot(emptyList(), DotSnapshot("independent-replica", 1)),
+        hlc = HlcSnapshot(1, 0, "independent-replica"))
+
+    private fun workerForOperations(operations: List<SyncOperation>, transport: SyncTransport, keys: CountingKeys = CountingKeys {}) = SyncTransportWorker(
+        history = MemoryHistory(operations.map { CommittedMutation(it, 0, true) }),
+        outbound = MemoryOutbound(), receive = MemoryReceive(), codec = AuthenticatedSyncEnvelopeCodec(keys, keys),
+        encryptionKeys = keys, deviceId = DeviceId("device"), transport = transport,
+        receiveGateway = SyncEnvelopeReceiver { _, _ -> error("fetch is empty") },
+    )
+
+    private class CountingKeys(private val missing: Boolean = false, private val onEncrypt: () -> Unit) : SyncPayloadKeyProvider, CurrentEncryptionKeyProvider {
         private val aead = object : SyncPayloadAead {
             override fun encryptToBase64Url(plaintextUtf8: String, associatedDataUtf8: String): String {
                 onEncrypt()
@@ -161,7 +221,8 @@ class SyncTransportWorkerTest {
             override fun decryptFromBase64Url(ciphertextBase64Url: String, associatedDataUtf8: String): String = error("unused")
         }
         override suspend fun keyFor(syncSpaceId: SyncSpaceId, keyEpoch: Long) = SyncPayloadKeyLookup.Available(aead)
-        override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId) = CurrentEncryptionKeyLookup.Available(0, aead)
+        override suspend fun currentEncryptionKey(syncSpaceId: SyncSpaceId): CurrentEncryptionKeyLookup =
+            if (missing) CurrentEncryptionKeyLookup.Missing else CurrentEncryptionKeyLookup.Available(0, aead)
     }
 
     private fun operation() = SyncOperation(

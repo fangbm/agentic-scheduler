@@ -121,7 +121,10 @@ internal object AgentSyncSchema {
     }
 
     internal fun validateCatalog(actualCatalogSql: Map<String, String>) {
-        val normalized = actualCatalogSql.mapValues { (_, sql) -> normalizeCatalogSql(sql) }
+        // v14 transport tables have their own mandatory structural validator in onOpen.
+        // Exclude only those exact declared names; unknown Agent tables/indexes still fail.
+        val normalized = actualCatalogSql.filterKeys { it !in AgentSyncTransportSchema.tableNames }
+            .mapValues { (_, sql) -> normalizeCatalogSql(sql) }
         check(normalized == expectedCatalogSql) {
             "Agent sync schema catalog is incompatible. Expected ${expectedCatalogSql.keys.sorted()}, found ${normalized.keys.sorted()}."
         }
@@ -149,9 +152,11 @@ internal object AgentSchemaCallback : RoomDatabase.Callback() {
     override suspend fun onCreate(connection: SQLiteConnection) {
         AgentSchema.create(connection)
         AgentSyncSchema.create(connection)
+        AgentSyncTransportSchema.create(connection)
     }
     override suspend fun onOpen(connection: SQLiteConnection) {
         AgentSchema.validate(connection)
         AgentSyncSchema.validate(connection)
+        AgentSyncTransportSchema.validate(connection)
     }
 }

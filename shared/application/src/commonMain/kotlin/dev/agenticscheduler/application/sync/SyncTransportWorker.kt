@@ -1,16 +1,8 @@
 package dev.agenticscheduler.application.sync
 
-import dev.agenticscheduler.application.persistence.HistoryRepository
-import dev.agenticscheduler.application.persistence.CommittedMutation
-import dev.agenticscheduler.application.persistence.StoredOutboundEnvelope
-import dev.agenticscheduler.application.persistence.SyncOutboundEnvelopeRepository
-import dev.agenticscheduler.application.persistence.SyncReceiveRepository
-import dev.agenticscheduler.sync.DeviceId
-import dev.agenticscheduler.sync.EncryptedEnvelopeV1
-import dev.agenticscheduler.sync.SyncPayloadV1
-import dev.agenticscheduler.sync.SyncPayloadV2
-import dev.agenticscheduler.sync.MutationOrigin
-import dev.agenticscheduler.sync.SyncSpaceId
+import dev.agenticscheduler.application.persistence.*
+import dev.agenticscheduler.sync.*
+import kotlinx.coroutines.CancellationException
 
 sealed interface SyncUploadResult {
     data class Stored(val serverCursor: Long) : SyncUploadResult
@@ -40,15 +32,17 @@ data class SyncTransportRunResult(
     val uploaded: Int,
     val fetched: Int,
     val applied: Int,
+    /** Business outbound failure only; compatibility holds are reported separately. */
     val stoppedOnFailure: SyncUploadResult? = null,
     val stoppedOnReceiveFailure: String? = null,
+    /** Compatibility or unsatisfied business causality only, excluding eligible failed/unattempted work. */
+    val heldBusinessOperationIds: List<String> = emptyList(),
+    val agentOutbound: AgentTransportProgress = AgentTransportProgress(),
+    val stoppedOnFetchFailure: SyncUploadResult? = null,
+    val agentHistoryReceiveFailure: String? = null,
 )
 
-/**
- * Uploads committed operations only after their exact ciphertext envelope is
- * durable locally, then feeds fetched envelopes through the authenticated
- * receive gateway. A failed network call never rolls back local history.
- */
+/** Exact durable ciphertext precedes upload. Business, Agent and inbound progress independently. */
 class SyncTransportWorker(
     private val history: HistoryRepository,
     private val outbound: SyncOutboundEnvelopeRepository,
@@ -59,87 +53,120 @@ class SyncTransportWorker(
     private val transport: SyncTransport,
     private val receiveGateway: SyncEnvelopeReceiver,
     private val agentOutboundGate: AgentOutboundCompatibilityGate = AgentOutboundCompatibilityGate { false },
+    /** Absent in production composition until the OD-012 release gate is satisfied. */
+    private val agentHistoryTransport: AgentHistoryOutboundTransport? = null,
 ) {
     suspend fun run(syncSpaceId: SyncSpaceId, fetchLimit: Int = 100): SyncTransportRunResult {
         require(fetchLimit > 0)
         var uploaded = 0
-        history.timeline().filter(CommittedMutation::outboundEligible).forEach { committed ->
-            val operation = committed.operation
-            if (operation.origin is MutationOrigin.Agent && !agentOutboundGate.enabled(syncSpaceId)) {
-                return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Agent-origin sync requires device-local upgrade acknowledgement."))
+        var outboundFailure: SyncUploadResult? = null
+        val held = mutableListOf<String>()
+        try {
+            val timeline = history.timeline()
+            val coverage = mutableMapOf<String, MutableSet<Long>>()
+            receive.handledDots(syncSpaceId).forEach { coverage.getOrPut(it.replicaId.value) { mutableSetOf() }.add(it.counter) }
+            val pending = timeline.filter(CommittedMutation::outboundEligible).toMutableList()
+            // Only authenticated received dots or acknowledged ciphertext for THIS space prove sharing.
+            pending.toList().forEach { committed ->
+                if (outbound.envelope(syncSpaceId, committed.operation.mutationId)?.uploaded == true) {
+                    coverage.getOrPut(committed.operation.dvv.dot.replicaId) { mutableSetOf() }.add(committed.operation.dvv.dot.counter)
+                    pending.remove(committed)
+                }
             }
-            val existing = outbound.envelope(syncSpaceId, operation.mutationId)
-            val stored = existing ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {
-                CurrentEncryptionKeyLookup.Missing -> return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Missing active content key."))
-                is CurrentEncryptionKeyLookup.Available -> when (val encrypted =
-                    if (operation.origin is MutationOrigin.Agent) codec.encrypt(
-                        SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
-                        SyncPayloadV2(operation = operation),
-                    ) else codec.encrypt(
-                        SyncEnvelopeBinding(syncSpaceId, operation.mutationId, deviceId, key.keyEpoch),
-                        SyncPayloadV1(operation = operation),
-                    )
-                ) {
-                    is EncryptSyncPayloadResult.Encrypted -> {
-                        val value = StoredOutboundEnvelope(syncSpaceId, operation.mutationId, encrypted.envelope, false)
-                        outbound.save(value)
-                        value
+            val gate = agentOutboundGate.enabled(syncSpaceId)
+            fun eligible(committed: CommittedMutation): Boolean {
+                val op = committed.operation
+                return (op.origin !is MutationOrigin.Agent || gate) &&
+                    op.dvv.context.all { component ->
+                        (coverage[component.replicaId]?.maxOrNull() ?: -1L) >= component.counter &&
+                            pending.none { prerequisite -> prerequisite.operation.dvv.dot.let { dot ->
+                                dot.replicaId == component.replicaId && dot.counter <= component.counter
+                            } }
                     }
-                    EncryptSyncPayloadResult.MissingContentKey -> return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Missing active content key."))
-                    is EncryptSyncPayloadResult.NonActiveKeyEpoch -> return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.RetryableFailure("Active key epoch changed."))
-                    is EncryptSyncPayloadResult.InvalidPayload -> return SyncTransportRunResult(uploaded, 0, 0, SyncUploadResult.IntegrityConflict(encrypted.reason))
-                }
             }
-            if (!stored.uploaded) {
-                val uploadResult = try {
-                    transport.upload(stored.envelope)
-                } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                    throw cancelled
-                } catch (failure: SyncTransportException) {
-                    failure.asUploadFailure()
-                }
-                when (val result = uploadResult) {
-                    is SyncUploadResult.Stored, is SyncUploadResult.Idempotent -> {
-                        outbound.markUploaded(syncSpaceId, operation.mutationId)
-                        uploaded++
+            try {
+                while (pending.isNotEmpty()) {
+                    val candidate = pending.firstOrNull(::eligible) ?: break
+                    val op = candidate.operation
+                    val stored = outbound.envelope(syncSpaceId, op.mutationId) ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {
+                        CurrentEncryptionKeyLookup.Missing -> { outboundFailure = SyncUploadResult.RetryableFailure("Missing active content key."); break }
+                        is CurrentEncryptionKeyLookup.Available -> {
+                            val binding = SyncEnvelopeBinding(syncSpaceId, op.mutationId, deviceId, key.keyEpoch)
+                            val encrypted = if (op.origin is MutationOrigin.Agent) codec.encrypt(binding, SyncPayloadV2(operation = op))
+                                else codec.encrypt(binding, SyncPayloadV1(operation = op))
+                            if (encrypted !is EncryptSyncPayloadResult.Encrypted) { outboundFailure = encrypted.uploadFailure(); break }
+                            StoredOutboundEnvelope(syncSpaceId, op.mutationId, encrypted.envelope, false).also { outbound.save(it) }
+                        }
                     }
-                    is SyncUploadResult.RetryableFailure, is SyncUploadResult.IntegrityConflict, is SyncUploadResult.NonRetryableFailure ->
-                        return SyncTransportRunResult(uploaded, 0, 0, result)
+                    when (val result = upload(transport, stored.envelope)) {
+                        is SyncUploadResult.Stored, is SyncUploadResult.Idempotent -> {
+                            outbound.markUploaded(syncSpaceId, op.mutationId)
+                            uploaded++
+                            pending.remove(candidate)
+                            coverage.getOrPut(op.dvv.dot.replicaId) { mutableSetOf() }.add(op.dvv.dot.counter)
+                        }
+                        else -> { outboundFailure = result; break }
+                    }
                 }
+            } finally {
+                held += pending.filterNot(::eligible).map { it.operation.mutationId }
             }
-        }
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (failure: Exception) { outboundFailure = transportFailure(failure) }
+
+        val agentProgress = try { agentHistoryTransport?.upload(syncSpaceId) ?: AgentTransportProgress()
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (failure: Exception) { AgentTransportProgress(failure = transportFailure(failure)) }
 
         var fetched = 0
         var applied = 0
-        var cursor = receive.serverCursor(syncSpaceId)
-        while (true) {
-            val batch = try {
-                transport.fetch(syncSpaceId, cursor, fetchLimit)
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (failure: SyncTransportException) {
-                return SyncTransportRunResult(uploaded, fetched, applied, failure.asUploadFailure())
-            }
-            if (batch.isEmpty()) break
-            batch.forEach { remote ->
-                val result = receiveGateway.receive(
-                    dev.agenticscheduler.sync.SyncWireCodec.encodeEnvelope(remote.envelope),
-                    remote.serverCursor,
-                )
-                fetched++
-                when (result) {
-                    is EncryptedSyncReceiveResult.Handled -> {
-                        applied++
-                        cursor = maxOf(cursor, remote.serverCursor)
+        var fetchFailure: SyncUploadResult? = null
+        var receiveFailure: String? = null
+        var agentReceiveFailure: String? = null
+        try {
+            var cursor = receive.serverCursor(syncSpaceId)
+            receiveLoop@ while (true) {
+                val batch = try { transport.fetch(syncSpaceId, cursor, fetchLimit)
+                } catch (cancelled: CancellationException) { throw cancelled
+                } catch (failure: Exception) { fetchFailure = transportFailure(failure); break }
+                if (batch.isEmpty()) break
+                for (remote in batch) {
+                    if (remote.envelope.syncSpaceId != syncSpaceId || remote.serverCursor <= cursor) {
+                        receiveFailure = "INVALID_SERVER_ENVELOPE"; break@receiveLoop
                     }
-                    is EncryptedSyncReceiveResult.SecurityFailure ->
-                        return SyncTransportRunResult(uploaded, fetched, applied, stoppedOnReceiveFailure = result.toString())
-                    is EncryptedSyncReceiveResult.ProtocolFailure ->
-                        return SyncTransportRunResult(uploaded, fetched, applied, stoppedOnReceiveFailure = result.toString())
+                    fetched++
+                    when (val result = receiveGateway.receive(SyncWireCodec.encodeEnvelope(remote.envelope), remote.serverCursor)) {
+                        is EncryptedSyncReceiveResult.Handled, is EncryptedSyncReceiveResult.AgentHandled -> {
+                            val agentFailure = when (result) {
+                                is EncryptedSyncReceiveResult.Handled -> result.agentHistoryFailure
+                                is EncryptedSyncReceiveResult.AgentHandled -> result.agentHistoryFailure
+                            }
+                            if (agentFailure != null) agentReceiveFailure = agentFailure
+                            applied++
+                            cursor = maxOf(cursor, remote.serverCursor)
+                        }
+                        else -> { receiveFailure = result.toString(); break@receiveLoop }
+                    }
                 }
+                if (batch.size < fetchLimit) break
             }
-            if (batch.size < fetchLimit) break
-        }
-        return SyncTransportRunResult(uploaded, fetched, applied)
+        } catch (cancelled: CancellationException) { throw cancelled
+        } catch (_: Exception) { receiveFailure = "SYNC_RECEIVE_FAILURE" }
+        return SyncTransportRunResult(uploaded, fetched, applied, outboundFailure, receiveFailure, held, agentProgress, fetchFailure, agentReceiveFailure)
     }
+}
+
+internal suspend fun upload(transport: SyncTransport, envelope: EncryptedEnvelopeV1): SyncUploadResult = try {
+    transport.upload(envelope)
+} catch (cancelled: CancellationException) { throw cancelled
+} catch (failure: Exception) { transportFailure(failure) }
+
+internal fun transportFailure(failure: Exception): SyncUploadResult =
+    if (failure is SyncTransportException) failure.asUploadFailure() else SyncUploadResult.RetryableFailure("TRANSPORT_OR_PERSISTENCE_FAILURE")
+
+internal fun EncryptSyncPayloadResult.uploadFailure(): SyncUploadResult = when (this) {
+    EncryptSyncPayloadResult.MissingContentKey -> SyncUploadResult.RetryableFailure("Missing active content key.")
+    is EncryptSyncPayloadResult.NonActiveKeyEpoch -> SyncUploadResult.RetryableFailure("Active key epoch changed.")
+    is EncryptSyncPayloadResult.InvalidPayload -> if (reason == "AGENT_SYNC_PAYLOAD_TOO_LARGE") SyncUploadResult.NonRetryableFailure(reason) else SyncUploadResult.IntegrityConflict(reason)
+    is EncryptSyncPayloadResult.Encrypted -> error("Encrypted payload is not a failure.")
 }

@@ -5,6 +5,8 @@ import dev.agenticscheduler.sync.EncryptedEnvelopeV1
 import dev.agenticscheduler.sync.EnvelopeDecodeResult
 import dev.agenticscheduler.sync.SyncPayloadV1
 import dev.agenticscheduler.sync.SyncPayloadV2
+import dev.agenticscheduler.sync.SyncPayloadV3
+import dev.agenticscheduler.sync.AgentSyncWireCodec
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.SyncSpaceId
 import dev.agenticscheduler.sync.SyncWireCodec
@@ -101,8 +103,19 @@ class AuthenticatedSyncEnvelopeCodec(
         return encryptEncoded(binding, payload.operation, SyncWireCodec.encodePayload(payload))
     }
 
+    suspend fun encrypt(binding: SyncEnvelopeBinding, payload: SyncPayloadV3): EncryptSyncPayloadResult {
+        val encoded = try { AgentSyncWireCodec.encodePayload(payload) } catch (failure: IllegalArgumentException) {
+            return EncryptSyncPayloadResult.InvalidPayload(failure.message ?: "Invalid V3 payload.")
+        }
+        return encryptEncoded(binding, payload.operation.operationId.value, encoded)
+    }
+
     private suspend fun encryptEncoded(binding: SyncEnvelopeBinding, operation: SyncOperation, encodedPayload: String): EncryptSyncPayloadResult {
-        if (operation.mutationId != binding.mutationId) {
+        return encryptEncoded(binding, operation.mutationId, encodedPayload)
+    }
+
+    private suspend fun encryptEncoded(binding: SyncEnvelopeBinding, operationId: String, encodedPayload: String): EncryptSyncPayloadResult {
+        if (operationId != binding.mutationId) {
             return EncryptSyncPayloadResult.InvalidPayload("Outer and inner MutationId differ.")
         }
         val key = when (val lookup = encryptionKeys.currentEncryptionKey(binding.syncSpaceId)) {

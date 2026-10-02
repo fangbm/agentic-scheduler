@@ -155,7 +155,9 @@ class ActiveSyncCatchUpTrigger(
         is ActiveSyncRuntimeCatchUpResult.RotationFailed ->
             result == RotationPackageCatchUpResult.FetchFailed
         is ActiveSyncRuntimeCatchUpResult.Completed ->
-            transport.stoppedOnFailure is SyncUploadResult.RetryableFailure
+            transport.stoppedOnFailure is SyncUploadResult.RetryableFailure ||
+                transport.stoppedOnFetchFailure is SyncUploadResult.RetryableFailure ||
+                transport.agentOutbound.failure is SyncUploadResult.RetryableFailure
         null -> false
     }
 
@@ -169,9 +171,12 @@ class ActiveSyncCatchUpTrigger(
         }
         is ActiveSyncRuntimeCatchUpResult.Completed -> when {
             transport.stoppedOnReceiveFailure != null -> "SYNC_RECEIVE_FAILURE"
+            transport.stoppedOnFetchFailure is SyncUploadResult.NonRetryableFailure -> transport.stoppedOnFetchFailure.detail
             transport.stoppedOnFailure is SyncUploadResult.IntegrityConflict -> "SYNC_INTEGRITY_FAILURE"
             transport.stoppedOnFailure is SyncUploadResult.NonRetryableFailure ->
                 (transport.stoppedOnFailure as SyncUploadResult.NonRetryableFailure).detail
+            transport.agentOutbound.failure is SyncUploadResult.IntegrityConflict -> "AGENT_SYNC_INTEGRITY_FAILURE"
+            transport.agentOutbound.failure is SyncUploadResult.NonRetryableFailure -> transport.agentOutbound.failure.detail
             else -> null
         }
         null -> null

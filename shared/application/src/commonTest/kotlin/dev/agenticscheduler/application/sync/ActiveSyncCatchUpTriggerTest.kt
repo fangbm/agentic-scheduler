@@ -153,4 +153,94 @@ class ActiveSyncCatchUpTriggerTest {
         rotations = emptyList(),
         transport = SyncTransportRunResult(0, 0, 0),
     )
+
+    @Test
+    fun `Agent transient failure retries with bounded backoff`() = runBlocking<Unit> {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val calls = Channel<Int>(Channel.UNLIMITED)
+        var count = 0
+        val trigger = ActiveSyncCatchUpTrigger(
+            scope, flowOf(0L), catchUp = {
+                calls.send(++count)
+                agentCatchUp(if (count < 3) AgentTransportProgress(failure = SyncUploadResult.RetryableFailure("offline")) else AgentTransportProgress())
+            },
+            initialRetryDelayMillis = 10, maxRetryDelayMillis = 20,
+        )
+        try {
+            trigger.start()
+            assertEquals(1, withTimeout(2_000) { calls.receive() })
+            assertEquals(2, withTimeout(2_000) { calls.receive() })
+            assertEquals(3, withTimeout(2_000) { calls.receive() })
+            assertNull(trigger.stoppedReason.value)
+            assertNull(withTimeoutOrNull(100) { calls.receive() })
+        } finally { trigger.close(); scope.cancel() }
+    }
+
+    @Test
+    fun `Agent nonretryable failure stops periodic retry until explicit retry`() = runBlocking<Unit> {
+        assertAgentTerminal(SyncUploadResult.NonRetryableFailure("AGENT_SYNC_PAYLOAD_TOO_LARGE"), "AGENT_SYNC_PAYLOAD_TOO_LARGE")
+    }
+
+    @Test
+    fun `Agent integrity conflict is surfaced and stops automatic retry`() = runBlocking<Unit> {
+        assertAgentTerminal(SyncUploadResult.IntegrityConflict("unequal immutable ID"), "AGENT_SYNC_INTEGRITY_FAILURE")
+    }
+
+    private suspend fun assertAgentTerminal(failure: SyncUploadResult, expectedReason: String) {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val calls = Channel<Int>(Channel.UNLIMITED)
+        val reasons = Channel<String>(Channel.UNLIMITED)
+        val periods = Channel<Long>(Channel.UNLIMITED)
+        val ticks = Channel<Unit>(Channel.CONFLATED)
+        var count = 0
+        val trigger = ActiveSyncCatchUpTrigger(
+            scope, flowOf(0L), catchUp = {
+                calls.send(++count)
+                agentCatchUp(if (count == 1) AgentTransportProgress(failure = failure) else AgentTransportProgress())
+            },
+            onNonRetryableFailure = { reasons.trySend(it) },
+            pollingIntervalMillis = 10, jitterUnit = { 0.0 },
+            waitMillis = { periods.send(it); ticks.receive() },
+        )
+        try {
+            trigger.start()
+            assertEquals(1, withTimeout(2_000) { calls.receive() })
+            assertEquals(expectedReason, withTimeout(2_000) { reasons.receive() })
+            assertEquals(expectedReason, trigger.stoppedReason.value)
+            trigger.setForeground(true)
+            withTimeout(2_000) { periods.receive() }
+            ticks.send(Unit)
+            // Completion of the tick is observed before checking that it did not schedule work.
+            withTimeout(2_000) { periods.receive() }
+            trigger.requestCatchUp()
+            assertNull(withTimeoutOrNull(100) { calls.receive() })
+            trigger.retryNow()
+            assertNull(trigger.stoppedReason.value)
+            assertEquals(2, withTimeout(2_000) { calls.receive() })
+        } finally { trigger.close(); scope.cancel() }
+    }
+
+    @Test
+    fun `Agent consent off remains a nonfailure and permits later automatic catchup`() = runBlocking<Unit> {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val results = Channel<Unit>(Channel.UNLIMITED)
+        val trigger = ActiveSyncCatchUpTrigger(scope, emptyFlow(), catchUp = {
+            results.send(Unit)
+            agentCatchUp(AgentTransportProgress(consentOff = true, heldOperationIds = listOf("held")))
+        })
+        try {
+            trigger.start()
+            trigger.requestCatchUp()
+            withTimeout(2_000) { results.receive() }
+            assertNull(trigger.stoppedReason.value)
+            assertNull(withTimeoutOrNull(100) { results.receive() })
+            trigger.requestCatchUp()
+            withTimeout(2_000) { results.receive() }
+            assertNull(trigger.stoppedReason.value)
+        } finally { trigger.close(); scope.cancel() }
+    }
+
+    private fun agentCatchUp(progress: AgentTransportProgress) = ActiveSyncRuntimeCatchUpResult.Completed(
+        emptyList(), SyncTransportRunResult(0, 0, 0, agentOutbound = progress),
+    )
 }
