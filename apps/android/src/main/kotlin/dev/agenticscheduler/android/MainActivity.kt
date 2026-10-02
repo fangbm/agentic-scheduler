@@ -115,6 +115,10 @@ import dev.agenticscheduler.agent.runtime.AgentRunService
 import dev.agenticscheduler.agent.runtime.AgentRunResult
 import dev.agenticscheduler.agent.tool.*
 import dev.agenticscheduler.database.repository.RoomAgentStateRepository
+import dev.agenticscheduler.application.sync.AgentConversationSyncSettings
+import dev.agenticscheduler.application.sync.AgentConversationSyncSetting
+import dev.agenticscheduler.database.repository.RoomAgentSyncPersistence
+import dev.agenticscheduler.database.repository.RoomAgentSyncTransportPersistence
 import dev.agenticscheduler.database.repository.RoomLocalEnrollmentRepository
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
@@ -152,6 +156,10 @@ class MainActivity : ComponentActivity() {
     private val profiles by lazy { RoomPlanningProfileRepository(database) }
     private val agentState by lazy { RoomAgentStateRepository(database) }
     private val localEnrollments by lazy { RoomLocalEnrollmentRepository(database) }
+    private val conversationSettings by lazy {
+        val transport = RoomAgentSyncTransportPersistence(database)
+        AgentConversationSyncSettings(localEnrollments, transport, transport, RoomAgentSyncPersistence(database))
+    }
     private val agentWriteGate by lazy { AndroidActiveEnrollmentAgentWriteGate(localEnrollments, agentState) }
     private val mutations by lazy {
         MutationCoordinator(
@@ -275,6 +283,7 @@ class MainActivity : ComponentActivity() {
                             secureStore,
                             localEnrollments,
                             ids,
+                            conversationSettings,
                             syncStoppedReason = syncStoppedReason,
                             onRetrySync = {
                                 d8SyncStoppedReason.value = null
@@ -354,6 +363,48 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class D8StartupState { Activating, Ready, Blocked }
+@Composable
+private fun AndroidConversationSyncControls(settings: AgentConversationSyncSettings) {
+    val scope = rememberCoroutineScope()
+    var choices by remember { mutableStateOf<List<AgentConversationSyncSetting>>(emptyList()) }
+    var acknowledgement by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    LaunchedEffect(settings) { choices = settings.settings() }
+    Column(modifier = Modifier.testTag("agent-conversation-sync")) {
+        Text("Agent conversation/history sync")
+        Text("Separate from Agent-origin business writes (V2). Off by default; older/downgraded devices cannot display V3 history. The server does not attest client versions.")
+        Text("Production transmission remains unavailable pending the local-data security release gate.")
+        if (choices.isEmpty()) Text("No active enrolled SyncSpace.")
+        Row {
+            Checkbox(checked = acknowledgement, onCheckedChange = { acknowledgement = it },
+                modifier = Modifier.testTag("agent-conversation-v3-ack"))
+            Text("I confirm all active enrolled devices support V3.")
+        }
+        choices.forEach { choice ->
+            Text("${choice.syncSpaceId.value}: consent ${if (choice.consent) "ON" else "OFF"}; history recovery ${choice.recoveryState}.")
+            if (choice.recoveryState.name in listOf("REQUIRED", "RUNNING", "INCOMPLETE"))
+                Text("Conversation history is incomplete until retained history and keys are recovered.")
+            Button(enabled = !saving && (choice.consent || acknowledgement),
+                modifier = Modifier.testTag("agent-conversation-toggle"),
+                onClick = {
+                    scope.launch {
+                        saving = true
+                        try {
+                            settings.setFromUser(choice.syncSpaceId, !choice.consent, acknowledgement)
+                            acknowledgement = false
+                            choices = settings.settings()
+                            status = "Choice saved. Existing local history is never exported automatically."
+                        } catch (cancelled: CancellationException) { throw cancelled
+                        } catch (_: Exception) { status = "Unable to save conversation sync choice. Check enrollment and V3 acknowledgement."
+                        } finally { saving = false }
+                    }
+                }) { Text(if (choice.consent) "Turn conversation sync OFF" else "Explicitly enable conversation sync") }
+        }
+        Button(enabled = !saving, onClick = { scope.launch { choices = settings.settings(); acknowledgement = false } }) { Text("Refresh enrollment/history status") }
+        status?.let { Text(it) }
+    }
+}
 
 @Composable
 private fun D8StartupStatus(message: String) {
@@ -372,6 +423,7 @@ private fun AndroidScheduler(
     secureStore: PlatformSecretStore,
     enrollments: LocalEnrollmentRepository,
     ids: dev.agenticscheduler.application.id.UuidV7Generator,
+    conversationSettings: AgentConversationSyncSettings,
     syncStoppedReason: String?,
     onRetrySync: () -> Unit,
 ) {
@@ -400,6 +452,7 @@ private fun AndroidScheduler(
     val timedItems = projection.items.filterNot { it is CalendarItem.AllDay || it is CalendarItem.DateOnly }
 
     LazyColumn {
+        item { AndroidConversationSyncControls(conversationSettings) }
         if (syncStoppedReason != null) {
             item(key = "sync-stopped") {
                 Column {

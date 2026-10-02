@@ -82,6 +82,8 @@ interface AgentSyncPersistence {
 
     suspend fun isThreadTombstoned(syncSpaceId: SyncSpaceId, threadId: String): Boolean
     suspend fun threadHistoryProjection(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): AgentThreadHistoryProjection
+    /** Includes handled members whose manifest has not arrived; active projection alone cannot detect them. */
+    suspend fun hasIncompleteInboundHistory(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): Boolean
     suspend fun setAuditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String, state: AgentSyncAuditParentState, threadId: String? = null)
     suspend fun auditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String): AgentSyncAuditParentState?
 

@@ -17,6 +17,7 @@ android {
         manifestPlaceholders["d8SyncBaseUrl"] = providers.gradleProperty("d8SyncBaseUrl").orElse("").get()
         manifestPlaceholders["d8SyncAccountId"] = providers.gradleProperty("d8SyncAccountId").orElse("").get()
     }
+    sourceSets.getByName("androidTest").kotlin.directories.add(rootProject.file("test-support/d9-02-05").absolutePath)
 }
 
 dependencies {
@@ -31,4 +32,5 @@ dependencies {
     implementation(libs.ktor.client.android)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.room3.runtime)
 }

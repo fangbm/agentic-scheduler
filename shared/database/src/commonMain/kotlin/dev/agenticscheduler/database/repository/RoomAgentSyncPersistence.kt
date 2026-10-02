@@ -272,6 +272,19 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
             AgentSyncMergeProjection.project(threadId, operations, activeTurns, tombstoned)
         }
 
+    override suspend fun hasIncompleteInboundHistory(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): Boolean = database.useReaderConnection { connection ->
+        val active = connection.query("SELECT turn_id FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND thread_id = ?", listOf(syncSpaceId.value, threadId.value)) { it.getText(0) }.toSet()
+        connection.query("SELECT i.payload_json, i.operation_id FROM agent_sync_operation_identity i JOIN agent_sync_inbox b USING(sync_space_id, operation_id) WHERE i.sync_space_id = ?", listOf(syncSpaceId.value)) { decodeOperation(it.getText(0), it.getText(1)) }
+            .any { operation -> operation.agentEvent.threadIdForConflictCheck() == threadId.value && when (val event = operation.agentEvent) {
+                is MessageAppended -> event.turnId.value !in active
+                is ToolCallFinalized -> event.turnId.value !in active
+                is ToolResultAppended -> event.turnId.value !in active
+                is TurnFinalized -> event.turnId.value !in active
+                is ActionFinalized -> event.turnId?.value?.let { it !in active } == true
+                else -> false
+            } }
+    }
+
     override suspend fun commitExplicitUserDeleteResolution(
         syncSpaceId: SyncSpaceId,
         resolution: AgentSyncExplicitDeleteResolution,
@@ -705,7 +718,10 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
             if (frontier < component.counter) addDependency(space.value, operation.operationId.value, AgentSyncDependencyKind.AGENT_DOT.name, "${component.replicaId.value}:${component.counter}")
         }
         event.businessMutationIdsForPersistence().forEach { addDependency(space.value, operation.operationId.value, AgentSyncDependencyKind.BUSINESS_MUTATION.name, it) }
-        if (event is TurnFinalized) event.parentTurnIds.forEach { addDependency(space.value, operation.operationId.value, AgentSyncDependencyKind.PARENT_TURN.name, it.value) }
+        if (event is TurnFinalized) event.parentTurnIds.forEach { parent ->
+            val active = query("SELECT 1 FROM agent_sync_active_turn_projection WHERE sync_space_id = ? AND thread_id = ? AND turn_id = ?", listOf(space.value, event.threadId.value, parent.value)) { it.getLong(0) }.isNotEmpty()
+            if (!active) addDependency(space.value, operation.operationId.value, AgentSyncDependencyKind.PARENT_TURN.name, parent.value)
+        }
         if (direction == AgentSyncDirection.OUTBOUND) {
             execute("UPDATE agent_sync_outbox SET state = 'HELD' WHERE sync_space_id = ? AND operation_id = ? AND EXISTS (SELECT 1 FROM agent_sync_pending_dependency WHERE sync_space_id = ? AND operation_id = ?)", listOf(space.value, operation.operationId.value, space.value, operation.operationId.value))
             return

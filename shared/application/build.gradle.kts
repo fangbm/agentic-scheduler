@@ -16,9 +16,11 @@ kotlin {
     sourceSets.named("androidMain") { dependencies { implementation(libs.tink.android); implementation(libs.ktor.client.android) } }
     sourceSets.named("desktopMain") { dependencies { implementation(libs.tink); implementation(libs.ktor.client.cio); implementation(libs.jna.platform) } }
     sourceSets.named("desktopTest") {
+        kotlin.srcDir(rootProject.file("test-support/d9-02-05"))
         dependencies {
             implementation(kotlin("test"))
             implementation(project(":shared:database"))
+            implementation(project(":shared:agent"))
             implementation(project(":server:sync"))
             implementation(libs.ktor.server.test.host)
             implementation(libs.hikari)
@@ -26,4 +28,8 @@ kotlin {
             implementation(libs.androidx.sqlite.bundled)
         }
     }
+}
+
+tasks.withType<Test>().configureEach {
+    if (System.getenv("D9_PLATFORM_PHASE") != null) outputs.upToDateWhen { false }
 }
