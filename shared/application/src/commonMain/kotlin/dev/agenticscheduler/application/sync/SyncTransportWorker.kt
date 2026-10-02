@@ -35,6 +35,7 @@ data class SyncTransportRunResult(
     /** Business outbound failure only; compatibility holds are reported separately. */
     val stoppedOnFailure: SyncUploadResult? = null,
     val stoppedOnReceiveFailure: String? = null,
+    /** Compatibility or unsatisfied business causality only, excluding eligible failed/unattempted work. */
     val heldBusinessOperationIds: List<String> = emptyList(),
     val agentOutbound: AgentTransportProgress = AgentTransportProgress(),
     val stoppedOnFetchFailure: SyncUploadResult? = null,
@@ -73,39 +74,43 @@ class SyncTransportWorker(
                 }
             }
             val gate = agentOutboundGate.enabled(syncSpaceId)
-            while (pending.isNotEmpty()) {
-                val candidate = pending.firstOrNull { committed ->
-                    val op = committed.operation
-                    (op.origin !is MutationOrigin.Agent || gate) &&
-                        op.dvv.context.all { component ->
-                            (coverage[component.replicaId]?.maxOrNull() ?: -1L) >= component.counter &&
-                                pending.none { prerequisite -> prerequisite.operation.dvv.dot.let { dot ->
-                                    dot.replicaId == component.replicaId && dot.counter <= component.counter
-                                } }
-                        }
-                } ?: break
-                val op = candidate.operation
-                val stored = outbound.envelope(syncSpaceId, op.mutationId) ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {
-                    CurrentEncryptionKeyLookup.Missing -> { outboundFailure = SyncUploadResult.RetryableFailure("Missing active content key."); break }
-                    is CurrentEncryptionKeyLookup.Available -> {
-                        val binding = SyncEnvelopeBinding(syncSpaceId, op.mutationId, deviceId, key.keyEpoch)
-                        val encrypted = if (op.origin is MutationOrigin.Agent) codec.encrypt(binding, SyncPayloadV2(operation = op))
-                            else codec.encrypt(binding, SyncPayloadV1(operation = op))
-                        if (encrypted !is EncryptSyncPayloadResult.Encrypted) { outboundFailure = encrypted.uploadFailure(); break }
-                        StoredOutboundEnvelope(syncSpaceId, op.mutationId, encrypted.envelope, false).also { outbound.save(it) }
+            fun eligible(committed: CommittedMutation): Boolean {
+                val op = committed.operation
+                return (op.origin !is MutationOrigin.Agent || gate) &&
+                    op.dvv.context.all { component ->
+                        (coverage[component.replicaId]?.maxOrNull() ?: -1L) >= component.counter &&
+                            pending.none { prerequisite -> prerequisite.operation.dvv.dot.let { dot ->
+                                dot.replicaId == component.replicaId && dot.counter <= component.counter
+                            } }
                     }
-                }
-                when (val result = upload(transport, stored.envelope)) {
-                    is SyncUploadResult.Stored, is SyncUploadResult.Idempotent -> {
-                        outbound.markUploaded(syncSpaceId, op.mutationId)
-                        uploaded++
-                        pending.remove(candidate)
-                        coverage.getOrPut(op.dvv.dot.replicaId) { mutableSetOf() }.add(op.dvv.dot.counter)
-                    }
-                    else -> { outboundFailure = result; break }
-                }
             }
-            held += pending.map { it.operation.mutationId }
+            try {
+                while (pending.isNotEmpty()) {
+                    val candidate = pending.firstOrNull(::eligible) ?: break
+                    val op = candidate.operation
+                    val stored = outbound.envelope(syncSpaceId, op.mutationId) ?: when (val key = encryptionKeys.currentEncryptionKey(syncSpaceId)) {
+                        CurrentEncryptionKeyLookup.Missing -> { outboundFailure = SyncUploadResult.RetryableFailure("Missing active content key."); break }
+                        is CurrentEncryptionKeyLookup.Available -> {
+                            val binding = SyncEnvelopeBinding(syncSpaceId, op.mutationId, deviceId, key.keyEpoch)
+                            val encrypted = if (op.origin is MutationOrigin.Agent) codec.encrypt(binding, SyncPayloadV2(operation = op))
+                                else codec.encrypt(binding, SyncPayloadV1(operation = op))
+                            if (encrypted !is EncryptSyncPayloadResult.Encrypted) { outboundFailure = encrypted.uploadFailure(); break }
+                            StoredOutboundEnvelope(syncSpaceId, op.mutationId, encrypted.envelope, false).also { outbound.save(it) }
+                        }
+                    }
+                    when (val result = upload(transport, stored.envelope)) {
+                        is SyncUploadResult.Stored, is SyncUploadResult.Idempotent -> {
+                            outbound.markUploaded(syncSpaceId, op.mutationId)
+                            uploaded++
+                            pending.remove(candidate)
+                            coverage.getOrPut(op.dvv.dot.replicaId) { mutableSetOf() }.add(op.dvv.dot.counter)
+                        }
+                        else -> { outboundFailure = result; break }
+                    }
+                }
+            } finally {
+                held += pending.filterNot(::eligible).map { it.operation.mutationId }
+            }
         } catch (cancelled: CancellationException) { throw cancelled
         } catch (failure: Exception) { outboundFailure = transportFailure(failure) }
 

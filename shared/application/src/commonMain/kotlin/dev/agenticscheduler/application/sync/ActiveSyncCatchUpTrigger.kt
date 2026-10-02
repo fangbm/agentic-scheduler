@@ -175,6 +175,8 @@ class ActiveSyncCatchUpTrigger(
             transport.stoppedOnFailure is SyncUploadResult.IntegrityConflict -> "SYNC_INTEGRITY_FAILURE"
             transport.stoppedOnFailure is SyncUploadResult.NonRetryableFailure ->
                 (transport.stoppedOnFailure as SyncUploadResult.NonRetryableFailure).detail
+            transport.agentOutbound.failure is SyncUploadResult.IntegrityConflict -> "AGENT_SYNC_INTEGRITY_FAILURE"
+            transport.agentOutbound.failure is SyncUploadResult.NonRetryableFailure -> transport.agentOutbound.failure.detail
             else -> null
         }
         null -> null
