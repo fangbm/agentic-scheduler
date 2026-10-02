@@ -545,6 +545,19 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         ) { AgentTurnSyncId(it.getText(0)) }.toSet()
         val tombstoned = query("SELECT 1 FROM agent_sync_thread_tombstone WHERE sync_space_id = ? AND thread_id = ? LIMIT 1", listOf(space, threadId.value)) { it.getLong(0) }.isNotEmpty()
         val conflicts = AgentSyncMergeProjection.project(threadId, operations, activeTurns, tombstoned).conflicts
+        // This namespace materializes the current projector output. Immutable operation facts
+        // and integrity/legacy candidate rows retain history; only obsolete derived keys retire.
+        val currentKeys = conflicts.map { "${it.localConflictKey}|${it.kind.name}" }.toSet()
+        val storedKeys = query(
+            "SELECT conflict_id FROM agent_sync_conflict WHERE sync_space_id = ? AND entity_kind = 'THREAD' AND entity_id = ? AND conflict_kind GLOB 'D9_02_03_*'",
+            listOf(space, threadId.value),
+        ) { it.getText(0) }
+        for (staleKey in storedKeys.filterNot(currentKeys::contains)) {
+            execute(
+                "DELETE FROM agent_sync_conflict WHERE conflict_id = ? AND sync_space_id = ? AND entity_kind = 'THREAD' AND entity_id = ? AND conflict_kind GLOB 'D9_02_03_*'",
+                listOf(staleKey, space, threadId.value),
+            )
+        }
         for (conflict in conflicts) {
             val participantIds = conflict.participantOperationIds
             val firstId = participantIds.firstOrNull()?.value ?: continue

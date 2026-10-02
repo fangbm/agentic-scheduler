@@ -21,6 +21,10 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
+import kotlinx.serialization.json.add
 import org.junit.Rule
 import java.nio.file.Files
 import java.nio.file.Path
@@ -551,6 +555,99 @@ class AgentSyncPersistenceTest {
                 })
             } finally { reopened.close() }
         } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test fun `delete append component expansion reconciles durable semantic rows across restart`() = runBlocking {
+        assertExpandedConflictRecords(AgentSemanticConflictKind.THREAD_DELETE_APPEND)
+    }
+
+    @Test fun `title component expansion reconciles durable semantic rows across restart`() = runBlocking {
+        assertExpandedConflictRecords(AgentSemanticConflictKind.THREAD_TITLE)
+    }
+
+    private suspend fun assertExpandedConflictRecords(kind: AgentSemanticConflictKind) {
+        val path = Files.createTempFile("agent-expanded-conflict-", ".db")
+        val space = SyncSpaceId("personal")
+        val thread = AgentThreadSyncId(id(800))
+        val otherThread = AgentThreadSyncId(id(899))
+        val firstEvent: AgentSyncEvent = if (kind == AgentSemanticConflictKind.THREAD_TITLE) {
+            ThreadTitleSet(thread, "left")
+        } else ThreadDeleted(thread)
+        fun competingEvent(number: Int): AgentSyncEvent = if (kind == AgentSemanticConflictKind.THREAD_TITLE) {
+            ThreadTitleSet(thread, "title-$number")
+        } else MessageAppended(AgentMessageSyncId(id(810 + number)), thread, AgentTurnSyncId(id(820 + number)), AgentMessageRoleV3.USER, "append-$number", 1)
+        val events = listOf(payload(801, firstEvent, replica(2)), payload(802, competingEvent(1), replica(3)), payload(803, competingEvent(2), replica(4)))
+        try {
+            val db = openDesktopDatabase(path.toAbsolutePath().toString())
+            val expanded = try {
+                val persistence = RoomAgentSyncPersistence(db)
+                persistence.provisionLocalReplica(space, replica(1))
+                for (event in events.take(2)) {
+                    persistence.acceptInbound(space, event)
+                    persistence.markHandled(space, event.operation.operationId.value)
+                }
+                val initial = assertSemanticRecordsMatchProjection(db, persistence, space, thread)
+                assertEquals(listOf(events[0].operation.operationId, events[1].operation.operationId), initial.conflicts.single().participantOperationIds)
+                // These rows are outside the derived namespace/thread/space being refreshed.
+                db.useWriterConnection { connection ->
+                    for ((key, rowSpace, rowThread, rowKind) in listOf(
+                        listOf("integrity-evidence", space.value, thread.value, "IMMUTABLE_IDENTITY_CONFLICT"),
+                        listOf("legacy-evidence", space.value, thread.value, "THREAD_DELETE_APPEND_CONFLICT"),
+                        listOf("other-thread", space.value, otherThread.value, "D9_02_03_THREAD_TITLE_OPEN"),
+                        listOf("other-space", "other", thread.value, "D9_02_03_THREAD_TITLE_OPEN"),
+                        listOf("similar-prefix", space.value, thread.value, "D9X02X03_THREAD_TITLE_OPEN"),
+                    )) {
+                        connection.exec("INSERT INTO agent_sync_conflict(conflict_id, sync_space_id, entity_kind, entity_id, conflict_kind, candidate_payload_json, metadata_json) VALUES (?, ?, 'THREAD', ?, ?, '{}', '{}')", key, rowSpace, rowThread, rowKind)
+                    }
+                }
+                persistence.acceptInbound(space, events[2])
+                persistence.markHandled(space, events[2].operation.operationId.value)
+                val result = assertSemanticRecordsMatchProjection(db, persistence, space, thread)
+                assertEquals(events.map { it.operation.operationId }, result.conflicts.single().participantOperationIds)
+                assertEquals(kind, result.conflicts.single().kind)
+                assertEquals(AgentSemanticConflictState.OPEN, result.conflicts.single().state)
+                assertEquals(kind == AgentSemanticConflictKind.THREAD_DELETE_APPEND, result.tombstoned)
+                assertFalse(result.providerContinuationAllowed)
+                assertEquals(0L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE conflict_id = ?", "${initial.conflicts.single().localConflictKey}|${kind.name}") })
+                assertEquals(5L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE conflict_id IN ('integrity-evidence','legacy-evidence','other-thread','other-space','similar-prefix')") })
+                assertEquals(3L, db.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_operation_identity WHERE sync_space_id = ?", space.value) })
+                // An idempotent refresh must not reintroduce the old two-participant row.
+                persistence.markHandled(space, events[2].operation.operationId.value)
+                assertEquals(result, assertSemanticRecordsMatchProjection(db, persistence, space, thread))
+                result
+            } finally { db.close() }
+            val reopened = openDesktopDatabase(path.toAbsolutePath().toString())
+            try {
+                val recovered = RoomAgentSyncPersistence(reopened)
+                assertEquals(expanded, assertSemanticRecordsMatchProjection(reopened, recovered, space, thread))
+                assertEquals(5L, reopened.useReaderConnection { it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE conflict_id IN ('integrity-evidence','legacy-evidence','other-thread','other-space','similar-prefix')") })
+            } finally { reopened.close() }
+        } finally { Files.deleteIfExists(path) }
+    }
+
+    private suspend fun assertSemanticRecordsMatchProjection(
+        db: AgenticSchedulerDatabase,
+        persistence: RoomAgentSyncPersistence,
+        space: SyncSpaceId,
+        thread: AgentThreadSyncId,
+    ): AgentThreadHistoryProjection {
+        val projection = persistence.threadHistoryProjection(space, thread)
+        val expected = projection.conflicts.map { conflict ->
+            Triple("${conflict.localConflictKey}|${conflict.kind.name}", "D9_02_03_${conflict.kind.name}_${conflict.state.name}", buildJsonObject {
+                put("state", conflict.state.name)
+                putJsonArray("participantOperationIds") { conflict.participantOperationIds.forEach { add(it.value) } }
+                putJsonArray("resolutionOperationIds") { conflict.resolutionOperationIds.forEach { add(it.value) } }
+            })
+        }.sortedBy { it.first }
+        val actual = db.useReaderConnection { connection ->
+            connection.usePrepared("SELECT conflict_id, conflict_kind, metadata_json FROM agent_sync_conflict WHERE sync_space_id = ? AND entity_kind = 'THREAD' AND entity_id = ? AND conflict_kind GLOB 'D9_02_03_*' ORDER BY conflict_id") { statement ->
+                statement.bindText(1, space.value)
+                statement.bindText(2, thread.value)
+                buildList { while (statement.step()) add(Triple(statement.getText(0), statement.getText(1), Json.parseToJsonElement(statement.getText(2)))) }
+            }
+        }
+        assertEquals(expected, actual)
+        return projection
     }
 
     private fun payload(
