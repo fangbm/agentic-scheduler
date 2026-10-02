@@ -9,7 +9,7 @@ fun openDesktopDatabase(absolutePath: String): AgenticSchedulerDatabase =
     Room.databaseBuilder<AgenticSchedulerDatabase>(absolutePath) { AgenticSchedulerDatabaseConstructor.initialize() }
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
-        .addMigrations(AgentMigration11To12, AgentSyncMigration12To13)
+        .addMigrations(AgentMigration11To12, AgentSyncMigration12To13, AgentSyncTransportMigration13To14)
         .addCallback(AgentSchemaCallback)
         .build()
 
@@ -17,6 +17,6 @@ internal fun openInMemoryDesktopDatabase(): AgenticSchedulerDatabase =
     Room.inMemoryDatabaseBuilder<AgenticSchedulerDatabase> { AgenticSchedulerDatabaseConstructor.initialize() }
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
-        .addMigrations(AgentMigration11To12, AgentSyncMigration12To13)
+        .addMigrations(AgentMigration11To12, AgentSyncMigration12To13, AgentSyncTransportMigration13To14)
         .addCallback(AgentSchemaCallback)
         .build()

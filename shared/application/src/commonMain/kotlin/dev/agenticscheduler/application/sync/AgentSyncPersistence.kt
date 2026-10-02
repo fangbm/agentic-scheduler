@@ -18,6 +18,8 @@ sealed interface AgentSyncPersistResult {
 }
 
 enum class AgentSyncDirection { INBOUND, OUTBOUND }
+/** Typed persistence integrity failure, caught by transport without depending on Room. */
+open class AgentSyncIntegrityFailure(message: String) : IllegalStateException(message)
 enum class AgentSyncDependencyKind { AGENT_DOT, PARENT_RECORD, BUSINESS_MUTATION, TURN_MEMBER, PARENT_TURN }
 enum class AgentSyncTurnState { INCOMPLETE, COMPLETE_VERIFIED, ACTIVE, TOMBSTONED }
 enum class AgentSyncAuditParentState { PARENT_PENDING, PARENT_VERIFIED, PARENT_REMOVED_BY_TOMBSTONE }

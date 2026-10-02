@@ -18,6 +18,8 @@ import dev.agenticscheduler.application.sync.AgentSyncPendingDependency
 import dev.agenticscheduler.application.sync.AgentSyncPersistResult
 import dev.agenticscheduler.application.sync.AgentSyncPersistence
 import dev.agenticscheduler.application.sync.AgentSyncTurnState
+import dev.agenticscheduler.application.sync.AgentSyncIntegrityFailure
+import dev.agenticscheduler.application.sync.agentHistoryTurnLinkError
 import dev.agenticscheduler.database.AgenticSchedulerDatabase
 import dev.agenticscheduler.sync.*
 import kotlinx.serialization.SerializationException
@@ -28,7 +30,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.add
 
-class AgentSyncIntegrityConflictException(message: String) : IllegalStateException(message)
+class AgentSyncIntegrityConflictException(message: String) : AgentSyncIntegrityFailure(message)
 
 /** Room adapter for isolated D9-02 local state; it has no transport or receive-dispatch hooks. */
 class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) : AgentSyncPersistence, AgentSyncExplicitUserResolutionPersistence {
@@ -812,14 +814,7 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
         val manifest = decodePayload(manifestRow.second, manifestRow.first).operation.agentEvent as? TurnFinalized ?: return "Manifest operation does not contain TurnFinalized."
         val events = query("SELECT m.member_kind, i.payload_json, i.operation_id FROM agent_sync_turn_member m JOIN agent_sync_operation_identity i ON i.sync_space_id = m.sync_space_id AND i.immutable_record_kind = m.member_kind AND i.immutable_record_id = m.member_id JOIN agent_sync_inbox b ON b.sync_space_id = i.sync_space_id AND b.operation_id = i.operation_id JOIN agent_sync_handled_dot h ON h.sync_space_id = i.sync_space_id AND h.operation_id = i.operation_id WHERE m.sync_space_id = ? AND m.turn_id = ?", listOf(space, turnId)) { Triple(it.getText(0), it.getText(1), it.getText(2)) }
         val operations = events.map { decodePayload(it.second, it.third).operation.agentEvent }
-        val actions = operations.filterIsInstance<ActionFinalized>().associateBy { it.actionId }
-        val messages = operations.filterIsInstance<MessageAppended>().associateBy { it.messageId }
-        val calls = operations.filterIsInstance<ToolCallFinalized>().associateBy { it.callId }
-        val results = operations.filterIsInstance<ToolResultAppended>().associateBy { it.resultId }
-        return when (val validation = AgentTurnLinkValidator.validate(manifest, actions, messages, calls, results)) {
-            AgentTurnLinkValidation.Valid -> null
-            else -> validation.toString()
-        }
+        return agentHistoryTurnLinkError(manifest, operations)
     }
 
     private suspend fun PooledConnection.recordTurnLinkConflict(space: String, turnId: String, operationId: String, reason: String) {

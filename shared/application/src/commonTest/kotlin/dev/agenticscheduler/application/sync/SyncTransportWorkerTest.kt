@@ -128,7 +128,8 @@ class SyncTransportWorkerTest {
         )
 
         val denied = worker().run(SyncSpaceId("space"))
-        assertNotNull(denied.stoppedOnFailure)
+        assertNull(denied.stoppedOnFailure)
+        assertEquals(listOf(agent.mutationId), denied.heldBusinessOperationIds)
         assertEquals(0, transport.encryptions)
         assertEquals(0, transport.uploaded.size)
         assertNull(outbound.value)
