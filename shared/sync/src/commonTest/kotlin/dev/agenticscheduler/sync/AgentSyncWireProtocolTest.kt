@@ -126,6 +126,52 @@ class AgentSyncWireProtocolTest {
         }
     }
 
+    @Test fun `delete resolution DTO requires sorted unique participants and exact replacement semantics`() {
+        val thread = AgentThreadSyncId(id(50))
+        val sorted = listOf(MutationId(id(51)), MutationId(id(52)))
+        assertFailsWith<IllegalArgumentException> {
+            ThreadDeleteConflictResolved(thread, sorted.reversed(), AgentThreadDeleteResolution.KEEP_DELETION, null)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ThreadDeleteConflictResolved(thread, listOf(sorted.first(), sorted.first()), AgentThreadDeleteResolution.KEEP_DELETION, null)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ThreadDeleteConflictResolved(thread, sorted, AgentThreadDeleteResolution.KEEP_DELETION, AgentThreadSyncId(id(53)))
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ThreadDeleteConflictResolved(thread, sorted, AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, null)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            ThreadDeleteConflictResolved(thread, sorted, AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, thread)
+        }
+    }
+
+    @Test fun `delete resolution has canonical KEEP and COPY JSON fixtures and decoder rejects malformed components`() {
+        val keep = SyncPayloadV3(operation = AgentSyncOperation(
+            MutationId(id(90)), AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 90)), AgentHlcSnapshot(90, 0, agentReplica),
+            ThreadDeleteConflictResolved(AgentThreadSyncId(id(3)), listOf(MutationId(id(10)), MutationId(id(11))), AgentThreadDeleteResolution.KEEP_DELETION, null),
+        ))
+        val copy = keep.copy(operation = keep.operation.copy(
+            operationId = MutationId(id(91)),
+            agentDvv = AgentDvvSnapshot(emptyList(), AgentDot(agentReplica, 91)),
+            hlc = AgentHlcSnapshot(91, 0, agentReplica),
+            agentEvent = ThreadDeleteConflictResolved(AgentThreadSyncId(id(3)), listOf(MutationId(id(10)), MutationId(id(11))), AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD, AgentThreadSyncId(id(92))),
+        ))
+        assertEquals(fixture("thread-delete-conflict-resolved-keep.json"), AgentSyncWireCodec.encodePayload(keep))
+        assertEquals(fixture("thread-delete-conflict-resolved-copy.json"), AgentSyncWireCodec.encodePayload(copy))
+        assertEquals(keep, assertIs<AgentPayloadDecodeResult.Supported>(AgentSyncWireCodec.decodePayload(AgentSyncWireCodec.encodePayload(keep), keep.operation.operationId)).payload)
+        val duplicateParticipants = AgentSyncWireCodec.encodePayload(keep).replace(
+            "\"participantOperationIds\":[\"${id(10)}\",\"${id(11)}\"]",
+            "\"participantOperationIds\":[\"${id(10)}\",\"${id(10)}\"]",
+        )
+        val unsortedParticipants = AgentSyncWireCodec.encodePayload(keep).replace(
+            "\"participantOperationIds\":[\"${id(10)}\",\"${id(11)}\"]",
+            "\"participantOperationIds\":[\"${id(11)}\",\"${id(10)}\"]",
+        )
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(duplicateParticipants, keep.operation.operationId))
+        assertIs<AgentPayloadDecodeResult.Invalid>(AgentSyncWireCodec.decodePayload(unsortedParticipants, keep.operation.operationId))
+    }
+
     @Test fun `turn manifest decoder rejects duplicate parents self-parenting and duplicate members`() {
         val valid = validTurnPayload()
         val parent = "\"parentTurnIds\":[\"${id(10)}\"]"

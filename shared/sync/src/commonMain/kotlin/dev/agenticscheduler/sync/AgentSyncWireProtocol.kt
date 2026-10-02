@@ -191,6 +191,34 @@ enum class AgentTurnOutcome { SUCCEEDED, FAILED }
 @SerialName("ThreadDeleted")
 data class ThreadDeleted(val threadId: AgentThreadSyncId) : AgentSyncEvent
 
+@Serializable
+enum class AgentThreadDeleteResolution { KEEP_DELETION, COPY_CONTENT_TO_NEW_THREAD }
+
+/** Frozen D2 resolution fact. The local conflict key is derived from threadId and participant IDs. */
+@Serializable
+@SerialName("ThreadDeleteConflictResolved")
+data class ThreadDeleteConflictResolved(
+    val threadId: AgentThreadSyncId,
+    val participantOperationIds: List<MutationId>,
+    val resolution: AgentThreadDeleteResolution,
+    val replacementThreadId: AgentThreadSyncId?,
+) : AgentSyncEvent {
+    init {
+        require(participantOperationIds.isNotEmpty()) { "A delete resolution must name its conflict participants." }
+        require(participantOperationIds == participantOperationIds.distinct().sortedBy { it.value }) {
+            "Delete-resolution participant operation IDs must be unique and lexicographically sorted."
+        }
+        when (resolution) {
+            AgentThreadDeleteResolution.KEEP_DELETION -> require(replacementThreadId == null) {
+                "KEEP_DELETION must not name a replacement thread."
+            }
+            AgentThreadDeleteResolution.COPY_CONTENT_TO_NEW_THREAD -> require(
+                replacementThreadId != null && replacementThreadId != threadId,
+            ) { "COPY_CONTENT_TO_NEW_THREAD requires a different replacement thread ID." }
+        }
+    }
+}
+
 sealed interface AgentTurnLinkValidation {
     data object Valid : AgentTurnLinkValidation
     data class MissingAction(val actionId: AgentActionSyncId) : AgentTurnLinkValidation
@@ -318,7 +346,7 @@ object AgentSyncWireCodec {
 
     private val knownEventTypes = setOf(
         "ThreadCreated", "ThreadTitleSet", "MessageAppended", "ToolCallFinalized",
-        "ToolResultAppended", "ActionFinalized", "TurnFinalized", "ThreadDeleted",
+        "ToolResultAppended", "ActionFinalized", "TurnFinalized", "ThreadDeleted", "ThreadDeleteConflictResolved",
     )
 
     private val forbiddenMetadataKeys = setOf(
