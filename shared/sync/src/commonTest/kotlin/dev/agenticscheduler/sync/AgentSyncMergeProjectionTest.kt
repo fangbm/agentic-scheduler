@@ -124,6 +124,76 @@ class AgentSyncMergeProjectionTest {
         assertFalse(projection.providerContinuationAllowed)
     }
 
+    @Test fun `concurrent root turns remain an explicit fork regardless of presentation order`() {
+        val leftTurn = AgentTurnSyncId(id(50))
+        val rightTurn = AgentTurnSyncId(id(51))
+        val left = operation(52, 2, 0, emptyList(), TurnFinalized(leftTurn, thread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED), physical = 100)
+        val right = operation(53, 3, 0, emptyList(), TurnFinalized(rightTurn, thread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED), physical = 1)
+        val active = setOf(leftTurn, rightTurn)
+
+        val projection = AgentSyncMergeProjection.project(thread, listOf(left, right), active)
+        val reversed = AgentSyncMergeProjection.project(thread, listOf(right, left), active)
+        val changedPresentation = AgentSyncMergeProjection.project(thread, listOf(
+            left.copy(hlc = left.hlc.copy(physicalMillis = 0)),
+            right.copy(hlc = right.hlc.copy(physicalMillis = 200)),
+        ), active)
+
+        val fork = projection.conflicts.single { it.kind == AgentSemanticConflictKind.CONCURRENT_TURN_FORK }
+        assertEquals(listOf(left.operationId, right.operationId), fork.participantOperationIds)
+        assertEquals(AgentSemanticConflictState.OPEN, fork.state)
+        assertEquals(projection, reversed)
+        assertEquals(projection.conflicts, changedPresentation.conflicts)
+        for (result in listOf(projection, reversed, changedPresentation)) {
+            assertEquals(active, result.turns.map { it.manifest.turnId }.toSet())
+            assertFalse(result.providerContinuationAllowed)
+        }
+    }
+
+    @Test fun `causally ordered root turns do not form a concurrent fork`() {
+        val leftTurn = AgentTurnSyncId(id(50))
+        val rightTurn = AgentTurnSyncId(id(51))
+        val left = operation(52, 2, 0, emptyList(), TurnFinalized(leftTurn, thread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED))
+        val right = operation(53, 3, 0, listOf(2 to 0L), TurnFinalized(rightTurn, thread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED))
+
+        val projection = AgentSyncMergeProjection.project(thread, listOf(left, right), setOf(leftTurn, rightTurn))
+
+        assertFalse(projection.conflicts.any { it.kind == AgentSemanticConflictKind.CONCURRENT_TURN_FORK })
+        assertTrue(projection.providerContinuationAllowed)
+    }
+
+    @Test fun `rename observing both unequal concurrent titles cannot clear their open conflict`() {
+        val left = operation(60, 2, 0, emptyList(), ThreadTitleSet(thread, "left"), physical = 100)
+        val right = operation(61, 3, 0, emptyList(), ThreadTitleSet(thread, "right"), physical = 1)
+        val rename = operation(62, 4, 0, listOf(2 to 0L, 3 to 0L), ThreadTitleSet(thread, "later rename"))
+        val before = AgentSyncMergeProjection.project(thread, listOf(left, right), emptySet())
+
+        val after = AgentSyncMergeProjection.project(thread, listOf(rename, right, left), emptySet())
+
+        assertEquals(before.conflicts, after.conflicts)
+        assertEquals(AgentSemanticConflictState.OPEN, after.conflicts.single().state)
+        assertEquals(listOf(left.operationId, right.operationId), after.conflicts.single().participantOperationIds)
+        assertEquals(listOf(
+            AgentThreadTitleCandidate(left.operationId, "left"),
+            AgentThreadTitleCandidate(right.operationId, "right"),
+            AgentThreadTitleCandidate(rename.operationId, "later rename"),
+        ), assertIs<AgentThreadTitleProjection.Conflict>(after.title).candidates)
+        assertFalse(after.providerContinuationAllowed)
+        assertEquals(after, AgentSyncMergeProjection.project(thread, listOf(left, right, rename), emptySet()))
+    }
+
+    @Test fun `equal concurrent titles and sequential renames remain resolved without a historical conflict`() {
+        val left = operation(60, 2, 0, emptyList(), ThreadTitleSet(thread, "same"))
+        val right = operation(61, 3, 0, emptyList(), ThreadTitleSet(thread, "same"))
+        val rename = operation(62, 4, 0, listOf(2 to 0L, 3 to 0L), ThreadTitleSet(thread, "later rename"))
+
+        for ((operations, title) in listOf(listOf(left, right) to "same", listOf(left, right, rename) to "later rename")) {
+            val projection = AgentSyncMergeProjection.project(thread, operations, emptySet())
+            assertEquals(AgentThreadTitleProjection.Resolved(title), projection.title)
+            assertTrue(projection.conflicts.isEmpty())
+            assertTrue(projection.providerContinuationAllowed)
+        }
+    }
+
     private fun operation(
         op: Int,
         replica: Int,

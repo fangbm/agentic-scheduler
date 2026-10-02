@@ -494,6 +494,65 @@ class AgentSyncPersistenceTest {
         } finally { db.close() }
     }
 
+    @Test fun `root fork and title conflict survive observing rename and database restart`() = runBlocking {
+        val path = Files.createTempFile("agent-root-title-review-", ".db")
+        val space = SyncSpaceId("personal")
+        val rootThread = AgentThreadSyncId(id(710))
+        val titleThread = AgentThreadSyncId(id(711))
+        val leftTurn = AgentTurnSyncId(id(712))
+        val rightTurn = AgentTurnSyncId(id(713))
+        try {
+            val db = openDesktopDatabase(path.toAbsolutePath().toString())
+            val beforeRestart = try {
+                val persistence = RoomAgentSyncPersistence(db)
+                persistence.provisionLocalReplica(space, replica(1))
+                val events = listOf(
+                    payload(714, TurnFinalized(leftTurn, rootThread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED), replica(2)),
+                    payload(715, TurnFinalized(rightTurn, rootThread, emptyList(), emptyList(), AgentTurnOutcome.SUCCEEDED), replica(3)),
+                    payload(716, ThreadTitleSet(titleThread, "left"), replica(4)),
+                    payload(717, ThreadTitleSet(titleThread, "right"), replica(5)),
+                )
+                for (event in events) {
+                    persistence.acceptInbound(space, event)
+                    persistence.markHandled(space, event.operation.operationId.value)
+                }
+                persistence.markTurnActive(space, leftTurn.value)
+                persistence.markTurnActive(space, rightTurn.value)
+                val originalTitleConflict = persistence.threadHistoryProjection(space, titleThread).conflicts.single()
+                val rename = payload(718, ThreadTitleSet(titleThread, "later rename"), replica(6), context = listOf(
+                    AgentVersionComponent(replica(4), 0), AgentVersionComponent(replica(5), 0),
+                ))
+                persistence.acceptInbound(space, rename)
+                persistence.markHandled(space, rename.operation.operationId.value)
+
+                val roots = persistence.threadHistoryProjection(space, rootThread)
+                val titles = persistence.threadHistoryProjection(space, titleThread)
+                assertEquals(AgentSemanticConflictKind.CONCURRENT_TURN_FORK, roots.conflicts.single().kind)
+                assertEquals(AgentSemanticConflictState.OPEN, roots.conflicts.single().state)
+                assertEquals(setOf(leftTurn, rightTurn), roots.turns.map { it.manifest.turnId }.toSet())
+                assertFalse(roots.providerContinuationAllowed)
+                assertEquals(originalTitleConflict, titles.conflicts.single())
+                assertEquals(AgentSemanticConflictState.OPEN, titles.conflicts.single().state)
+                assertIs<AgentThreadTitleProjection.Conflict>(titles.title)
+                assertFalse(titles.providerContinuationAllowed)
+                assertEquals(1L, db.useReaderConnection {
+                    it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE entity_id = ? AND conflict_kind = 'D9_02_03_THREAD_TITLE_OPEN'", titleThread.value)
+                })
+                roots to titles
+            } finally { db.close() }
+
+            val reopened = openDesktopDatabase(path.toAbsolutePath().toString())
+            try {
+                val recovered = RoomAgentSyncPersistence(reopened)
+                assertEquals(beforeRestart.first, recovered.threadHistoryProjection(space, rootThread))
+                assertEquals(beforeRestart.second, recovered.threadHistoryProjection(space, titleThread))
+                assertEquals(1L, reopened.useReaderConnection {
+                    it.scalarLong("SELECT count(*) FROM agent_sync_conflict WHERE entity_id = ? AND conflict_kind = 'D9_02_03_THREAD_TITLE_OPEN'", titleThread.value)
+                })
+            } finally { reopened.close() }
+        } finally { Files.deleteIfExists(path) }
+    }
+
     private fun payload(
         operation: Int,
         event: AgentSyncEvent,

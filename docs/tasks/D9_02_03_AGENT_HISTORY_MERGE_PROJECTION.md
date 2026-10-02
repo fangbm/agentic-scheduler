@@ -31,7 +31,8 @@ protocol. OD-012 remains a production release gate.
   a tombstone or enter active projection.
 - Concurrent title writes and sibling turns are exposed as conflicts, with
   no timestamp-selected title and Provider continuation blocked for an open
-  semantic conflict.
+  semantic conflict. Concurrent root turns share the empty parent frontier
+  and are also siblings; presentation order never chooses a dialogue winner.
 
 ## Boundaries / follow-up review
 
@@ -40,7 +41,10 @@ protocol. OD-012 remains a production release gate.
   receive validation and activation remain disabled and require later runtime
   integration review; the wire event itself does not attest human authorship.
 - No title-resolution event or title conflict resolution policy was frozen.
-  Title conflicts remain explicit and unresolved; no resolution behavior is
+  Historical concurrent unequal title writes remain an OPEN conflict even
+  after an ordinary rename observes both. Projection retains the conflicting
+  candidates alongside current title candidates and reconstructs the conflict
+  from durable immutable history after restart. No resolution behavior is
   inferred here.
 - Exact delete-resolution encoding for a semantic conflict created by
   competing resolutions remains part of the frozen rule “later resolution

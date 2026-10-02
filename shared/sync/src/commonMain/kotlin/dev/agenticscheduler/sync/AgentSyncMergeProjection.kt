@@ -68,17 +68,19 @@ object AgentSyncMergeProjection {
         val byId = threadOperations.associateBy { it.operationId }
         val deletes = threadOperations.filter { it.agentEvent is ThreadDeleted }
         val isTombstoned = tombstoned || deletes.isNotEmpty()
-        val titleCandidates = maximalTitleCandidates(threadOperations)
+        val unresolvedTitleCandidates = concurrentUnequalTitleCandidates(threadOperations)
+        val titleCandidates = (unresolvedTitleCandidates + maximalTitleCandidates(threadOperations))
+            .distinctBy { it.first }.sortedBy { it.first.value }
         val title = when {
+            unresolvedTitleCandidates.isNotEmpty() -> AgentThreadTitleProjection.Conflict(titleCandidates.map { AgentThreadTitleCandidate(it.first, it.second) })
             titleCandidates.isEmpty() -> AgentThreadTitleProjection.Unavailable
             titleCandidates.map { it.second }.distinct().size == 1 -> AgentThreadTitleProjection.Resolved(titleCandidates.first().second)
             else -> AgentThreadTitleProjection.Conflict(titleCandidates.map { AgentThreadTitleCandidate(it.first, it.second) })
         }
 
         val conflicts = buildList {
-            val titleConflict = titleCandidates.takeIf { candidates -> candidates.map { it.second }.distinct().size > 1 }
-            if (titleConflict != null) {
-                add(conflict(threadId, AgentSemanticConflictKind.THREAD_TITLE, titleConflict.map { it.first }, AgentSemanticConflictState.OPEN))
+            if (unresolvedTitleCandidates.isNotEmpty()) {
+                add(conflict(threadId, AgentSemanticConflictKind.THREAD_TITLE, unresolvedTitleCandidates.map { it.first }, AgentSemanticConflictState.OPEN))
             }
 
             val deleteComponents = deleteAppendComponents(threadId, threadOperations)
@@ -230,7 +232,7 @@ object AgentSyncMergeProjection {
             val right = turnOps[rightIndex]
             val leftManifest = left.agentEvent as TurnFinalized
             val rightManifest = right.agentEvent as TurnFinalized
-            if (leftManifest.parentTurnIds.intersect(rightManifest.parentTurnIds.toSet()).isNotEmpty() && AgentCausality.concurrent(left, right)) {
+            if (areSiblingTurns(leftManifest, rightManifest) && AgentCausality.concurrent(left, right)) {
                 val leftRoot = root(left.operationId)
                 val rightRoot = root(right.operationId)
                 if (leftRoot != rightRoot) parent[rightRoot] = leftRoot
@@ -238,6 +240,27 @@ object AgentSyncMergeProjection {
         }
         return turnOps.groupBy { root(it.operationId) }.values.filter { it.size > 1 }
             .map { it.sortedBy { operation -> operation.operationId.value } }
+    }
+
+    /** Roots share the empty frontier; non-root siblings share at least one parent. */
+    private fun areSiblingTurns(left: TurnFinalized, right: TurnFinalized): Boolean =
+        (left.parentTurnIds.isEmpty() && right.parentTurnIds.isEmpty()) ||
+            left.parentTurnIds.any { it in right.parentTurnIds }
+
+    /** Ordinary title writes cannot resolve a historical conflict without a frozen resolution rule. */
+    private fun concurrentUnequalTitleCandidates(operations: List<AgentSyncOperation>): List<Pair<MutationId, String?>> {
+        val titleOperations = operations.filter { it.agentEvent is ThreadCreated || it.agentEvent is ThreadTitleSet }
+        fun title(operation: AgentSyncOperation): String? = when (val event = operation.agentEvent) {
+            is ThreadCreated -> event.title
+            is ThreadTitleSet -> event.title
+            else -> error("Not a title operation")
+        }
+        return titleOperations.filter { candidate ->
+            titleOperations.any { other ->
+                candidate.operationId != other.operationId && title(candidate) != title(other) &&
+                    AgentCausality.concurrent(candidate, other)
+            }
+        }.map { it.operationId to title(it) }.sortedBy { it.first.value }
     }
 
     private fun maximalTitleCandidates(operations: List<AgentSyncOperation>): List<Pair<MutationId, String?>> {
