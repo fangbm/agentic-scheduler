@@ -62,6 +62,15 @@ jobs:
             ./gradlew build --no-daemon
           '
 
+      - name: Upload Linux test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-test-failure-reports
+          path: shared/application/build/test-results/desktopTest/TEST-dev.agenticscheduler.application.sync.D9AgentHistoryPostgresE2ETest.xml
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Build dogfood app artifacts
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: ./gradlew :apps:android:assembleDebug :apps:desktop:createDistributable --no-daemon
