@@ -94,7 +94,7 @@ class EnrolledPlatformReplica(
     suspend fun resumeDesktopAfterServerRestart() {
         val retained = state.outboundRecords(space).mapNotNull { it.envelope }.associateBy { it.mutationId }
         check(retained.isNotEmpty())
-        check(worker().run(space).agentOutbound.uploaded == 3)
+        check(worker().run(space).agentOutbound.uploaded == 4)
         transport.fetch(space, 0, 100).forEach { check(retained[it.envelope.mutationId]?.let { value -> value == it.envelope } != false) }
         check(worker().run(space).agentOutbound.uploaded == 0)
     }
