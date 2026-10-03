@@ -221,6 +221,8 @@ Git terms such as commit/branch/rebase/merge are analogies unless explicitly dis
 
 Do not call the phone app an `AI proxy` in the default architecture. Watch-originated LLM calls remain Watch-originated even when the OS routes network traffic through the paired phone.
 
+AGT-014 makes STT optional: `aiEntrySupported` is not synonymous with STT support or microphone permission. Stable capability plus `userEnabledAiEntry` determines `effectiveAiEntryEnabled`; approved binding/credential availability determines `providerReady`; current request availability adds network reachability in `requestReady`. A transient offline state does not remove AI entry capability. Exact first-alpha DTO/probe proposals are under OD-058, not approved defaults.
+
 ---
 
 # Risk/permission vocabulary

@@ -1,0 +1,1 @@
+{"bindingVersion":1,"providerConfigId":"00000000-0000-7000-8000-000000000101","adapterProfile":"OPENAI_COMPATIBLE_CHAT_TOOLS","baseUrl":"https://provider.example/v1","model":"explicit-test-model","maxContextUnits":32768,"reservedOutputUnits":4096,"streamingSupported":true,"toolCallingSupported":true,"credentialRequired":true}

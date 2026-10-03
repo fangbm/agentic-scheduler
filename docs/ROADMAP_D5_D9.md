@@ -1,7 +1,7 @@
 # Agentic Scheduler — Reviewed Roadmap D5–D10 + Post-project Hackathon
 
 > Status: **Roadmap Baseline — individual Task Specs remain authoritative**  
-> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 complete through production runtime closure; D9-01 complete/merged; D9-02 implementation and E2E acceptance complete for review (PR #24 Draft/unmerged; OD-012 release gate open); D10 planned; post-project DGX Spark hackathon fork planned
+> Baseline: D5-01 complete; D5-02 implemented/build-verified; D6 complete; D6.5 build/Desktop-verified/Android-surface-and-dialog-touch-verified (full input pending); D7 complete; D8 complete through production runtime closure; D9-01 complete/merged; D9-02 implementation and E2E acceptance complete/merged (PR #24 `6583e61`; OD-012 release gate open); D9-03-00 contract review pending; D10 planned; post-project DGX Spark hackathon fork planned
 > Date: 2026-09-20
 
 ---
@@ -21,8 +21,8 @@ D7     Mutation Journal / History / Undo       IMPLEMENTED / VERIFIED / COMPLETE
 D8     E2EE Multi-device Sync + Thin Server    COMPLETE — FINAL PASS
  ↓
 D9-01  Agent Runtime + Typed Tools             COMPLETE / MERGED
-D9-02  Agent history sync amendment            COMPLETE — IMPLEMENTATION/E2E PASS; PR #24 DRAFT/UNMERGED; OD-012 OPEN
-D9-03  Wear Agent/provider provisioning        AFTER D9-02 — NOT STARTED
+D9-02  Agent history sync amendment            COMPLETE — IMPLEMENTATION/E2E PASS; PR #24 MERGED `6583e61`; OD-012 OPEN
+D9-03  Wear Agent/provider provisioning        D9-03-00 CONTRACT REVIEW / OD-058 PENDING — RUNTIME NOT STARTED
  ↓
 D10    Final Product UI / UX                   PLANNED — AFTER D9
  ↓
@@ -228,8 +228,8 @@ Status:
 ```text
 D9-00 decisions                        FROZEN
 D9-01 Android/Desktop Agent core       COMPLETE / PR #9 MERGED
-D9-02 synchronized Agent history       IMPLEMENTATION + E2E ACCEPTANCE COMPLETE 2026-10-03 / PR #24 DRAFT-UNMERGED / OD-012 PRODUCTION RELEASE GATE OPEN
-D9-03 Wear Agent/provider provisioning AFTER D9-02 / NOT STARTED / SEPARATE SCOPE
+D9-02 synchronized Agent history       IMPLEMENTATION + E2E ACCEPTANCE COMPLETE / PR #24 MERGED 2026-10-04 `6583e61` / OD-012 PRODUCTION RELEASE GATE OPEN
+D9-03 Wear Agent/provider provisioning D9-03-00 CONTRACT REVIEW / OD-058 PENDING / RUNTIME NOT STARTED
 ```
 
 D9-01 finished Android/Desktop local Agent runtime, persistent local

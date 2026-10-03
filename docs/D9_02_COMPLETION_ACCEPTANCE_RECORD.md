@@ -1,6 +1,6 @@
 # D9-02 Completion Acceptance Record
 
-Status: **D9-02 IMPLEMENTATION AND ACCEPTANCE COMPLETE FOR REVIEW**. PR #24 remains Draft and unmerged.
+Status: **D9-02 IMPLEMENTATION AND ACCEPTANCE COMPLETE / MERGED**. PR #24 merged on 2026-10-04 as `6583e61fc3101e5373d537f6b90675430a7aec10`.
 Baseline `feature/d9-02-agent-sync` / `4dbe432`; branch
 `codex/d9-02-05-agent-history-e2e`. Updated 2026-10-04. Latest accepted
 implementation head: `7783a79a9404d23c0e3414c3e8534fe880688783`.
@@ -139,8 +139,9 @@ All five jobs (`build`, `desktop-windows`, `android-keystore`, `wear-keystore`,
 and `agent-history-platform-e2e`) completed successfully. This includes actual
 Linux Secret Service, the 18-test PostgreSQL E2E suite, and enrolled Desktop↔Android
 HTTPS/process-restart acceptance. The code head includes the deletion-provenance
-follow-up below. The documentation-only finalization commit is subject to its
-own full CI run; it changes no implementation files.
+follow-up below. The documentation-only finalization head `bcf7e6dcf746e648406323dd5abea47f3b110b4b`
+also passed all five jobs in [37135819980](https://github.com/fangbm/temvio/actions/runs/37135819980)
+before PR #24 merged; it changed no implementation files.
 
 ## D9-02-05 historical export follow-up (2026-10-03)
 
@@ -201,9 +202,10 @@ suite and platform acceptance passed in GitHub Actions run
 [37130156891](https://github.com/fangbm/temvio/actions/runs/37130156891), including
 all 18 PostgreSQL E2E tests, Desktop seed/resume/verify across client and relay
 restarts, Android seed/resume/consent UI, and the opaque public-table canary scan.
-All full CI jobs passed. D9-02 implementation acceptance is complete for review;
-PR #24 remains Draft/unmerged. OD-012 remains a separate open release gate;
+All full CI jobs passed. D9-02 implementation acceptance is complete and
+PR #24 is merged as `6583e61fc3101e5373d537f6b90675430a7aec10`. OD-012 remains a separate open release gate;
 production-sensitive V3 receive/storage/upload remains disabled.
 
-No merge, D9-03/D10 start, D2/wire/AAD/crypto/server semantic change or
-production-sensitive V3 composition is included.
+D9-03-00 documentation synchronization changes no D9-02 D2/wire/AAD/crypto/server
+semantics or production-sensitive V3 composition. Its contract review is a new
+independent slice after this merged baseline; D9-02 acceptance semantics remain unchanged.
