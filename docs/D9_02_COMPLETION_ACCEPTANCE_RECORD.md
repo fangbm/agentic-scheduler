@@ -2,7 +2,8 @@
 
 Status: **D9-02 IMPLEMENTATION AND ACCEPTANCE COMPLETE FOR REVIEW**. PR #24 remains Draft and unmerged.
 Baseline `feature/d9-02-agent-sync` / `4dbe432`; branch
-`codex/d9-02-05-agent-history-e2e`. Updated 2026-10-03.
+`codex/d9-02-05-agent-history-e2e`. Updated 2026-10-04. Latest accepted
+implementation head: `7783a79a9404d23c0e3414c3e8534fe880688783`.
 
 AGT-018 resolves the historical-source decision for this milestone. OD-012 remains
 OPEN as the separate production-sensitive local-data release gate. Production
@@ -131,15 +132,15 @@ Windows/Android/Wear jobs are retained alongside this added platform job.
 
 ## Current CI and remaining gates
 
-Full CI on head `cf2d0df`:
-[37046317581](https://github.com/fangbm/temvio/actions/runs/37046317581) **PASS**:
-`build`, `desktop-windows`, `android-keystore`, `wear-keystore` and
-`agent-history-platform-e2e` all completed successfully. This includes actual
-Linux Secret Service and enrolled Linux Desktop↔Android HTTPS/process-restart
-acceptance. Earlier `37045497723` was cancelled by the documentation push, not a
-test failure. The final supplemental adversarial assertion and this evidence
-update receive a new complete CI run; the actual final-head result is recorded
-in [PR #24 checks](https://github.com/fangbm/temvio/pull/24/checks) and the PR body.
+Full CI on accepted implementation head
+`7783a79a9404d23c0e3414c3e8534fe880688783`:
+[37133253426](https://github.com/fangbm/temvio/actions/runs/37133253426) **PASS**.
+All five jobs (`build`, `desktop-windows`, `android-keystore`, `wear-keystore`,
+and `agent-history-platform-e2e`) completed successfully. This includes actual
+Linux Secret Service, the 18-test PostgreSQL E2E suite, and enrolled Desktop↔Android
+HTTPS/process-restart acceptance. The code head includes the deletion-provenance
+follow-up below. The documentation-only finalization commit is subject to its
+own full CI run; it changes no implementation files.
 
 ## D9-02-05 historical export follow-up (2026-10-03)
 
@@ -156,11 +157,24 @@ outbox. Retry/repeated click after restart reuses that mapping. No new wire fiel
 direct network upload was introduced. Provider/credential/permission/confirmation/
 PlanBranch/ContextSummary/cache metadata is not in exported DTOs.
 
+### Local thread deletion provenance follow-up (2026-10-04)
+
+On accepted implementation head
+`7783a79a9404d23c0e3414c3e8534fe880688783`, deletion of both tracked and
+legacy-unverified threads is verified to purge raw local provenance in the same
+transaction as the existing D9-01 conversation deletion. Provenance keeps only
+the deleted thread identity/state: `creation_title` and `creation_at_epoch_millis`
+are cleared, `agent_local_turn_member` snapshots are deleted before
+`agent_local_turn_provenance`, and the thread remains excluded from historical
+export. Reopen/restart tests confirm the snapshots do not return. AgentAction/D7
+audit behavior remains retained, and already-created V3 export mappings and
+outbox operations remain untouched.
+
 Executed on 2026-10-03 (Windows JDK17; `GRADLE_USER_HOME=D:\gradle-home-agent`):
 
 ```text
-:shared:database:desktopTest --tests dev.agenticscheduler.database.AgentSyncPersistenceTest --tests dev.agenticscheduler.database.AgentHistoryExplicitExportTest --tests dev.agenticscheduler.database.AgentRunIntegrationTest --no-daemon --no-configuration-cache --max-workers=1
-Result: BUILD SUCCESSFUL; 36 tests, 0 failures/errors/skips.
+:shared:database:desktopTest --tests dev.agenticscheduler.database.AgentPersistenceTest --tests dev.agenticscheduler.database.AgentSyncPersistenceTest --tests dev.agenticscheduler.database.AgentHistoryExplicitExportTest --tests dev.agenticscheduler.database.AgentRunIntegrationTest --rerun-tasks --no-daemon --no-configuration-cache --max-workers=1
+Result: BUILD SUCCESSFUL; 46 tests, 0 failures/errors/skips (`AgentHistoryExplicitExportTest` 3, `AgentPersistenceTest` 9, `AgentRunIntegrationTest` 14, `AgentSyncPersistenceTest` 20). This includes v14→v15 migration/fresh schema parity and deletion-provenance restart/export-exclusion regressions.
 
 :apps:desktop:test --tests dev.agenticscheduler.desktop.AgentConversationSyncControlsTest
 Result: 2 tests, 0 failures/errors/skips.
