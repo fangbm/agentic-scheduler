@@ -641,6 +641,8 @@ STT is optional capability, not assumed from network access. If unavailable, tex
 
 Watch-originated Tool calls use exactly the same permission/application/Planner contracts as Android/Desktop. Watch may impose a stricter local permission policy than the phone.
 
+D9-03-00 audits these inherited boundaries in `docs/tasks/D9_03_00_WEAR_AGENT_PROVIDER_FREEZE.md`. Its exact provisioning wire/delivery/source-authentication/revision/install and first-alpha capability/permission proposals are **PENDING (OD-058)**, not a new approved amendment. STT remains optional; no Phone Agent proxy or Provider abstraction change is authorized.
+
 ---
 
 # AGT-015 — Semantic retrieval / external Tool compatibility

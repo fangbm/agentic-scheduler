@@ -1,6 +1,6 @@
 # D9-02-05 — Agent History Sync E2E / Completion Gate
 
-Status: IMPLEMENTATION AND ACCEPTANCE COMPLETE / PR #24 remains Draft and unmerged.
+Status: IMPLEMENTATION AND ACCEPTANCE COMPLETE / PR #24 MERGED on 2026-10-04 as `6583e61fc3101e5373d537f6b90675430a7aec10`.
 Baseline: `feature/d9-02-agent-sync`, `4dbe432` (PR #23 merged). Verified
 2026-10-04 against implementation head `7783a79a9404d23c0e3414c3e8534fe880688783`. No production V3 enablement.
 
@@ -38,7 +38,7 @@ D8_COMPLETION_ACCEPTANCE_RECORD.md supplies the evidence format, not D9 proof.
 | C12 opaque PostgreSQL leak scan | IMPLEMENTED / VERIFIED | PASS: all public tables scanned after real route traffic and platform round trip; message/input/result/title plus actually stored local provider credential/SecretRef, actual device credentials and content-key encodings absent. No payload or credential HTTP logging. |
 | D targeted suites + full CI | PASS | Local targeted database suites PASS 46/46: `AgentHistoryExplicitExportTest` (3), `AgentPersistenceTest` (9), `AgentRunIntegrationTest` (14), `AgentSyncPersistenceTest` (20); Desktop Compose PASS 2/2; Android 15 Compose instrumentation PASS 2/2. Full CI on implementation head `7783a79a9404d23c0e3414c3e8534fe880688783`, run [37133253426](https://github.com/fangbm/temvio/actions/runs/37133253426), passed all five jobs, including the 18-test disposable PostgreSQL E2E suite and the enrolled Desktop↔Android relay-restart acceptance with opaque public-table canary scan. Windows, Android Keystore and Wear Keystore jobs passed. Local PostgreSQL rerun remains unavailable because the Docker Desktop service is stopped and access denied when starting it; CI supplied the real PostgreSQL evidence. Windows Test Worker issue was an incorrect default Gradle home/JDK; explicit JDK17 + `D:\gradle-home-agent` starts workers correctly. |
 | Production V3 sensitive receive/storage/upload | BLOCKED BY OD-012 / separate release gate | OPEN; production runtime keeps V3 injection absent. Acceptance-only composition is explicitly isolated. |
-| D9-02 COMPLETE / roadmap update | PASS FOR IMPLEMENTATION ACCEPTANCE | All frozen D9-02 implementation and E2E requirements pass. PR #24 is intentionally Draft/unmerged awaiting human review. OD-012 remains OPEN as a separate production-sensitive local-data release gate; no production V3 composition is enabled. |
+| D9-02 COMPLETE / roadmap update | PASS FOR IMPLEMENTATION ACCEPTANCE | All frozen D9-02 implementation and E2E requirements pass. PR #24 is merged as `6583e61fc3101e5373d537f6b90675430a7aec10`. OD-012 remains OPEN as a separate production-sensitive local-data release gate; no production V3 composition is enabled. |
 
 ## Source-data audit / resolved decision
 

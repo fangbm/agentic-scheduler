@@ -1,7 +1,7 @@
 # Agentic Scheduler — Open Decisions Register
 
 > Status: **Mandatory Decision Register**  
-> Updated: 2026-09-12  
+> Updated: 2026-10-04
 > Purpose: ensure an undecided architecture choice is never mistaken for permission to guess.
 
 A `PENDING` item means contributors MUST NOT choose that architecture/security behavior on their own. `RESOLVED` decisions are frozen by the cited source. `DEFERRED` features are intentionally outside the current implementation gate.
@@ -518,6 +518,41 @@ Decision: v14→v15 local provenance is prospective only; every legacy thread is
           descendant export eligibility. Existing V3 wire stays unchanged.
 Source: docs/AGENT_DECISIONS.md AGT-018; maintainer approval 2026-10-03
 ```
+
+---
+
+# D9-03 / Wear provider provisioning
+
+## OD-058 — D9-03-00 implementation-contract sign-off
+
+```text
+Status: PENDING / BLOCKED_BY_DECISION
+Must resolve by: before D9-03-01 or affected later-slice implementation
+Impact: SECURITY / DEVICE INTEROPERABILITY / PERSISTENCE / TOOL PERMISSIONS
+Source: docs/tasks/D9_03_00_WEAR_AGENT_PROVIDER_FREEZE.md
+```
+
+AGT-006/007/014, SYN-009/017/018 and OD-042 remain frozen. This item does not
+reopen the target-device D8 HPKE suite or allow credential workspace sync.
+
+Required sign-off is explicit per C1–C8 in the review packet:
+
+- C1 exact DTO/encoding/AAD/bounds/fixtures;
+- C2 dedicated opaque delivery vs nearby adapter, provisioner authenticity/user
+  comparison, ACK/idempotency/offline/revoked-device checks and retention;
+- C3 revision allocator/reservation/wipe-floor/restart/state-loss recovery;
+- C4 tracked secure-store import, atomic metadata publication and orphan cleanup;
+- C5 non-secret WearProviderBinding metadata/approval/credential association;
+- C6 stable capability/readiness DTOs and bounded network/Provider probe behavior;
+- C7 optional on-device STT/language/permission contract;
+- C8 first-alpha Watch-local permission ceiling/confirmation and context bridge defer.
+
+Recommended package is authenticated opaque server delivery with explicit
+source/target content comparison, target-owned revisions, durable prepared
+secret-reference imports and Watch-local confirmation. These are recommendations,
+not approved wire/security/persistence defaults. No server route, second keypair,
+new credential crypto, remote Tool approval or D9-03 runtime is implemented.
+OD-012 remains independently OPEN.
 
 ---
 

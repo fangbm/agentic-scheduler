@@ -1,8 +1,8 @@
 # D9-02 — Agent conversation/history E2EE sync protocol
 
-> Status: **ARCHITECTURE APPROVED/FROZEN 2026-09-30 — IMPLEMENTATION AND E2E ACCEPTANCE COMPLETE FOR REVIEW 2026-10-03 (PR #24 DRAFT/UNMERGED)**
+> Status: **ARCHITECTURE APPROVED/FROZEN 2026-09-30 — IMPLEMENTATION AND E2E ACCEPTANCE COMPLETE / PR #24 MERGED 2026-10-04 (`6583e61`)**
 > Basis: D9-01 merged in `fangbm/temvio` at `1b273b1`, with AGT-011–013, SYN-003/004/012/013/016 and HST-001/006/007 as binding prior decisions.  
-> Approval: maintainer explicitly approved all seven design choices W1/W2/P1/D1/W4/W5/L1; normative freeze is recorded in AGT-013, SYN-003B and the companion [sign-off packet](D9_02_PROTOCOL_FREEZE_PACKET.md). The exact DTO/fixture, migration, transport and E2E implementation gates are complete for review in PR #24; production-sensitive V3 enablement remains separately gated by OD-012.
+> Approval: maintainer explicitly approved all seven design choices W1/W2/P1/D1/W4/W5/L1; normative freeze is recorded in AGT-013, SYN-003B and the companion [sign-off packet](D9_02_PROTOCOL_FREEZE_PACKET.md). The exact DTO/fixture, migration, transport and E2E implementation gates are complete and merged in PR #24; production-sensitive V3 enablement remains separately gated by OD-012.
 
 ## 0. Goal, ownership and exclusions
 
@@ -125,4 +125,4 @@ No new crypto, plaintext server Agent storage, remote execution or D9-03 credent
 | **W5** | Hold unsupported V2 plus dependent business closure while permitting independent inbound; hold dependent turns until D7 facts shareable | No V2 bypass or false remote success. |
 | **L1** | Bound message/tool/manifest size against existing envelope limits, explicit oversize failure or separately approved bounded fragmentation | No truncation or unbounded events. |
 
-**Approval status:** all seven architectural policies were explicitly frozen by the maintainer on 2026-09-30. **Implementation and acceptance status:** D9-02-01 through D9-02-05 have been implemented and verified for review. The final GitHub Actions run [37130156891](https://github.com/fangbm/temvio/actions/runs/37130156891) passed the complete repository CI, including the enrolled platform/relay restart and PostgreSQL acceptance. PR #24 remains Draft and unmerged. **Release boundary:** OD-012 is still OPEN; production-sensitive V3 receive/storage/upload remains disabled until that independent gate is resolved.
+**Approval status:** all seven architectural policies were explicitly frozen by the maintainer on 2026-09-30. **Implementation and acceptance status:** D9-02-01 through D9-02-05 have been implemented, verified and merged. The final pre-merge documentation-head GitHub Actions run [37135819980](https://github.com/fangbm/temvio/actions/runs/37135819980) passed the complete repository CI, including the enrolled platform/relay restart and PostgreSQL acceptance. PR #24 merged as `6583e61fc3101e5373d537f6b90675430a7aec10` on 2026-10-04. **Release boundary:** OD-012 is still OPEN; production-sensitive V3 receive/storage/upload remains disabled until that independent gate is resolved.

@@ -1199,6 +1199,8 @@ A credential envelope is never a workspace SyncOperation and is never written to
 
 Revocation/wipe deletes the target device's secure-store secret and increments credential revision before any replacement envelope.
 
+D9-03-00 audit note (not an approved amendment): OD-042 resolves this crypto baseline, not the exact wire/AAD bytes, provisioning delivery/ACK/retention, revision allocator or cross-store install recovery. These candidates are tracked in `docs/tasks/D9_03_00_WEAR_AGENT_PROVIDER_FREEZE.md` and **OD-058 PENDING**. Existing HPKE base-mode decryption authenticates ciphertext/context to the recipient but does not by itself prove a provisioner identity; the review packet explicitly blocks sender-approval/delivery implementation until a decision is recorded.
+
 ---
 
 # SYN-019 — D8 completion gate

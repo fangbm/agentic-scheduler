@@ -582,51 +582,49 @@ The AI Provider privacy boundary is separate from the Sync Server privacy bounda
 
 ```mermaid
 flowchart TD
-    VOICE[Watch Microphone]
-    STT{Reliable on-device STT?}
-    OFF[AI Entry hidden / locked OFF]
-    TEXT[Transcript]
+    TEXT[Available Watch text input]
+    VOICE[Explicit Watch speech input]
+    STT{Optional on-device STT + user permission available?}
+    SPEECH[Transcript]
+    UNAVAILABLE[Speech unavailable; text remains available]
     WAG[Watch Agent Runtime]
-    PROVIDER{Provider configured?}
-    NET{Network ready?}
-    LLM[LLM Provider]
-    PLAN[Structured Tool Plan]
-    VALID[Local deterministic validation]
-    WDB[(Watch Local DB)]
-    WOP[Watch SyncOperation]
-    PHONE[Nearby Android Phone]
-    SERVER[Sync Server]
+    READY{AI entry enabled + Provider ready + network reachable?}
+    WAIT[Structured Provider / network unavailable state]
+    LLM[Configured LLM Provider]
+    TOOL[Existing typed Tool]
+    VALID[Shared deterministic validation + Permission Engine]
+    APP[Existing Application / Planner operation]
+    AUDIT[ToolResult + AgentAction + D7 audit]
 
-    VOICE --> STT
-    STT -- no --> OFF
-    STT -- yes --> TEXT
     TEXT --> WAG
-    WAG --> PROVIDER
-    PROVIDER -- no --> WAG
-    PROVIDER -- yes --> NET
-    NET -- no --> WAG
-    NET -- yes --> LLM
-    LLM --> PLAN
-    PLAN --> VALID
-    VALID --> WDB
-    VALID --> WOP
-
-    WOP <--> PHONE
-    WOP --> SERVER
+    VOICE --> STT
+    STT -- no --> UNAVAILABLE
+    STT -- yes --> SPEECH
+    SPEECH --> WAG
+    WAG --> READY
+    READY -- no --> WAIT
+    READY -- yes --> LLM
+    LLM --> TOOL
+    TOOL --> VALID
+    VALID --> APP
+    APP --> AUDIT
 ```
 
-Important state separation:
+AGT-014 supersedes the former STT-only AI entry gate. Canonical state distinctions:
 
 ```text
-aiEntrySupported   = device/STT capability
-aiEntryEnabled     = user preference
-providerConfigured = usable provider profile/credential available
-networkReady       = current request can reach provider
+aiEntrySupported        stable platform + available input capability
+userEnabledAiEntry      local user preference
+effectiveAiEntryEnabled capability + preference
+providerReady           approved binding + required credential availability
+requestReady            entry enabled + provider ready + network reachable
 ```
 
-Network loss does not remove AI capability. It only makes cloud requests temporarily unavailable.
-
-Core watch calendar/task functions remain usable without AI.
+Network loss changes request availability, not stable AI capability. Watch-originated
+Provider requests remain Watch-originated when the OS uses paired-phone networking.
+Core local calendar/task functions remain available without AI. Exact first-alpha
+capability/probe/policy contracts are proposed in D9-03-00 / OD-058; no runtime is
+implied by this diagram.
 
 ---
 
@@ -634,23 +632,29 @@ Core watch calendar/task functions remain usable without AI.
 
 ```mermaid
 sequenceDiagram
-    participant Phone
-    participant Trust as Device Trust / Crypto
-    participant DL as Wear Data Layer
+    participant Source as Explicitly chosen provisioner
+    participant Crypto as Existing D8 target HPKE
+    participant Delivery as Credential delivery contract OD-058 PENDING
     participant Watch
-    participant KS as Watch Keystore
+    participant KS as Watch PlatformSecretStore
+    participant Metadata as Watch binding / revision metadata
 
-    Phone->>Trust: Read selected Provider profile
-    Phone->>Trust: Create device-targeted encrypted secret envelope
-    Trust->>DL: Ciphertext + profile metadata
-    DL->>Watch: Deliver provisioning payload
-    Watch->>Watch: Verify targetDeviceId / key version
-    Watch->>Trust: Decrypt using device-held key material
-    Watch->>KS: Store provider credential securely
-    Watch-->>Phone: Provisioning acknowledgement
+    Source->>Crypto: Encrypt credential for existing target D8 public identity
+    Crypto->>Delivery: ProviderCredentialEnvelope ciphertext
+    Delivery->>Watch: Deliver opaque envelope
+    Watch->>Watch: Authenticate/decrypt + validate target/config/revision + user approval
+    Watch->>KS: Import credential behind SecretRef
+    Watch->>Metadata: Atomically publish SecretRef + accepted revision
+    Metadata-->>Watch: Activate approved WearProviderBinding
 ```
 
-Ordinary Data Layer transport is not treated as the sole confidentiality boundary. Secret material remains application-encrypted for the target device.
+SYN-018 freezes target HPKE/profile and anti-rollback boundaries. The earlier Data
+Layer sequence was conceptual: it did not authorize a nearby sender identity,
+ACK/retention or secure-store/DB crash contract. D9-03-00 records concrete alternatives
+and blocks those implementation choices on OD-058. PlatformSecretStore import and
+SQLite publish are not a single distributed transaction; recovery is a pending
+explicit contract. ProviderConfig metadata is separately locally approved; no
+credential travels in ordinary workspace sync and no second crypto hierarchy is created.
 
 ---
 
