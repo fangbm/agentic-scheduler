@@ -118,6 +118,36 @@ data class ProviderConfig(
     }
 }
 
+enum class AgentLocalThreadProvenanceState { TRACKED, LEGACY_UNVERIFIED, DELETED }
+enum class AgentLocalTurnLifecycle { RUNNING, AWAITING_CONFIRMATION, FINALIZED, INCOMPLETE }
+enum class AgentLocalTurnOutcome { SUCCEEDED, FAILED }
+enum class AgentLocalHistoryMemberKind { MESSAGE, TOOL_CALL, TOOL_RESULT, ACTION }
+
+data class AgentLocalThreadProvenance(
+    val threadId: AgentThreadId,
+    val state: AgentLocalThreadProvenanceState,
+    val creationTitle: String?,
+    val creationAtEpochMillis: Long?,
+)
+
+data class AgentLocalHistoryMember(
+    val order: Int,
+    val kind: AgentLocalHistoryMemberKind,
+    val id: String,
+    val snapshotJson: String?,
+    val finalized: Boolean,
+)
+
+data class AgentLocalTurnProvenance(
+    val threadId: AgentThreadId,
+    val turnId: String,
+    val parentTurnIds: List<String>,
+    val ancestryVerified: Boolean,
+    val lifecycle: AgentLocalTurnLifecycle,
+    val outcome: AgentLocalTurnOutcome?,
+    val members: List<AgentLocalHistoryMember>,
+)
+
 /** D9-01 local-only state. No method exposes permission settings to Agent Tools. */
 interface AgentStateRepository {
     suspend fun saveThread(value: AgentThread)
@@ -146,4 +176,13 @@ interface AgentStateRepository {
     /** False unless the user explicitly acknowledges upgraded replicas for this space. */
     suspend fun syncAgentOriginEnabled(syncSpaceId: SyncSpaceId): Boolean
     suspend fun setSyncAgentOriginEnabled(syncSpaceId: SyncSpaceId, enabled: Boolean)
+
+    /** Starts durable prospective provenance. Missing/tainted provenance never disables local Agent use. */
+    suspend fun beginLocalHistoryTurn(threadId: AgentThreadId, turnId: String)
+    suspend fun activeLocalHistoryTurn(threadId: AgentThreadId): String?
+    suspend fun setLocalHistoryTurnAwaitingConfirmation(threadId: AgentThreadId, turnId: String)
+    /** Returns false if nonterminal records remain; callers must leave that turn unexportable. */
+    suspend fun finalizeLocalHistoryTurn(threadId: AgentThreadId, turnId: String, outcome: AgentLocalTurnOutcome): Boolean
+    suspend fun localThreadProvenance(threadId: AgentThreadId): AgentLocalThreadProvenance?
+    suspend fun localHistoryTurns(threadId: AgentThreadId): List<AgentLocalTurnProvenance>
 }

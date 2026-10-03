@@ -581,6 +581,49 @@ D2 scope. OD-012 remains a separate production receive/storage release gate.
 
 ---
 
+# AGT-018 — D9-02-05 historical export provenance / FROZEN
+
+Maintainer approval on 2026-10-03 authorizes a non-destructive Room v14→v15
+migration, prospective local thread/turn provenance, and a separate explicit
+historical export using only the existing frozen V3 events/outbox/transport.
+
+Every pre-v15 thread is `LEGACY_UNVERIFIED`: never infer turns, membership,
+ancestry, outcomes, creation title, or `TurnFinalized` from ordinal, timestamp,
+adjacency, tail assistant, or any other heuristic. Do not create legacy export
+markers. A post-v15 thread is exportable only with a tracked immutable creation
+snapshot. Runs durably track a stable turn ID, exact ancestry, ordered actual
+message/finalized ToolCall/ToolResult/Action identities, lifecycle and terminal
+outcome. Awaiting confirmation stays incomplete; cancellation, crash, exception,
+or absent completion write cannot be retroactively finalized. An ancestry gap
+taints that descendant lineage for export but does not block local Agent use.
+
+Only provenance-verified finalized turns may be converted to the frozen V3 DTOs.
+Exclude ProviderConfig and credentials/SecretRefs, provider call/session/cache
+IDs, permission/confirmation/PlanBranch metadata, ContextSummary, pending or
+nonterminal calls/actions. Preserve existing stable IDs where the V3 type allows.
+No V3 wire changes. Conversation consent alone never exports history; export is
+a second explicit user action requiring active enrollment and consent. A
+durable per-SyncSpace source-fact mapping stores the first chosen operation ID,
+HLC and canonical sanitized event before publication; retries and duplicate
+clicks reuse it and the existing Agent outbox. Do not upload directly or create
+a second transport. Existing W5 whole-turn D7 dependency holds continue.
+
+Threads deleted before export and their content are ineligible; provenance
+metadata never restores deleted history. Existing D1 tombstone rules apply to
+history already synchronized. OD-012 remains the independent production local
+database protection / sensitive V3 release gate.
+
+## OD-057 — D9-02-05 historical export provenance
+
+```text
+Status: RESOLVED FOR D9-02-05
+Decision: pre-v15 history is always LEGACY_UNVERIFIED and unexportable;
+          prospective v15 provenance only; export requires an explicit
+          second user action with durable idempotency mapping; an unverified
+          ancestor taints descendants; no wire amendment.
+Source: docs/AGENT_DECISIONS.md AGT-018 and maintainer decision 2026-10-03
+```
+
 # AGT-014 — Wear Agent gate
 
 Wear can originate Agent requests but remains a real local-first replica.

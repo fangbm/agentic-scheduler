@@ -82,11 +82,37 @@ interface AgentSyncPersistence {
 
     suspend fun isThreadTombstoned(syncSpaceId: SyncSpaceId, threadId: String): Boolean
     suspend fun threadHistoryProjection(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): AgentThreadHistoryProjection
+    /** Includes handled members whose manifest has not arrived; active projection alone cannot detect them. */
+    suspend fun hasIncompleteInboundHistory(syncSpaceId: SyncSpaceId, threadId: AgentThreadSyncId): Boolean
     suspend fun setAuditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String, state: AgentSyncAuditParentState, threadId: String? = null)
     suspend fun auditParentState(syncSpaceId: SyncSpaceId, actionId: String, parentKind: String, parentId: String): AgentSyncAuditParentState?
 
     suspend fun backfillState(syncSpaceId: SyncSpaceId): AgentSyncBackfillState?
     suspend fun advanceBackfill(syncSpaceId: SyncSpaceId, value: AgentSyncBackfillState)
+}
+
+data class AgentSyncHistoricalExportMapping(
+    val syncSpaceId: SyncSpaceId,
+    val sourceKind: String,
+    val sourceId: String,
+    val operationId: MutationId,
+    val hlc: AgentHlcSnapshot,
+    val event: AgentSyncEvent,
+)
+
+data class AgentSyncHistoricalExportPreparation(val operation: AgentSyncOperation, val createdMapping: Boolean)
+
+/** Explicit-owner-only local capability. It prepares mapping and Agent outbox atomically; it never uploads. */
+interface AgentSyncHistoricalExportPersistence {
+    suspend fun historicalExportMappings(syncSpaceId: SyncSpaceId): List<AgentSyncHistoricalExportMapping>
+    suspend fun prepareHistoricalExport(
+        syncSpaceId: SyncSpaceId,
+        sourceKind: String,
+        sourceId: String,
+        candidateOperationId: MutationId,
+        hlc: AgentHlcSnapshot,
+        event: AgentSyncEvent,
+    ): AgentSyncHistoricalExportPreparation
 }
 
 /**
