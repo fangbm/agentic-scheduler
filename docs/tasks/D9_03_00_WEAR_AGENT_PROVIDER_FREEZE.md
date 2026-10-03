@@ -340,15 +340,20 @@ untracked best-effort delete a complete orphan-cleanup contract.
 
 The target serializes config installs/removals. It rechecks reservation, enrollment,
 approved binding and floor inside the publish transaction after the external import.
-Publish atomically writes current SecretRef, accepted revision and binding state;
-activation is derived only from committed metadata plus a readable secret.
+Publish atomically writes current SecretRef, accepted revision, binding state and
+the journal's committed ownership/retired-reference cleanup state. Activation is
+derived only from committed metadata plus a readable secret. If a crash makes the
+commit result unknown to the caller, restart reads committed metadata/journal
+before cleanup: preserve a reference owned by the committed active binding; clean
+only a prepared reference proved uncommitted. An absent ACK is not proof of rollback.
 
 | Failure/crash | Required candidate state/recovery |
 | --- | --- |
 | Decrypt/validation/approval fails | No import/journal publish; old accepted binding untouched. |
 | Journal/reference preparation fails | No import; no new active binding. |
 | Import fails or crashes | Existing binding remains; restart inspects the prepared slot, removes any uncommitted secret, records completion; retry never guesses installation. |
-| Secret stored, DB publish fails/crashes | Old ref/revision remain current; prepared reference is known and cleaned at restart. Cleanup failure is durable/retryable; new ref is never usable. |
+| Secret stored, DB publish rolls back | Old ref/revision remain current; prepared reference is known and cleaned at restart. Cleanup failure is durable/retryable; new ref is never usable. |
+| Crash around DB commit / commit outcome unknown | Read durable publish/journal state first. Committed new ref/revision survive and old-ref cleanup resumes; otherwise preserve the old binding and clean the uncommitted prepared slot. Never delete an active committed slot because an ACK was lost. |
 | DB publish succeeds, old-secret deletion fails | New ref stays current; persistent cleanup task deletes old ref later, never rolls metadata back to it. |
 | Wipe races replacement/Provider request | Persist floor + disable binding + cancel reservations/request use + cleanup references atomically in metadata; late publish recheck rejects. Complete wipe only after secret deletion; failures stay visibly cleanup-pending. |
 | Restart with committed metadata, secret missing | providerReady false, no plaintext fallback, explicit higher-revision repair action. |
@@ -534,6 +539,7 @@ These are required future tests, not claims of executed acceptance in D9-03-00.
 | Revoked target/source / revocation race | Mailbox auth check rejects; observed local revocation disables binding and cleans secret. |
 | Replacement | Higher target-owned revision, new ref published atomically, old secret cleanup durable. |
 | Crash after import/before metadata commit | Prepared slot recovered/cleaned, no new active binding, no untracked orphan. |
+| Crash after DB commit/before ACK | Committed binding/revision/secret survive restart; retry is idempotent and cleanup never deletes the active slot. |
 | Concurrent replacement/wipe or two provisioners | Target reservation serialization; late publish rejects; no credential winner by HLC. |
 | Wipe/removal then stale replay | Durable floor survives restart; secret stays deleted; no binding recreation. |
 | Local state loss retaining old HPKE identity | Fail closed until approved floor recovery/new D8 enrollment. |
