@@ -76,7 +76,7 @@ class D9AgentHistoryPostgresE2ETest {
     }
 
     @Test fun `explicitly exported tracked history survives client restart and converges through PostgreSQL relay`() = scenario {
-        a.consent(true)
+        a.consent(true); b.consent(true)
         val threadId = AgentThreadId(id(1500))
         val turnId = id(1502)
         a.local.saveThread(AgentThread(threadId, TITLE, 1))
