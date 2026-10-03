@@ -67,6 +67,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.ZERO
@@ -174,9 +175,21 @@ class AgentRunIntegrationTest {
 
             val pending = assertIs<AgentRunResult.AwaitingConfirmation>(runtime.run(threadId, "Read my existing task, then create a new one."))
             assertTrue(pending.previewJson.contains("New task"))
+            val staged = state.localHistoryTurns(threadId).single()
+            assertEquals(AgentLocalTurnLifecycle.AWAITING_CONFIRMATION, staged.lifecycle)
+            assertFalse(staged.members.filter { it.kind in setOf(AgentLocalHistoryMemberKind.TOOL_CALL, AgentLocalHistoryMemberKind.ACTION) }.all { it.finalized })
             assertEquals(listOf(existing), tasks.observeTasks().first())
             assertTrue(history.timeline().isEmpty())
             assertEquals("Created after confirmation.", assertIs<AgentRunResult.Completed>(runtime.confirm(threadId, pending.callId, true)).assistantText)
+            val completedTurn = state.localHistoryTurns(threadId).single()
+            assertEquals(AgentLocalTurnLifecycle.FINALIZED, completedTurn.lifecycle)
+            assertEquals(AgentLocalTurnOutcome.SUCCEEDED, completedTurn.outcome)
+            assertTrue(completedTurn.ancestryVerified)
+            assertTrue(completedTurn.members.all { it.finalized && it.snapshotJson != null })
+            assertTrue(completedTurn.members.map { it.kind }.containsAll(listOf(
+                AgentLocalHistoryMemberKind.MESSAGE, AgentLocalHistoryMemberKind.TOOL_CALL,
+                AgentLocalHistoryMemberKind.TOOL_RESULT, AgentLocalHistoryMemberKind.ACTION,
+            )))
 
             val committed = history.timeline().single()
             val origin = assertIs<MutationOrigin.Agent>(committed.operation.origin)

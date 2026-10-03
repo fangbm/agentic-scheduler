@@ -43,6 +43,7 @@ import dev.agenticscheduler.application.editing.TaskEditingService
 import dev.agenticscheduler.application.editing.UpdateEventInput
 import dev.agenticscheduler.application.editing.UpdateTaskInput
 import dev.agenticscheduler.application.id.productionUuidV7Generator
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.history.MutationCoordinator
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.ConflictAwareRead
@@ -122,7 +123,10 @@ import dev.agenticscheduler.agent.tool.TaskListTool
 import dev.agenticscheduler.agent.tool.TaskUpdateTool
 import dev.agenticscheduler.agent.tool.DogfoodPlannerPreviewApplication
 import dev.agenticscheduler.database.repository.RoomAgentStateRepository
+import dev.agenticscheduler.database.repository.RoomAgentHistoryExportSource
 import dev.agenticscheduler.application.sync.AgentConversationSyncSettings
+import dev.agenticscheduler.application.sync.AgentHistoryExplicitExport
+import dev.agenticscheduler.application.sync.AgentHistoryExportAvailability
 import dev.agenticscheduler.application.sync.AgentConversationSyncSetting
 import dev.agenticscheduler.database.repository.RoomAgentSyncPersistence
 import dev.agenticscheduler.database.repository.RoomAgentSyncTransportPersistence
@@ -170,9 +174,13 @@ fun main() = application {
     val secureStore = remember { DesktopPlatformSecureStore() }
     val agentState = remember(database) { RoomAgentStateRepository(database) }
     val enrollments = remember(database) { RoomLocalEnrollmentRepository(database) }
+    val ids = remember { productionUuidV7Generator() }
     val conversationSettings = remember(database, enrollments) {
         val transport = RoomAgentSyncTransportPersistence(database)
-        AgentConversationSyncSettings(enrollments, transport, transport, RoomAgentSyncPersistence(database))
+        val history = RoomAgentSyncPersistence(database)
+        val exporter = AgentHistoryExplicitExport(enrollments, transport, history, history,
+            RoomAgentHistoryExportSource(database, agentState), ids, EpochMillisecondsClock { Clock.System.now().toEpochMilliseconds() })
+        AgentConversationSyncSettings(enrollments, transport, transport, history, exporter)
     }
     val journal = remember(database) { RoomMutationJournalRepository(database) }
     val agentWriteGate = remember(agentState, enrollments) { ActiveEnrollmentAgentWriteGate(enrollments, agentState) }
@@ -181,7 +189,6 @@ fun main() = application {
     val academics = remember(database) { RoomAcademicRepository(database) }
     val profiles = remember(database) { RoomPlanningProfileRepository(database) }
     val transactions = remember(database) { RoomApplicationTransactionRunner(database) }
-    val ids = remember { productionUuidV7Generator() }
     val mutations = remember(transactions, journal, ids, agentWriteGate) { MutationCoordinator(transactions, journal, ids, MutationWallClock { Clock.System.now().toEpochMilliseconds() }, agentWriteGate) }
     val d8Runtime = remember(database, ids, secureStore) {
         RoomD8RuntimeComposition(
@@ -319,7 +326,9 @@ internal fun DesktopConversationSyncControls(settings: AgentConversationSyncSett
     var acknowledgement by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var eligibility by remember { mutableStateOf<Map<SyncSpaceId, AgentHistoryExportAvailability>>(emptyMap()) }
     LaunchedEffect(settings) { choices = settings.settings() }
+    LaunchedEffect(settings, choices) { eligibility = choices.mapNotNull { choice -> settings.historyExportAvailability(choice.syncSpaceId)?.let { choice.syncSpaceId to it } }.toMap() }
     Column(modifier = Modifier.testTag("agent-conversation-sync")) {
         Text("Agent conversation/history sync")
         Text("Separate from Agent-origin business writes (V2). Off by default; older/downgraded devices cannot display V3 history. The server does not attest client versions.")
@@ -332,6 +341,7 @@ internal fun DesktopConversationSyncControls(settings: AgentConversationSyncSett
         }
         choices.forEach { choice ->
             Text("${choice.syncSpaceId.value}: consent ${if (choice.consent) "ON" else "OFF"}; history recovery ${choice.recoveryState}.")
+            eligibility[choice.syncSpaceId]?.let { Text("Verified local history: ${it.eligibleTurns} complete turn(s); ${it.skippedLegacyThreads} legacy thread(s) are excluded.") }
             if (choice.recoveryState.name in listOf("REQUIRED", "RUNNING", "INCOMPLETE"))
                 Text("Conversation history is incomplete until retained history and keys are recovered.")
             Button(enabled = !saving && (choice.consent || acknowledgement),
@@ -343,12 +353,24 @@ internal fun DesktopConversationSyncControls(settings: AgentConversationSyncSett
                             settings.setFromUser(choice.syncSpaceId, !choice.consent, acknowledgement)
                             acknowledgement = false
                             choices = settings.settings()
-                            status = "Choice saved. Existing local history is never exported automatically."
+                            status = "Consent choice saved. No history was exported."
                         } catch (cancelled: CancellationException) { throw cancelled
                         } catch (_: Exception) { status = "Unable to save conversation sync choice. Check enrollment and V3 acknowledgement."
                         } finally { saving = false }
                     }
                 }) { Text(if (choice.consent) "Turn conversation sync OFF" else "Explicitly enable conversation sync") }
+            Button(enabled = !saving && choice.consent && (eligibility[choice.syncSpaceId]?.eligibleTurns ?: 0) > 0,
+                modifier = Modifier.testTag("agent-history-explicit-export"), onClick = {
+                    scope.launch {
+                        saving = true
+                        try {
+                            val result = settings.exportHistoryFromUser(choice.syncSpaceId)
+                            status = "History export queued: ${result.newlyQueuedFacts} new fact(s), ${result.previouslyQueuedFacts} already queued; ${result.skippedLegacyThreads} legacy thread(s) excluded."
+                        } catch (cancelled: CancellationException) { throw cancelled
+                        } catch (_: Exception) { status = "Unable to prepare verified Agent history export. No network upload was started."
+                        } finally { saving = false }
+                    }
+                }) { Text("Export verified history") }
         }
         Button(enabled = !saving, onClick = { scope.launch { choices = settings.settings(); acknowledgement = false } }) { Text("Refresh enrollment/history status") }
         status?.let { Text(it) }

@@ -78,7 +78,7 @@ env = dict(os.environ, PGPASSWORD=os.environ['SYNC_TEST_DATABASE_PASSWORD'])
 def query(sql):
     return subprocess.check_output(['psql', database, '-U', os.environ['SYNC_TEST_DATABASE_USER'], '-At', '-c', sql], env=env, text=True)
 tables = query("SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'").splitlines()
-canaries = ['D90205-PLATFORM-TITLE-CANARY', 'D90205-DESKTOP-MESSAGE-CANARY', 'D90205-ANDROID-MESSAGE-CANARY', base64.urlsafe_b64encode(bytes(range(11, 43))).decode().rstrip('=')]
+canaries = ['D90205-PLATFORM-TITLE-CANARY', 'D90205-DESKTOP-MESSAGE-CANARY', 'D90205-DESKTOP-ASSISTANT-CANARY', 'D90205-ANDROID-MESSAGE-CANARY', base64.urlsafe_b64encode(bytes(range(11, 43))).decode().rstrip('=')]
 for table in tables:
     rows = query('SELECT to_jsonb(r)::text FROM "' + table.replace('"', '""') + '" r')
     assert not any(value in rows for value in canaries), 'Opaque platform relay leaked a canary in ' + table

@@ -38,7 +38,7 @@ instrumentation result text are uploaded by CI, not client DBs/keys/configuratio
 | Identical concurrent KEEP and unobserved participant DVV | PASS; no LWW; invalid resolution stays unhandled; valid decisions converge. |
 | Late and pre-existing pending audit after matching tombstone | PASS; sanitized references retained; only matching PARENT_RECORD dependencies release, unrelated missing parent remains pending. |
 | Held V2/full suffix, independent inbound V1/V3, dependent complete turn hold/release | PASS; actual relay, no early member publication, authorization drains once, lookup-only inbound audit. |
-| Consent/default OFF/owner acknowledgement/no automatic legacy export | PASS for consent behavior; local ProviderConfig/secret/legacy rows seeded and preserved. Explicit historical export remains BLOCKED_BY_DECISION. |
+| Consent/default OFF/owner acknowledgement/explicit historical export | PASS on Desktop and Android 15 emulator. Consent ON leaves outbox empty; separate click queues only a complete verified turn, repeat click after restart reuses the first mapping. v12→v15 preserves populated D9-01/ProviderConfig/permission/summary data and fail-closes the pre-v15 thread as LEGACY_UNVERIFIED. See the 2026-10-03 follow-up below for test totals and remaining CI/PG run. |
 | Existing local ordinal0 and remote V3 projection | PASS, two enrolled clients; local ordinal-unique table unchanged after restart. |
 | Frozen crypto/wire/bounds | Component suites plus new real route quarantine/preflight and actual Tink tamper/wrong-key checks; same immutable record ID with unequal value is quarantined despite a valid fresh author dot, original record/frontier unchanged after restart. No crypto/wire implementation changes. |
 | Actual Android↔Desktop encrypted round trip | PASS local: Desktop seed/resume/verify each 1 test, 0 failures/skips; Android seed/resume each `OK (1 test)` across process restart; equal independent Agent frontiers, empty D7 journal/handled dots, no partial transcript. |
@@ -136,15 +136,53 @@ test failure. The final supplemental adversarial assertion and this evidence
 update receive a new complete CI run; the actual final-head result is recorded
 in [PR #24 checks](https://github.com/fangbm/temvio/pull/24/checks) and the PR body.
 
-BLOCKED_BY_DECISION: D9-01 has no durable turn completion, complete membership,
-ancestry or terminal run outcome. `AgentRunService.handleResponse` persists an
-assistant before creating its ToolCall. A tail assistant or terminal call cannot
-prove historical completion. Maintainer decision requested: fail closed for
-ambiguous legacy records and authorize new local completion/export metadata with
-an explicit non-destructive migration, or retain the export blocker. No schema,
-new wire model, retrospective reconstruction heuristic, or fabricated export
-marker was introduced while awaiting that decision.
+## D9-02-05 historical export follow-up (2026-10-03)
 
-No roadmap COMPLETE/implementation-accepted update is authorized by this partial
-record. No merge, D9-03/D10 start, D2/wire/AAD/crypto/server semantic change or
+Maintainer approval is recorded as AGT-018; OD-057 is RESOLVED FOR D9-02-05.
+Room v14→v15 is non-destructive. Every existing D9-01 thread migrates to
+`LEGACY_UNVERIFIED` with null creation metadata and no inferred turn/member rows.
+New threads and runs record prospective creation, stable turn/ancestry, exact
+ordered member snapshots, lifecycle and terminal outcome. Awaiting confirmation,
+crash/cancel/exception and absent completion writes remain ineligible. Export is a
+separate Android/Desktop owner action; consent alone queues zero V3 facts. A
+verified finalized turn is converted through the existing V3 DTOs and its first
+source→operation/HLC/event mapping commits atomically with the existing Agent
+outbox. Retry/repeated click after restart reuses that mapping. No new wire field or
+direct network upload was introduced. Provider/credential/permission/confirmation/
+PlanBranch/ContextSummary/cache metadata is not in exported DTOs.
+
+Executed on 2026-10-03 (Windows JDK17; `GRADLE_USER_HOME=D:\gradle-home-agent`):
+
+```text
+:shared:database:desktopTest --tests dev.agenticscheduler.database.AgentSyncPersistenceTest --tests dev.agenticscheduler.database.AgentHistoryExplicitExportTest --tests dev.agenticscheduler.database.AgentRunIntegrationTest --no-daemon --no-configuration-cache --max-workers=1
+Result: BUILD SUCCESSFUL; 36 tests, 0 failures/errors/skips.
+
+:apps:desktop:test --tests dev.agenticscheduler.desktop.AgentConversationSyncControlsTest
+Result: 2 tests, 0 failures/errors/skips.
+
+:apps:android:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=dev.agenticscheduler.android.AgentConversationSyncControlsInstrumentedTest
+Result: Android 15 emulator `temvio-d90205-ascii`; 2 tests, 0 failures/errors/skips.
+
+:apps:desktop:compileKotlin :apps:android:compileDebugKotlin
+Result: BUILD SUCCESSFUL.
+:apps:android:compileDebugAndroidTestKotlin
+Result: BUILD SUCCESSFUL.
+```
+
+The first Windows worker attempts used an incorrect default Gradle home and failed
+to start GradleWorkerMain. Pinning JDK17 plus `D:\gradle-home-agent` resolved worker
+startup; the tests then executed. A later Android incremental compiler emitted a
+classpath snapshot diagnostic and recovered via fallback; the Android build and
+instrumentation passed.
+
+The local real-PostgreSQL suite was not run in this follow-up: Docker Desktop's
+Linux engine was unavailable and `com.docker.service` is stopped; attempting to
+start that service returned access denied. Do not count the baseline 17/17 result
+above as evidence for the new commit. Rerun the PostgreSQL/platform acceptance and
+full GitHub Actions workflow on the pushed head. Until those finish, keep D9-02
+IN PROGRESS. OD-012 remains a separate open release gate; production-sensitive V3
+receive/storage/upload remains disabled.
+
+No roadmap COMPLETE/implementation-accepted update is made by this follow-up alone.
+No merge, D9-03/D10 start, D2/wire/AAD/crypto/server semantic change or
 production-sensitive V3 composition is included.

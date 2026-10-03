@@ -21,7 +21,7 @@ D8_COMPLETION_ACCEPTANCE_RECORD.md supplies the evidence format, not D9 proof.
 | Item | Current classification | Required new evidence / current result |
 | --- | --- | --- |
 | A1 Android/Desktop conversation consent UX | IMPLEMENTED / VERIFIED | Room-backed per-space explicit acknowledgement/ON/OFF, separate V2 choice, old/downgrade/recovery warnings. Android and Desktop actual Compose click tests PASS; durable OFF/no automatic outbox verified. |
-| A2 separate historical export | BLOCKED_BY_DECISION | No durable D9-01 completion/membership/ancestry source. Do not infer a turn from a message tail. Source-data decision below remains pending; export/marker/restart acceptance NOT IMPLEMENTED / NOT PASS. |
+| A2 separate historical export | IMPLEMENTED / VERIFIED | AGT-018 authorizes v14→v15 prospective provenance; populated v12→v15 migration preserves real D9-01 records and marks old history `LEGACY_UNVERIFIED`. New desktop persistence tests cover exact member conversion, private metadata exclusion, incomplete/crash turns, tainted ancestry, first-mapping-wins retries across restart, and immutable Agent outbox identities. Consent alone queues zero facts. No direct upload path. |
 | B enrolled-server harness | IMPLEMENTED / VERIFIED | Actual Ktor/JDBC/PostgreSQL routes, authenticated invitations/enrollment/credentials, file Room14, platform secure store/Tink and worker/merge/backfill. Route suite and separate HTTPS Desktop↔Android harness executed; no memory relay. |
 | C1 old/new + upgrade | IMPLEMENTED / VERIFIED | PASS: whole V3 quarantine then independent V1; upgrade/reopen/backfill twice, same forward cursor/history and no Agent dots in D7. |
 | C2 missing historical material | IMPLEMENTED / VERIFIED | PASS: actual 7→8 keyring rotation and old ciphertext recovery; missing secure-store key, absent ciphertext and earlier retention gap remain INCOMPLETE across restart. |
@@ -31,29 +31,30 @@ D8_COMPLETION_ACCEPTANCE_RECORD.md supplies the evidence format, not D9 proof.
 | C6 delete/append/resolutions | IMPLEMENTED / VERIFIED | PASS: real relay delete/concurrent append, fresh text-only COPY identities, concurrent different resolutions, expanded observing KEEP, and restart. Frozen invalid-DVV/identical KEEP convergence cases additionally exercised. Original ID stays tombstoned; no Tool/business replay. |
 | C7 deleted audit | IMPLEMENTED / VERIFIED | PASS: late sanitized Action/D7 references retained, matching parent REMOVED with no indefinite record dependency; unrelated missing parent stays pending. Concurrent tombstone releases only matching pre-existing audit record dependencies; causal/D7 barriers remain. |
 | C8 held V2/cross-stream | IMPLEMENTED / VERIFIED | PASS: actual relay V2 plus full local suffix held; independent inbound V1 and consented V3 progress; referenced complete turn withheld as a unit; gate release drains once and audit only looks up received D7 facts. |
-| C9 consent/export | PARTIAL; export BLOCKED_BY_DECISION | PASS: OFF zero upload/readable V3 projection, explicit acknowledgement, restart OFF, ON leaves populated local legacy history/outbox unchanged. Explicit historical export and export-marker restart idempotence are NOT PASS. |
-| C10 migrations/ordinal/restart | VERIFIED BY EXISTING REGRESSION + NEW EVIDENCE | Populated v12→13→14 and v13→14/fresh parity tests retained and re-run; new enrolled two-client test keeps existing ordinal-0 local messages intact while separate V3 history projects. |
+| C9 consent/export | IMPLEMENTED / VERIFIED | Desktop Compose and Android 15 emulator clicks both prove consent ON leaves the Agent outbox empty, explicit export queues 3 facts for a one-message finalized turn, and repeated click queues 0 new facts / reuses all 3 mappings. OFF remains durable; existing V2 setting stays OFF. OD-012 still prevents production-sensitive V3 activation. |
+| C10 migrations/ordinal/restart | IMPLEMENTED / VERIFIED | Populated v12→13→14→15 migration and fresh/migrated schema-signature parity pass. Existing v12 user/assistant + Tool/Action/result + Pending Confirmation, ProviderConfig, permission policy and ContextSummary data are byte-for-byte preserved. Legacy provenance has no creation snapshot/turn rows; prospective turn/member/mapping tables are empty. |
 | C11 crypto/adversarial | VERIFIED BY EXISTING REGRESSION + NEW EVIDENCE | Frozen Envelope/AAD/AEAD/fixtures/identity/bounds suites re-run; new real relay unknown/mismatched-ID/reused-dot and unequal immutable-record value quarantine, restart preserves original/frontiers, whole-turn lower deployment preflight, actual Tink tamper/wrong-key/AAD rejection and exact ciphertext retries. Crypto and wire implementation unchanged. |
 | C12 opaque PostgreSQL leak scan | IMPLEMENTED / VERIFIED | PASS: all public tables scanned after real route traffic and platform round trip; message/input/result/title plus actually stored local provider credential/SecretRef, actual device credentials and content-key encodings absent. No payload or credential HTTP logging. |
-| D targeted suites + full CI | IMPLEMENTED / VERIFIED | Combined local suite359 PASS/1 explicit platform SKIP, separately executed actual platform phases/UI and17 real PostgreSQL tests. CI37046317581 has all5 jobs PASS; final supplemental regression/evidence update CI is linked via PR checks and recorded in the PR body. Prior Linux fixture double-delete cleanup failure corrected without changing secure-store implementation. |
+| D targeted suites + full CI | VERIFICATION IN PROGRESS | Local targeted database suites PASS 36/36; Desktop Compose PASS 2/2; Android 15 Compose instrumentation PASS 2/2; Android/Desktop compile and Android instrumentation compile PASS. Local PostgreSQL rerun is unavailable because the Docker Desktop service is stopped and access denied when starting it; run the 17-test disposable PostgreSQL suite and complete workflow in GitHub CI on the pushed head. Windows Test Worker issue was an incorrect default Gradle home/JDK; explicit JDK17 + `D:\gradle-home-agent` starts workers correctly. |
 | Production V3 sensitive receive/storage/upload | BLOCKED BY OD-012 / separate release gate | OPEN; production runtime keeps V3 injection absent. Acceptance-only composition is explicitly isolated. |
 | D9-02 COMPLETE / roadmap update | NEW E2E EVIDENCE REQUIRED | Conditional on every frozen acceptance passing; remain IN PROGRESS until then. |
 
-## Source-data audit / pending decision
+## Source-data audit / resolved decision
 
-D9-01 `AgentState.kt` persists local messages/Tool/Action records, but no durable
-turn identity, complete membership, parent ancestry or terminal run outcome.
-`AgentRunService.handleResponse` writes an assistant message before writing its
-ToolCall, so an assistant tail is not by itself proof of a completed turn.
-Legacy export must not infer success or dialogue ancestry from timestamps/ordinals.
-The maintainer has been asked about fail-closed legacy handling plus explicit local
-completion/export metadata. Pending that answer, the ambiguous legacy reconstruction
-part is BLOCKED_BY_DECISION; consent and real-server acceptance proceed independently.
-No new wire event or semantic resolution is proposed.
+D9-01 `AgentState.kt` previously had no durable turn identity, complete membership,
+parent ancestry or terminal run outcome. AGT-018 now authorizes prospective local
+provenance in Room v15. Every pre-v15 thread is `LEGACY_UNVERIFIED`; no turn,
+membership, ancestry, creation snapshot or outcome is inferred from ordinals,
+timestamps, adjacency or assistant tails. A pending confirmation, crash, cancellation,
+exception or absent completion write remains unexportable. An ancestry gap taints
+descendants for export only and never blocks local Agent use. Existing V3 DTOs remain
+unchanged; OD-057 is resolved for this milestone and OD-012 remains a separate release gate.
 
 ## Scope fence
 
-Minimal functional Android/Desktop controls only; no navigation/visual redesign.
+Minimal functional Android/Desktop controls only; explicit export is a separate
+button from consent and only prepares durable Agent outbox records; no direct upload.
+No navigation/visual redesign.
 No changes to D2, D7 business causality, Envelope/AAD/AEAD, opaque server semantics
 or frozen V3 event vocabulary. No Wear provisioning, D9-03, D10, MCP, embeddings
 or server Agent. No production-sensitive V3 activation while OD-012 is OPEN.

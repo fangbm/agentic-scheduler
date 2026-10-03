@@ -91,6 +91,30 @@ interface AgentSyncPersistence {
     suspend fun advanceBackfill(syncSpaceId: SyncSpaceId, value: AgentSyncBackfillState)
 }
 
+data class AgentSyncHistoricalExportMapping(
+    val syncSpaceId: SyncSpaceId,
+    val sourceKind: String,
+    val sourceId: String,
+    val operationId: MutationId,
+    val hlc: AgentHlcSnapshot,
+    val event: AgentSyncEvent,
+)
+
+data class AgentSyncHistoricalExportPreparation(val operation: AgentSyncOperation, val createdMapping: Boolean)
+
+/** Explicit-owner-only local capability. It prepares mapping and Agent outbox atomically; it never uploads. */
+interface AgentSyncHistoricalExportPersistence {
+    suspend fun historicalExportMappings(syncSpaceId: SyncSpaceId): List<AgentSyncHistoricalExportMapping>
+    suspend fun prepareHistoricalExport(
+        syncSpaceId: SyncSpaceId,
+        sourceKind: String,
+        sourceId: String,
+        candidateOperationId: MutationId,
+        hlc: AgentHlcSnapshot,
+        event: AgentSyncEvent,
+    ): AgentSyncHistoricalExportPreparation
+}
+
 /**
  * Deliberately separate from the generic Agent outbox port. UI/user-action code may inject this
  * capability; Agent Tools and background schedulers receive only AgentSyncPersistence.

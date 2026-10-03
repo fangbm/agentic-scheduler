@@ -5,6 +5,7 @@ import com.zaxxer.hikari.HikariDataSource
 import androidx.room3.useReaderConnection
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.SyncEngine
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.persistence.CommittedMutation
 import dev.agenticscheduler.database.openDesktopDatabase
@@ -72,6 +73,36 @@ class D9AgentHistoryPostgresE2ETest {
         assertTrue(a.worker().run(space).agentOutbound.consentOff)
         assertEquals(emptyList(), a.transport.fetch(space, 0, 100))
         assertEquals(legacy, a.local.messages(AgentThreadId(id(5000))))
+    }
+
+    @Test fun `explicitly exported tracked history survives client restart and converges through PostgreSQL relay`() = scenario {
+        a.consent(true)
+        val threadId = AgentThreadId(id(1500))
+        val turnId = id(1502)
+        a.local.saveThread(AgentThread(threadId, TITLE, 1))
+        a.local.beginLocalHistoryTurn(threadId, turnId)
+        a.local.appendMessage(AgentMessage(AgentMessageId(id(1501)), threadId, 0, AgentMessageRole.USER, MESSAGE, 2))
+        a.local.appendMessage(AgentMessage(AgentMessageId(id(1503)), threadId, 1, AgentMessageRole.ASSISTANT, EXPORTED_ASSISTANT, 3))
+        assertTrue(a.local.finalizeLocalHistoryTurn(threadId, turnId, AgentLocalTurnOutcome.SUCCEEDED))
+        val exporter = AgentHistoryExplicitExport(a.enrollment, a.state, a.agent, a.agent,
+            RoomAgentHistoryExportSource(a.db, a.local), productionUuidV7Generator(), EpochMillisecondsClock { 10 })
+        assertEquals(1, exporter.availability(space).eligibleTurns)
+        assertEquals(4, exporter.exportFromUser(space).newlyQueuedFacts)
+        val prepared = a.agent.historicalExportMappings(space)
+        assertEquals(4, prepared.size)
+        a.reopen()
+        assertEquals(4, a.worker().run(space).agentOutbound.uploaded)
+        b.worker().run(space)
+        assertEquals(1, b.agent.threadHistoryProjection(space, AgentThreadSyncId(threadId.value)).turns.size)
+        assertEquals(2, b.agent.threadHistoryProjection(space, AgentThreadSyncId(threadId.value)).turns.single().members.size)
+        val idsBeforeRepeat = a.agent.historicalExportMappings(space).map { it.operationId }
+        val retryExporter = AgentHistoryExplicitExport(a.enrollment, a.state, a.agent, a.agent,
+            RoomAgentHistoryExportSource(a.db, a.local), productionUuidV7Generator(), EpochMillisecondsClock { 99 })
+        assertEquals(4, retryExporter.exportFromUser(space).previouslyQueuedFacts)
+        assertEquals(idsBeforeRepeat, a.agent.historicalExportMappings(space).map { it.operationId })
+        assertEquals(0, a.worker().run(space).agentOutbound.uploaded)
+        assertEquals(1, b.agent.threadHistoryProjection(space, AgentThreadSyncId(threadId.value)).turns.size)
+        assertOpaque()
     }
 
     @Test fun `shuffled sealed Tool turn stays invisible across restart and duplicates until complete`() = scenario {
@@ -476,7 +507,7 @@ class D9AgentHistoryPostgresE2ETest {
                 for (table in tables) connection.createStatement().use { statement ->
                     val quoted = "\"${table.replace("\"", "\"\"")}\""
                     statement.executeQuery("SELECT to_jsonb(r)::text FROM $quoted r").use { rows ->
-                        while (rows.next()) for (canary in listOf(TITLE, MESSAGE, INPUT, RESULT, PROVIDER_SECRET, SECRET_REF,
+                        while (rows.next()) for (canary in listOf(TITLE, MESSAGE, EXPORTED_ASSISTANT, INPUT, RESULT, PROVIDER_SECRET, SECRET_REF,
                             encodeCanonicalBase64Url(KEY7), encodeCanonicalBase64Url(KEY8)) + listOfNotNull(
                             a.store.load(a.credential)?.value, b.store.load(b.credential)?.value)) {
                             assertFalse(rows.getString(1).contains(canary), "Opaque relay table $table retained a forbidden canary.")
@@ -594,6 +625,7 @@ class D9AgentHistoryPostgresE2ETest {
         private const val ADMIN = "d90205-disposable-admin"
         private const val TITLE = "D90205-THREAD-TITLE-CANARY"
         private const val MESSAGE = "D90205-MESSAGE-TEXT-CANARY"
+        private const val EXPORTED_ASSISTANT = "D90205-EXPORTED-ASSISTANT-CANARY"
         private const val INPUT = "D90205-NORMALIZED-INPUT-CANARY"
         private const val RESULT = "D90205-TOOL-RESULT-CANARY"
         private const val PROVIDER_SECRET = "D90205-PROVIDER-CREDENTIAL-CANARY"

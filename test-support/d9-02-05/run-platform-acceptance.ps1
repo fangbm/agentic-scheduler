@@ -86,7 +86,7 @@ try {
         if ($table -notmatch '^[a-z_]+$') { throw 'Unexpected acceptance table identifier.' }
         $rows = & docker exec $PostgresContainer psql -U $env:SYNC_TEST_DATABASE_USER -d agentic_d90205 -At -c "SELECT to_jsonb(r)::text FROM $table r"
         if ($LASTEXITCODE) { throw 'Opaque relay scan query failed.' }
-        foreach ($canary in @('D90205-PLATFORM-TITLE-CANARY','D90205-DESKTOP-MESSAGE-CANARY','D90205-ANDROID-MESSAGE-CANARY','CwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSo')) {
+        foreach ($canary in @('D90205-PLATFORM-TITLE-CANARY','D90205-DESKTOP-MESSAGE-CANARY','D90205-DESKTOP-ASSISTANT-CANARY','D90205-ANDROID-MESSAGE-CANARY','CwwNDg8QERITFBUWFxgZGhscHR4fICEiIyQlJicoKSo')) {
             if (($rows -join "`n").Contains($canary)) { throw "Opaque relay canary leaked in $table." }
         }
     }

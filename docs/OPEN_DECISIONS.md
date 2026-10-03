@@ -507,6 +507,18 @@ Source: docs/SYNC_SECURITY_DECISIONS.md SYN-009/SYN-010
         + docs/AGENT_DECISIONS.md AGT-007
 ```
 
+## OD-057 — D9-02-05 historical export provenance
+
+```text
+Status: RESOLVED FOR D9-02-05
+Decision: v14→v15 local provenance is prospective only; every legacy thread is
+          LEGACY_UNVERIFIED and unexportable without heuristic exceptions.
+          Export requires a separately explicit user action and durable,
+          idempotent source-to-operation mapping. Unverified ancestry taints
+          descendant export eligibility. Existing V3 wire stays unchanged.
+Source: docs/AGENT_DECISIONS.md AGT-018; maintainer approval 2026-10-03
+```
+
 ---
 
 # External calendar

@@ -12,6 +12,6 @@ fun openAndroidDatabase(context: Context): AgenticSchedulerDatabase =
     Room.databaseBuilder<AgenticSchedulerDatabase>(context, AgenticSchedulerDatabaseFileName) { AgenticSchedulerDatabaseConstructor.initialize() }
         .setDriver(BundledSQLiteDriver())
         .setQueryCoroutineContext(Dispatchers.IO)
-        .addMigrations(AgentMigration11To12, AgentSyncMigration12To13, AgentSyncTransportMigration13To14)
+        .addMigrations(AgentMigration11To12, AgentSyncMigration12To13, AgentSyncTransportMigration13To14, AgentHistoryProvenanceMigration14To15)
         .addCallback(AgentSchemaCallback)
         .build()

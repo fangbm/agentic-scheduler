@@ -153,10 +153,12 @@ internal object AgentSchemaCallback : RoomDatabase.Callback() {
         AgentSchema.create(connection)
         AgentSyncSchema.create(connection)
         AgentSyncTransportSchema.create(connection)
+        AgentHistoryProvenanceSchema.create(connection)
     }
     override suspend fun onOpen(connection: SQLiteConnection) {
         AgentSchema.validate(connection)
         AgentSyncSchema.validate(connection)
         AgentSyncTransportSchema.validate(connection)
+        AgentHistoryProvenanceSchema.validate(connection)
     }
 }

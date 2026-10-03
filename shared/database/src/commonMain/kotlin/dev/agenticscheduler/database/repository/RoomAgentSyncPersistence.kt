@@ -19,6 +19,9 @@ import dev.agenticscheduler.application.sync.AgentSyncPersistResult
 import dev.agenticscheduler.application.sync.AgentSyncPersistence
 import dev.agenticscheduler.application.sync.AgentSyncTurnState
 import dev.agenticscheduler.application.sync.AgentSyncIntegrityFailure
+import dev.agenticscheduler.application.sync.AgentSyncHistoricalExportMapping
+import dev.agenticscheduler.application.sync.AgentSyncHistoricalExportPersistence
+import dev.agenticscheduler.application.sync.AgentSyncHistoricalExportPreparation
 import dev.agenticscheduler.application.sync.agentHistoryTurnLinkError
 import dev.agenticscheduler.database.AgenticSchedulerDatabase
 import dev.agenticscheduler.sync.*
@@ -33,7 +36,7 @@ import kotlinx.serialization.json.add
 class AgentSyncIntegrityConflictException(message: String) : AgentSyncIntegrityFailure(message)
 
 /** Room adapter for isolated D9-02 local state; it has no transport or receive-dispatch hooks. */
-class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) : AgentSyncPersistence, AgentSyncExplicitUserResolutionPersistence {
+class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) : AgentSyncPersistence, AgentSyncExplicitUserResolutionPersistence, AgentSyncHistoricalExportPersistence {
     private val json = Json { encodeDefaults = true }
     override suspend fun enqueueOutbound(
         syncSpaceId: SyncSpaceId,
@@ -58,6 +61,62 @@ class RoomAgentSyncPersistence(private val database: AgenticSchedulerDatabase) :
             is LocalEnqueueOutcome.Success -> outcome.operation
             is LocalEnqueueOutcome.Conflict -> throw AgentSyncIntegrityConflictException(outcome.message)
         }
+    }
+
+    override suspend fun historicalExportMappings(syncSpaceId: SyncSpaceId): List<AgentSyncHistoricalExportMapping> = database.useReaderConnection { connection ->
+        connection.query(
+            "SELECT sync_space_id, source_kind, source_id, operation_id, hlc_json, event_json FROM agent_history_export_mapping WHERE sync_space_id = ? ORDER BY source_kind, source_id",
+            listOf(syncSpaceId.value),
+        ) { row ->
+            AgentSyncHistoricalExportMapping(
+                SyncSpaceId(row.getText(0)), row.getText(1), row.getText(2), MutationId(row.getText(3)),
+                json.decodeFromString(AgentHlcSnapshot.serializer(), row.getText(4)),
+                json.decodeFromString(AgentSyncEvent.serializer(), row.getText(5)),
+            )
+        }
+    }
+
+    /** Mapping identity, V3 immutable operation, dot and outbox indexes commit atomically. */
+    override suspend fun prepareHistoricalExport(
+        syncSpaceId: SyncSpaceId,
+        sourceKind: String,
+        sourceId: String,
+        candidateOperationId: MutationId,
+        hlc: AgentHlcSnapshot,
+        event: AgentSyncEvent,
+    ): AgentSyncHistoricalExportPreparation = database.withWriteTransaction {
+        require(sourceKind.isNotBlank() && sourceId.isNotBlank())
+        require(event !is ThreadDeleted && event !is ThreadDeleteConflictResolved) {
+            "Historical export cannot synthesize deletion or conflict-resolution events."
+        }
+        val existing = query(
+            "SELECT operation_id, hlc_json, event_json FROM agent_history_export_mapping WHERE sync_space_id = ? AND source_kind = ? AND source_id = ?",
+            listOf(syncSpaceId.value, sourceKind, sourceId),
+        ) { row -> Triple(row.getText(0), row.getText(1), row.getText(2)) }.singleOrNull()
+        if (existing != null) {
+            val storedHlc = json.decodeFromString(AgentHlcSnapshot.serializer(), existing.second)
+            val storedEvent = json.decodeFromString(AgentSyncEvent.serializer(), existing.third)
+            // The first mapping owns its operation ID and HLC; retries may supply fresh candidates.
+            if (storedEvent != event) throw AgentSyncIntegrityConflictException("Historical source identity was remapped to different immutable content.")
+            val operation = query(
+                "SELECT payload_json FROM agent_sync_operation_identity WHERE sync_space_id = ? AND operation_id = ?",
+                listOf(syncSpaceId.value, existing.first),
+            ) { decodePayload(it.getText(0), existing.first).operation }.singleOrNull()
+                ?: throw AgentSyncIntegrityConflictException("Historical export mapping has no corresponding durable Agent operation.")
+            if (AgentSyncDirection.OUTBOUND !in directionInTransaction(syncSpaceId.value, existing.first) || operation.agentEvent != storedEvent || operation.hlc != storedHlc)
+                throw AgentSyncIntegrityConflictException("Historical export mapping does not match its outbound operation.")
+            return@withWriteTransaction AgentSyncHistoricalExportPreparation(operation, createdMapping = false)
+        }
+
+        val outcome = enqueueOutboundInTransaction(syncSpaceId, candidateOperationId, hlc, event, allowResolution = false)
+        val operation = (outcome as? LocalEnqueueOutcome.Success)?.operation
+            ?: throw AgentSyncIntegrityConflictException((outcome as LocalEnqueueOutcome.Conflict).message)
+        execute(
+            "INSERT INTO agent_history_export_mapping(sync_space_id, source_kind, source_id, operation_id, hlc_json, event_json, state) VALUES (?, ?, ?, ?, ?, ?, 'QUEUED')",
+            listOf(syncSpaceId.value, sourceKind, sourceId, operation.operationId.value,
+                json.encodeToString(AgentHlcSnapshot.serializer(), hlc), json.encodeToString(AgentSyncEvent.serializer(), event)),
+        )
+        AgentSyncHistoricalExportPreparation(operation, createdMapping = true)
     }
 
     override suspend fun acceptInbound(syncSpaceId: SyncSpaceId, payload: SyncPayloadV3): AgentSyncPersistResult {

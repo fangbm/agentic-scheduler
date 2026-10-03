@@ -14,6 +14,7 @@ class AgentConversationSyncSettings(
     private val consent: AgentSyncUserConsentPersistence,
     private val transportState: AgentSyncTransportPersistence,
     private val history: AgentSyncPersistence,
+    private val explicitExport: AgentHistoryExplicitExport? = null,
 ) {
     suspend fun settings(): List<AgentConversationSyncSetting> = enrollments.states()
         .filterIsInstance<LocalEnrollmentState.Active>().map { it.syncSpaceId }.distinct()
@@ -30,4 +31,11 @@ class AgentConversationSyncSettings(
         require(!enabled || allActiveDevicesV3Acknowledged) { "ACTIVE_DEVICES_V3_ACKNOWLEDGEMENT_REQUIRED" }
         consent.setConversationConsent(space, enabled, allActiveDevicesV3Acknowledged)
     }
+
+    /** Read-only eligibility is safe to refresh; consent changes never call export. */
+    suspend fun historyExportAvailability(space: SyncSpaceId): AgentHistoryExportAvailability? = explicitExport?.availability(space)
+
+    /** Dedicated user-triggered action; intentionally never called by setFromUser or startup. */
+    suspend fun exportHistoryFromUser(space: SyncSpaceId): AgentHistoryExportResult =
+        checkNotNull(explicitExport) { "Historical export is unavailable in this composition." }.exportFromUser(space)
 }

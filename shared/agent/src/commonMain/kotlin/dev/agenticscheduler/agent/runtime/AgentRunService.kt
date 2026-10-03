@@ -30,6 +30,7 @@ import dev.agenticscheduler.domain.task.TaskStatus
 import dev.agenticscheduler.sync.SyncOperation
 import dev.agenticscheduler.sync.EntityKind
 import dev.agenticscheduler.sync.MutationId
+import dev.agenticscheduler.sync.AgentTurnSyncId
 import kotlinx.datetime.LocalDate
 import kotlinx.datetime.TimeZone
 import kotlinx.coroutines.CancellationException
@@ -99,7 +100,15 @@ class AgentRunService(
     suspend fun createThread(): AgentThreadId = AgentThreadId(ids.next()).also { state.saveThread(AgentThread(it, null, clock.nowEpochMillis())) }
 
     suspend fun run(threadId: AgentThreadId, command: String): AgentRunResult =
-        threadOperationLocks.withLock(threadId) { runLocked(threadId, command) }
+        threadOperationLocks.withLock(threadId) {
+            val turnId = if (command.isNotBlank() && state.thread(threadId) != null &&
+                state.toolCalls(threadId).none { it.state == AgentToolCallState.WAITING_CONFIRMATION }) {
+                AgentTurnSyncId(ids.next()).also { state.beginLocalHistoryTurn(threadId, it.value) }
+            } else null
+            val result = runLocked(threadId, command)
+            if (turnId != null) recordReturnedTurnState(threadId, turnId.value, result)
+            result
+        }
 
     private suspend fun runLocked(threadId: AgentThreadId, command: String): AgentRunResult {
         if (command.isBlank()) return AgentRunResult.Failed("EMPTY_COMMAND")
@@ -117,7 +126,20 @@ class AgentRunService(
     }
 
     suspend fun confirm(threadId: AgentThreadId, callId: AgentToolCallId, approved: Boolean): AgentRunResult =
-        threadOperationLocks.withLock(threadId) { confirmLocked(threadId, callId, approved) }
+        threadOperationLocks.withLock(threadId) {
+            val turnId = state.activeLocalHistoryTurn(threadId)
+            val result = confirmLocked(threadId, callId, approved)
+            if (turnId != null) recordReturnedTurnState(threadId, turnId, result)
+            result
+        }
+
+    private suspend fun recordReturnedTurnState(threadId: AgentThreadId, turnId: String, result: AgentRunResult) {
+        when (result) {
+            is AgentRunResult.AwaitingConfirmation -> state.setLocalHistoryTurnAwaitingConfirmation(threadId, turnId)
+            is AgentRunResult.Completed -> state.finalizeLocalHistoryTurn(threadId, turnId, AgentLocalTurnOutcome.SUCCEEDED)
+            is AgentRunResult.Failed -> state.finalizeLocalHistoryTurn(threadId, turnId, AgentLocalTurnOutcome.FAILED)
+        }
+    }
 
     private suspend fun confirmLocked(threadId: AgentThreadId, callId: AgentToolCallId, approved: Boolean): AgentRunResult {
         val call = state.toolCalls(threadId).firstOrNull { it.id == callId && it.state == AgentToolCallState.WAITING_CONFIRMATION }

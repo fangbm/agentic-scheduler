@@ -2,8 +2,10 @@ package dev.agenticscheduler.acceptance
 
 import dev.agenticscheduler.application.history.MutationWallClock
 import dev.agenticscheduler.application.history.SyncEngine
+import dev.agenticscheduler.application.id.EpochMillisecondsClock
 import dev.agenticscheduler.application.id.productionUuidV7Generator
 import dev.agenticscheduler.application.sync.*
+import dev.agenticscheduler.agent.history.*
 import dev.agenticscheduler.database.AgenticSchedulerDatabase
 import dev.agenticscheduler.database.repository.*
 import dev.agenticscheduler.sync.*
@@ -75,9 +77,17 @@ class EnrolledPlatformReplica(
     }
 
     suspend fun seedDesktopOffline() {
-        author(6003, ThreadCreated(THREAD, TITLE, 1))
-        author(6004, MessageAppended(AgentMessageSyncId(id(6001)), THREAD, DESKTOP_TURN, AgentMessageRoleV3.USER, DESKTOP_TEXT, 1))
-        author(6005, TurnFinalized(DESKTOP_TURN, THREAD, emptyList(), listOf(MessageMember(AgentMessageSyncId(id(6001)))), AgentTurnOutcome.SUCCEEDED))
+        val local = RoomAgentStateRepository(database)
+        val threadId = AgentThreadId(THREAD.value)
+        local.saveThread(AgentThread(threadId, TITLE, 1))
+        local.beginLocalHistoryTurn(threadId, DESKTOP_TURN.value)
+        local.appendMessage(AgentMessage(AgentMessageId(id(6001)), threadId, 0, AgentMessageRole.USER, DESKTOP_TEXT, 2))
+        local.appendMessage(AgentMessage(AgentMessageId(id(6003)), threadId, 1, AgentMessageRole.ASSISTANT, DESKTOP_ASSISTANT_TEXT, 3))
+        check(local.finalizeLocalHistoryTurn(threadId, DESKTOP_TURN.value, AgentLocalTurnOutcome.SUCCEEDED))
+        val exporter = AgentHistoryExplicitExport(enrollment, state, history, history,
+            RoomAgentHistoryExportSource(database, local), productionUuidV7Generator(), EpochMillisecondsClock { 10 })
+        check(exporter.availability(space).eligibleTurns == 1)
+        check(exporter.exportFromUser(space).newlyQueuedFacts == 4)
         loseAckAndPersistRetry()
     }
 
@@ -91,7 +101,7 @@ class EnrolledPlatformReplica(
 
     suspend fun androidSeedOffline() {
         check(worker().run(space).stoppedOnReceiveFailure == null)
-        check(history.threadHistoryProjection(space, THREAD).turns.single().members.single().agentEvent is MessageAppended)
+        check(history.threadHistoryProjection(space, THREAD).turns.single().members.map { it.agentEvent }.count { it is MessageAppended } == 2)
         check(reader.read(space, THREAD) is AgentHistoryContinuationRead.Ready)
         author(7003, MessageAppended(AgentMessageSyncId(id(7001)), THREAD, ANDROID_TURN, AgentMessageRoleV3.ASSISTANT, ANDROID_TEXT, 1))
         author(7004, TurnFinalized(ANDROID_TURN, THREAD, listOf(DESKTOP_TURN), listOf(MessageMember(AgentMessageSyncId(id(7001)))), AgentTurnOutcome.SUCCEEDED))
@@ -110,7 +120,7 @@ class EnrolledPlatformReplica(
         val projection = history.threadHistoryProjection(space, THREAD)
         check(projection.turns.map { it.manifest.turnId } == listOf(DESKTOP_TURN, ANDROID_TURN))
         check(projection.providerContinuationAllowed)
-        check(history.dvvFrontier(space).components == mapOf(AgentReplicaId(id(8000)) to 2L, AgentReplicaId(id(8001)) to 1L))
+        check(history.dvvFrontier(space).components == mapOf(AgentReplicaId(id(8000)) to 3L, AgentReplicaId(id(8001)) to 1L))
         check(receive.handledDots(space).isEmpty()); check(journal.timeline().isEmpty())
         check(worker().run(space).agentOutbound.uploaded == 0)
         reopen()
@@ -156,6 +166,7 @@ class EnrolledPlatformReplica(
         val ANDROID_TURN = AgentTurnSyncId(id(7002))
         const val TITLE = "D90205-PLATFORM-TITLE-CANARY"
         const val DESKTOP_TEXT = "D90205-DESKTOP-MESSAGE-CANARY"
+        const val DESKTOP_ASSISTANT_TEXT = "D90205-DESKTOP-ASSISTANT-CANARY"
         const val ANDROID_TEXT = "D90205-ANDROID-MESSAGE-CANARY"
         val KEY = ByteArray(32) { (it + 11).toByte() }
     }
