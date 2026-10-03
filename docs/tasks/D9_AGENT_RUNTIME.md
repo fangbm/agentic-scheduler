@@ -2,7 +2,7 @@
 
 > Task ID: **D9-01 / D9-02 / D9-03**  
 > Milestone: **D9 — Agent / Universal Command**  
-> Status: **D9-01 COMPLETE / MERGED — D9-02 ARCHITECTURE FROZEN 2026-09-30, IMPLEMENTATION PENDING — D8 COMPLETE**
+> Status: **D9-01 COMPLETE / MERGED — D9-02 IMPLEMENTATION + E2E ACCEPTANCE COMPLETE FOR REVIEW (PR #24 DRAFT/UNMERGED) — OD-012 PRODUCTION RELEASE GATE OPEN — D8 COMPLETE**
 > Date: 2026-09-12  
 > Acceptance evidence updated: 2026-09-29
 > Decision source: `docs/AGENT_DECISIONS.md`
@@ -335,7 +335,7 @@ Do not copy provider secrets or complete system prompts into AgentAction.
 
 # 13. D9-02 sync amendment — ARCHITECTURE FROZEN 2026-09-30
 
-Maintainer explicitly approved all seven W1/W2/P1/D1/W4/W5/L1 first-alpha architectural decisions. See AGT-013, SYN-003B, `docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md` and the explanatory D9-02 protocol v0.2 document. Exact V3 JSON fixtures, non-destructive Room migration, compatible D8 worker updates, and Android/Desktop E2E evidence are **pending implementation gates**; D9-02 is NOT implementation-complete.
+Maintainer explicitly approved all seven W1/W2/P1/D1/W4/W5/L1 first-alpha architectural decisions. See AGT-013, SYN-003B, `docs/tasks/D9_02_PROTOCOL_FREEZE_PACKET.md` and the explanatory D9-02 protocol v0.2 document. D9-02-01 through D9-02-05 implementation and frozen acceptance evidence are complete for review in PR #24 (Draft, unmerged); see `docs/D9_02_COMPLETION_ACCEPTANCE_RECORD.md`. OD-012 remains an independent production-sensitive local-data release gate, so production V3 receive/storage/upload stays disabled.
 
 After D9-01 local behavior is stable, extend sync for conversation/history:
 

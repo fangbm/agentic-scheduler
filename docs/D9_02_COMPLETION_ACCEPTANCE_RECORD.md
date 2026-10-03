@@ -1,12 +1,12 @@
 # D9-02 Completion Acceptance Record
 
-Status: **IN PROGRESS — NOT COMPLETE**. PR #24 remains Draft.
+Status: **D9-02 IMPLEMENTATION AND ACCEPTANCE COMPLETE FOR REVIEW**. PR #24 remains Draft and unmerged.
 Baseline `feature/d9-02-agent-sync` / `4dbe432`; branch
 `codex/d9-02-05-agent-history-e2e`. Updated 2026-10-03.
 
-The missing historical-source decision blocks A2 and the export portion of C9.
-OD-012 remains OPEN as the separate production-sensitive local-data release gate.
-Production compositions do not inject V3 upload/receive or the continuation reader.
+AGT-018 resolves the historical-source decision for this milestone. OD-012 remains
+OPEN as the separate production-sensitive local-data release gate. Production
+compositions do not inject V3 upload/receive or the continuation reader.
 
 ## Executed environment and evidence boundaries
 
@@ -83,15 +83,15 @@ tests; AgentHistoryTransportIntegrationTest covers v13→14 separately. Sync's49
 tests executed successfully in the preceding `--rerun-tasks` invocation and were
 up-to-date in the final combined command; other suites executed in the final run.
 
-New PostgreSQL suite has 17 tests, 0 failures/skips on Windows. Platform harness
+The PostgreSQL suite has 18 tests, 0 failures/skips on the final GitHub CI head. Platform harness
 is intentionally SKIPPED in ordinary JVM builds without the explicit phase;
 this skip is not counted as a passing cross-platform test.
 
-The final additional immutable-ID adversarial assertion was verified with
+The pre-export E2E suite plus final additional immutable-ID adversarial assertion was verified with
 `:shared:application:desktopTest --tests=dev.agenticscheduler.application.sync.D9AgentHistoryPostgresE2ETest
---no-daemon --no-configuration-cache --max-workers=1`: BUILD SUCCESSFUL in45s,
-17 tests, 0 failures/errors/skips. This separate run does not replace the combined
-suite counts above.
+--no-daemon --no-configuration-cache --max-workers=1`: BUILD SUCCESSFUL in 45s,
+17 tests, 0 failures/errors/skips. This earlier run predates the new explicit-export
+relay case; the final CI head ran all 18 tests successfully.
 
 ```powershell
 $env:ANDROID_AVD_HOME = 'D:\android-avds-d90205'
@@ -123,6 +123,11 @@ Windows/Android/Wear jobs are retained alongside this added platform job.
   waited on an already active parent, activation omitted derived conflict refresh,
   and removed audit parents retained an indefinite record dependency. Corrected
   using existing frozen semantics with regression assertions, not new protocol.
+- The first explicit-export PostgreSQL run failed because the receiver fixture had
+  not enabled its independent W4 conversation consent. The receive path correctly
+  quarantined V3; the test now explicitly opts in both enrolled replicas. Run
+  [37130156891](https://github.com/fangbm/temvio/actions/runs/37130156891) passed
+  with all 18 PostgreSQL tests and the platform acceptance.
 
 ## Current CI and remaining gates
 
@@ -177,12 +182,14 @@ instrumentation passed.
 
 The local real-PostgreSQL suite was not run in this follow-up: Docker Desktop's
 Linux engine was unavailable and `com.docker.service` is stopped; attempting to
-start that service returned access denied. Do not count the baseline 17/17 result
-above as evidence for the new commit. Rerun the PostgreSQL/platform acceptance and
-full GitHub Actions workflow on the pushed head. Until those finish, keep D9-02
-IN PROGRESS. OD-012 remains a separate open release gate; production-sensitive V3
-receive/storage/upload remains disabled.
+start that service returned access denied. The final pushed head's real PostgreSQL
+suite and platform acceptance passed in GitHub Actions run
+[37130156891](https://github.com/fangbm/temvio/actions/runs/37130156891), including
+all 18 PostgreSQL E2E tests, Desktop seed/resume/verify across client and relay
+restarts, Android seed/resume/consent UI, and the opaque public-table canary scan.
+All full CI jobs passed. D9-02 implementation acceptance is complete for review;
+PR #24 remains Draft/unmerged. OD-012 remains a separate open release gate;
+production-sensitive V3 receive/storage/upload remains disabled.
 
-No roadmap COMPLETE/implementation-accepted update is made by this follow-up alone.
 No merge, D9-03/D10 start, D2/wire/AAD/crypto/server semantic change or
 production-sensitive V3 composition is included.
