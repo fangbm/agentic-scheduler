@@ -78,7 +78,7 @@ try {
     }
     $uiResult = & $adb -s emulator-5580 shell am instrument -w -e class dev.agenticscheduler.android.AgentConversationSyncControlsInstrumentedTest dev.agenticscheduler.android.test/androidx.test.runner.AndroidJUnitRunner
     $uiResult | Tee-Object -FilePath "$root\android-consent-ui.txt"
-    if ($LASTEXITCODE -or (($uiResult -join "`n") -notmatch 'OK \(1 test\)')) { throw 'Android consent UI instrumentation failed.' }
+    if ($LASTEXITCODE -or (($uiResult -join "`n") -notmatch 'OK \([1-9][0-9]* tests?\)')) { throw 'Android consent UI instrumentation failed.' }
     Phase 'verify'
     $tables = & docker exec $PostgresContainer psql -U $env:SYNC_TEST_DATABASE_USER -d agentic_d90205 -At -c "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE'"
     if ($LASTEXITCODE) { throw 'Opaque relay table scan failed.' }

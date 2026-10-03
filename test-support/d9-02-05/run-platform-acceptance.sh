@@ -69,7 +69,7 @@ for android_phase in seed resume; do
 done
 adb shell am instrument -w -e class dev.agenticscheduler.android.AgentConversationSyncControlsInstrumentedTest \
   dev.agenticscheduler.android.test/androidx.test.runner.AndroidJUnitRunner | tee "$D9_PLATFORM_DIRECTORY/android-consent-ui.txt"
-grep -F 'OK (1 test)' "$D9_PLATFORM_DIRECTORY/android-consent-ui.txt"
+grep -E 'OK \([1-9][0-9]* tests?\)' "$D9_PLATFORM_DIRECTORY/android-consent-ui.txt"
 phase verify
 python3 - <<'PY'
 import base64, os, subprocess
