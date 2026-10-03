@@ -119,7 +119,15 @@ class RoomAgentStateRepository(private val database: AgenticSchedulerDatabase) :
     ) { json.decodeFromString(AgentAction.serializer(), it.getText(0)) }
 
     override suspend fun deleteThread(threadId: AgentThreadId) = database.withWriteTransaction {
-        execute("UPDATE agent_local_thread_provenance SET state = 'DELETED' WHERE thread_id = ?", listOf(threadId.value))
+        execute(
+            "UPDATE agent_local_thread_provenance " +
+                "SET state = 'DELETED', creation_title = NULL, creation_at_epoch_millis = NULL WHERE thread_id = ?",
+            listOf(threadId.value),
+        )
+        // Turn-member snapshots duplicate raw D9-01 content and local Agent metadata.
+        // Delete children before turns because the explicit schema uses ON DELETE RESTRICT.
+        execute("DELETE FROM agent_local_turn_member WHERE thread_id = ?", listOf(threadId.value))
+        execute("DELETE FROM agent_local_turn_provenance WHERE thread_id = ?", listOf(threadId.value))
         listOf("agent_tool_result", "agent_tool_call", "agent_message", "context_summary").forEach { table ->
             execute("DELETE FROM $table WHERE thread_id = ?", listOf(threadId.value))
         }
